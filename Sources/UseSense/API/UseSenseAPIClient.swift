@@ -3,113 +3,132 @@ import Foundation
 final class UseSenseAPIClient: @unchecked Sendable {
     private let config: UseSenseConfig
     private let session: URLSession
-    private let decoder: JSONDecoder
-    private let encoder: JSONEncoder
+    private let decoder = JSONDecoder()
+    private let encoder = JSONEncoder()
 
     init(config: UseSenseConfig) {
         self.config = config
         self.session = URLSession(configuration: .default)
-        self.decoder = JSONDecoder()
-        self.encoder = JSONEncoder()
+    }
+
+    // MARK: - URL Builder
+
+    private func buildURL(path: String, nonce: String? = nil) -> URL {
+        var components = URLComponents(string: "\(config.apiBaseUrl)\(path)")!
+        var queryItems = [URLQueryItem(name: "env", value: (config.environment ?? .sandbox).rawValue)]
+        if let nonce = nonce {
+            queryItems.append(URLQueryItem(name: "nonce", value: nonce))
+        }
+        components.queryItems = queryItems
+        return components.url!
+    }
+
+    private func applyGatewayHeaders(_ request: inout URLRequest) {
+        if let gatewayKey = config.gatewayKey {
+            request.setValue("Bearer \(gatewayKey)", forHTTPHeaderField: "Authorization")
+            request.setValue(gatewayKey, forHTTPHeaderField: "apikey")
+        }
     }
 
     // MARK: - Create Session
 
-    func createSession(request: CreateSessionRequest) async throws -> CreateSessionResponse {
-        let url = config.baseURL.appendingPathComponent("v1/sessions")
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue(config.apiKey, forHTTPHeaderField: "x-api-key")
-        urlRequest.setValue(config.environment.rawValue, forHTTPHeaderField: "X-Environment")
-        urlRequest.httpBody = try encoder.encode(request)
-        urlRequest.timeoutInterval = 15
-
-        return try await perform(urlRequest)
+    func createSession(request body: CreateSessionRequest) async throws -> CreateSessionResponse {
+        var request = URLRequest(url: buildURL(path: "/v1/sessions"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(config.apiKey, forHTTPHeaderField: "X-API-Key")
+        applyGatewayHeaders(&request)
+        request.httpBody = try encoder.encode(body)
+        request.timeoutInterval = 15
+        return try await perform(request)
     }
 
     // MARK: - Upload Signals
 
     func uploadSignals(
-        sessionId: String,
-        sessionData: SessionData,
-        frames: [Data],
-        metadata: Data,
-        audio: Data?
+        sessionId: String, sessionToken: String, nonce: String,
+        frames: [Data], metadata: Data, audio: Data?
     ) async throws -> UploadSignalsResponse {
         var multipart = MultipartFormData()
-
-        for (index, frame) in frames.enumerated() {
-            multipart.appendFile(
-                name: "frames[]",
-                filename: "frame_\(index).jpg",
-                contentType: "image/jpeg",
-                data: frame
-            )
+        for (i, frame) in frames.enumerated() {
+            multipart.appendFile(name: "frames[]", filename: "frame_\(i).jpg", contentType: "image/jpeg", data: frame)
         }
-
-        multipart.appendFile(
-            name: "metadata",
-            filename: "metadata.json",
-            contentType: "application/json",
-            data: metadata
-        )
-
+        multipart.appendFile(name: "metadata", filename: "metadata.json", contentType: "application/json", data: metadata)
         if let audio = audio {
-            multipart.appendFile(
-                name: "audio",
-                filename: "audio.m4a",
-                contentType: "audio/mp4",
-                data: audio
-            )
+            multipart.appendFile(name: "audio", filename: "audio.m4a", contentType: "audio/mp4", data: audio)
         }
-
         let body = multipart.finalize()
-        let nonceParam = sessionData.nonce.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? sessionData.nonce
-        let url = config.baseURL.appendingPathComponent("v1/sessions/\(sessionId)/signals")
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "nonce", value: nonceParam)]
 
-        var urlRequest = URLRequest(url: components.url!)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue(multipart.contentType, forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue(sessionData.sessionToken, forHTTPHeaderField: "X-Session-Token")
-        urlRequest.setValue(sessionData.nonce, forHTTPHeaderField: "X-Nonce")
-        urlRequest.setValue(UUID().uuidString, forHTTPHeaderField: "X-Idempotency-Key")
-        urlRequest.httpBody = body
-        urlRequest.timeoutInterval = 30
-
-        return try await perform(urlRequest)
+        var request = URLRequest(url: buildURL(path: "/v1/sessions/\(sessionId)/signals", nonce: nonce))
+        request.httpMethod = "POST"
+        request.setValue(multipart.contentType, forHTTPHeaderField: "Content-Type")
+        request.setValue(sessionToken, forHTTPHeaderField: "X-Session-Token")
+        request.setValue(nonce, forHTTPHeaderField: "X-Nonce")
+        request.setValue("\(sessionId)_\(Date().timeIntervalSince1970)_\(UUID().uuidString.prefix(9))", forHTTPHeaderField: "X-Idempotency-Key")
+        applyGatewayHeaders(&request)
+        request.httpBody = body
+        request.timeoutInterval = 30
+        return try await perform(request)
     }
 
     // MARK: - Complete Session
 
-    func completeSession(sessionId: String, sessionData: SessionData) async throws -> VerdictResponse {
-        let nonceParam = sessionData.nonce.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? sessionData.nonce
-        let url = config.baseURL.appendingPathComponent("v1/sessions/\(sessionId)/complete")
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-        components.queryItems = [URLQueryItem(name: "nonce", value: nonceParam)]
-
-        var urlRequest = URLRequest(url: components.url!)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue(sessionData.sessionToken, forHTTPHeaderField: "X-Session-Token")
-        urlRequest.setValue(sessionData.nonce, forHTTPHeaderField: "X-Nonce")
-        urlRequest.setValue(UUID().uuidString, forHTTPHeaderField: "X-Idempotency-Key")
-        urlRequest.timeoutInterval = 60
-
-        return try await perform(urlRequest)
+    func completeSession(sessionId: String, sessionToken: String, nonce: String) async throws -> FinalDecisionObject {
+        var request = URLRequest(url: buildURL(path: "/v1/sessions/\(sessionId)/complete", nonce: nonce))
+        request.httpMethod = "POST"
+        request.setValue(sessionToken, forHTTPHeaderField: "X-Session-Token")
+        request.setValue(nonce, forHTTPHeaderField: "X-Nonce")
+        request.setValue(UUID().uuidString, forHTTPHeaderField: "X-Idempotency-Key")
+        applyGatewayHeaders(&request)
+        request.timeoutInterval = 60
+        return try await perform(request)
     }
 
     // MARK: - Get Session Status
 
     func getSessionStatus(sessionId: String, sessionToken: String) async throws -> SessionStatusResponse {
-        let url = config.baseURL.appendingPathComponent("v1/sessions/\(sessionId)/status")
-        var urlRequest = URLRequest(url: url)
-        urlRequest.httpMethod = "GET"
-        urlRequest.setValue(sessionToken, forHTTPHeaderField: "X-Session-Token")
-        urlRequest.timeoutInterval = 15
+        var request = URLRequest(url: buildURL(path: "/v1/sessions/\(sessionId)/status"))
+        request.httpMethod = "GET"
+        request.setValue(sessionToken, forHTTPHeaderField: "X-Session-Token")
+        applyGatewayHeaders(&request)
+        request.timeoutInterval = 15
+        return try await perform(request)
+    }
 
-        return try await perform(urlRequest)
+    // MARK: - App Attest endpoints
+
+    func requestAttestationChallenge() async throws -> Data {
+        var request = URLRequest(url: buildURL(path: "/v1/devices/attest/challenge"))
+        request.httpMethod = "POST"
+        request.setValue(config.apiKey, forHTTPHeaderField: "X-API-Key")
+        applyGatewayHeaders(&request)
+        request.timeoutInterval = 10
+
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw UseSenseError(code: .serverError, message: "Failed to get attestation challenge")
+        }
+        return data
+    }
+
+    func registerAttestation(keyId: String, attestationObject: Data, challenge: Data) async throws {
+        var request = URLRequest(url: buildURL(path: "/v1/devices/attest"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(config.apiKey, forHTTPHeaderField: "X-API-Key")
+        applyGatewayHeaders(&request)
+        let body: [String: String] = [
+            "key_id": keyId,
+            "attestation": attestationObject.base64EncodedString(),
+            "challenge": challenge.base64EncodedString()
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 10
+
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw UseSenseError(code: .serverError, message: "Failed to register attestation")
+        }
     }
 
     // MARK: - Private
@@ -121,57 +140,27 @@ final class UseSenseAPIClient: @unchecked Sendable {
         do {
             (data, response) = try await session.data(for: request)
         } catch let error as URLError where error.code == .timedOut {
-            throw UseSenseError.networkTimeout()
+            throw UseSenseError(code: .timeout)
         } catch {
-            throw UseSenseError.networkError(error)
+            throw UseSenseError(code: .networkError, message: error.localizedDescription)
         }
 
-        guard let httpResponse = response as? HTTPURLResponse else {
+        guard let http = response as? HTTPURLResponse else {
             throw UseSenseError(code: .networkError, message: "Invalid response type.")
         }
 
-        guard (200...299).contains(httpResponse.statusCode) else {
-            if let errorResponse = try? decoder.decode(ErrorResponse.self, from: data) {
-                throw mapServerError(errorResponse.error, statusCode: httpResponse.statusCode)
+        guard (200...299).contains(http.statusCode) else {
+            if let errorResp = try? decoder.decode(ErrorResponse.self, from: data) {
+                throw UseSenseError.fromHTTP(statusCode: http.statusCode, serverCode: errorResp.error.code, serverMessage: errorResp.error.message)
             }
-            throw UseSenseError(
-                code: .networkError,
-                message: "Server returned status \(httpResponse.statusCode).",
-                isRetryable: httpResponse.statusCode >= 500
-            )
+            throw UseSenseError.fromHTTP(statusCode: http.statusCode, serverCode: nil, serverMessage: "Server returned status \(http.statusCode).")
         }
 
         do {
             return try decoder.decode(T.self, from: data)
         } catch {
-            throw UseSenseError(code: .networkError, message: "Failed to decode server response.", underlyingError: error)
+            throw UseSenseError(code: .unknownError, message: "Failed to decode response.", details: error.localizedDescription)
         }
-    }
-
-    private func mapServerError(_ detail: ErrorDetail, statusCode: Int) -> UseSenseError {
-        let code: UseSenseErrorCode
-        let isRetryable: Bool
-
-        switch detail.code {
-        case "session_expired":
-            code = .sessionExpired; isRetryable = false
-        case "invalid_token", "unauthorized", "nonce_mismatch":
-            code = .sessionCreationFailed; isRetryable = false
-        case "invalid_upload":
-            code = .uploadFailed; isRetryable = false
-        case "internal_error":
-            code = .networkError; isRetryable = true
-        default:
-            code = statusCode >= 500 ? .networkError : .sessionCreationFailed
-            isRetryable = statusCode >= 500
-        }
-
-        return UseSenseError(
-            code: code,
-            serverCode: detail.code,
-            message: detail.message,
-            isRetryable: isRetryable
-        )
     }
 }
 

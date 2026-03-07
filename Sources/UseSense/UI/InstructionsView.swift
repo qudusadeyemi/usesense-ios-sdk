@@ -2,66 +2,109 @@
 import SwiftUI
 
 struct InstructionsView: View {
-    let theme: UseSenseTheme
-    let challengeType: ChallengeType?
-    let onStart: () -> Void
+    let challenge: ChallengeSpecWrapper
+    let onContinue: () -> Void
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 0) {
             Spacer()
 
-            Image(systemName: iconName)
-                .font(.system(size: 64))
-                .foregroundColor(UseSenseTheme.Colors.indigo500)
+            VStack(spacing: 24) {
+                // Icon
+                ZStack {
+                    Circle()
+                        .fill(Color.UseSense.instructionIconBg)
+                        .frame(width: 72, height: 72)
 
-            Text(theme.localization.instructionsTitle)
-                .font(.title.weight(.bold))
-                .foregroundColor(.white)
+                    Image(systemName: iconName)
+                        .font(.system(size: 32))
+                        .foregroundColor(Color.UseSense.primary)
+                }
 
-            Text(challengeDescription)
-                .font(.body)
-                .foregroundColor(.white.opacity(0.8))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                // Title
+                Text(title)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(Color.UseSense.instructionTitle)
+                    .multilineTextAlignment(.center)
 
-            Spacer()
+                // Instructions
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(instructions.enumerated()), id: \.offset) { index, instruction in
+                        HStack(alignment: .top, spacing: 12) {
+                            Circle()
+                                .fill(Color.UseSense.challengeDot)
+                                .frame(width: 8, height: 8)
+                                .padding(.top, 6)
+                            Text(instruction)
+                                .font(.system(size: 16))
+                                .foregroundColor(Color.UseSense.instructionBody)
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
 
-            Button(action: onStart) {
-                Text(theme.localization.instructionsButton)
-                    .font(.body.weight(.bold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(
-                        RoundedRectangle(cornerRadius: theme.buttonCornerRadius)
-                            .fill(UseSenseTheme.Colors.indigo600)
-                    )
+                // Continue button
+                Button(action: onContinue) {
+                    Text("Continue")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background(Color.UseSense.primary)
+                        .cornerRadius(12)
+                }
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 48)
+            .padding(32)
+            .background(Color.UseSense.surface)
+            .cornerRadius(24)
+            .shadow(color: .black.opacity(0.15), radius: 20, y: 8)
+            .padding(.horizontal, 20)
+
+            Spacer()
+                .frame(height: 40)
         }
-        .background(Color.black)
+        .background(Color.black.opacity(0.5))
     }
 
     private var iconName: String {
-        switch challengeType {
-        case .followDot: return "eye.fill"
-        case .headTurn: return "face.smiling.fill"
+        switch challenge.challengeType {
+        case .followDot: return "circle.dotted"
+        case .headTurn: return "face.smiling"
         case .speakPhrase: return "mic.fill"
-        case nil: return "person.fill.viewfinder"
         }
     }
 
-    private var challengeDescription: String {
-        switch challengeType {
+    private var title: String {
+        switch challenge.challengeType {
+        case .followDot: return "Follow the Dot"
+        case .headTurn: return "Turn Your Head"
+        case .speakPhrase: return "Speak the Phrase"
+        }
+    }
+
+    private var instructions: [String] {
+        switch challenge.challengeType {
         case .followDot:
-            return "You'll see a dot on screen. Follow it with your eyes while keeping your face visible to the camera."
+            return [
+                "A dot will appear on screen",
+                "Follow it with your eyes while keeping your head still",
+                "Stay centered in the frame"
+            ]
         case .headTurn:
-            return "You'll be asked to turn your head in different directions. Follow the arrows on screen."
+            return [
+                "Turn your head in the direction shown",
+                "Move slowly and deliberately",
+                "Return to center when prompted"
+            ]
         case .speakPhrase:
-            return "You'll be asked to say a short phrase aloud. Make sure you're in a quiet environment."
-        case nil:
-            return theme.localization.instructionsBody
+            if case .speakPhrase(let c) = challenge {
+                return [
+                    "Say the following phrase clearly:",
+                    "\"\(c.phrase)\"",
+                    "Speak at a normal pace"
+                ]
+            }
+            return ["Say the phrase shown on screen clearly"]
         }
     }
 }

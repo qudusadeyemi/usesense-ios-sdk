@@ -2,66 +2,54 @@
 import UIKit
 import SwiftUI
 
-public protocol UseSenseDelegate: AnyObject {
-    func useSense(_ viewController: UseSenseViewController, didFinishWith result: UseSenseResult)
-    func useSense(_ viewController: UseSenseViewController, didFailWith error: UseSenseError)
-    func useSenseDidCancel(_ viewController: UseSenseViewController)
-}
-
 public final class UseSenseViewController: UIViewController {
-    public weak var delegate: UseSenseDelegate?
-    private let request: VerificationRequest
-    private var hostingController: UIHostingController<AnyView>?
+    private let session: UseSenseSession
+    private var onComplete: ((Result<RedactedDecisionObject, UseSenseError>) -> Void)?
+    private var hostingController: UIHostingController<UseSenseView>?
 
-    public init(request: VerificationRequest) {
-        self.request = request
+    public init(
+        session: UseSenseSession,
+        onComplete: @escaping (Result<RedactedDecisionObject, UseSenseError>) -> Void
+    ) {
+        self.session = session
+        self.onComplete = onComplete
         super.init(nibName: nil, bundle: nil)
-        modalPresentationStyle = .fullScreen
+        self.modalPresentationStyle = .fullScreen
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError("init(coder:) is not supported")
+        fatalError("init(coder:) has not been implemented")
     }
 
     public override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
 
-        guard let config = UseSense.shared.config else {
-            delegate?.useSense(self, didFailWith: UseSenseError(code: .invalidConfig, message: "UseSense has not been configured. Call UseSense.configure() first."))
-            return
-        }
-
-        let verificationView = UseSenseVerificationView(
-            config: config,
-            theme: UseSense.shared.theme,
-            request: request,
-            onResult: { [weak self] result in
-                guard let self = self else { return }
-                switch result {
-                case .success(let verdict):
-                    self.delegate?.useSense(self, didFinishWith: verdict)
-                case .failure(let error):
-                    self.delegate?.useSense(self, didFailWith: error)
-                }
+        let useSenseView = UseSenseView(
+            session: session,
+            onComplete: { [weak self] result in
+                self?.onComplete?(result)
+                self?.dismiss(animated: true)
             },
-            onCancelled: { [weak self] in
-                guard let self = self else { return }
-                self.delegate?.useSenseDidCancel(self)
+            onCancel: { [weak self] in
+                self?.onComplete?(.failure(UseSenseError(code: .userCancelled)))
+                self?.dismiss(animated: true)
             }
         )
 
-        let hosting = UIHostingController(rootView: AnyView(verificationView))
-        addChild(hosting)
-        hosting.view.frame = view.bounds
-        hosting.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.addSubview(hosting.view)
-        hosting.didMove(toParent: self)
+        let hosting = UIHostingController(rootView: useSenseView)
         hostingController = hosting
-    }
 
-    public override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .portrait }
-    public override var prefersStatusBarHidden: Bool { true }
+        addChild(hosting)
+        view.addSubview(hosting.view)
+        hosting.view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            hosting.view.topAnchor.constraint(equalTo: view.topAnchor),
+            hosting.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            hosting.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            hosting.view.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        ])
+        hosting.didMove(toParent: self)
+    }
 }
 #endif

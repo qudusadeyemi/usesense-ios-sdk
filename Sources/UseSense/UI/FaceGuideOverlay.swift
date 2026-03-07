@@ -2,72 +2,90 @@
 import SwiftUI
 
 struct FaceGuideOverlay: View {
-    let label: String
-    let buttonLabel: String
-    let onReady: () -> Void
-    @State private var pulseAnimation = false
+    let qualityGuidance: [QualityGuidance]
+    var pulseAnimation: Bool = true
+
+    @State private var isPulsing = false
 
     var body: some View {
-        GeometryReader { geo in
+        GeometryReader { geometry in
+            let ovalWidth = geometry.size.width * 0.55
+            let ovalHeight = ovalWidth * (4.0 / 3.0)
+
             ZStack {
-                // Semi-transparent background with oval cutout
-                Color.black.opacity(0.6)
-                    .mask {
+                // Dimmed background with cutout
+                Color.black.opacity(0.5)
+                    .mask(
                         Rectangle()
                             .overlay(
                                 Ellipse()
-                                    .frame(
-                                        width: geo.size.width * 0.38,
-                                        height: geo.size.height * 0.5
-                                    )
-                                    .offset(y: -geo.size.height * 0.04)
+                                    .frame(width: ovalWidth, height: ovalHeight)
                                     .blendMode(.destinationOut)
                             )
-                    }
-
-                // Dashed oval border
-                Ellipse()
-                    .strokeBorder(style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
-                    .foregroundColor(.white.opacity(0.8))
-                    .frame(
-                        width: geo.size.width * 0.38,
-                        height: geo.size.height * 0.5
+                            .compositingGroup()
                     )
-                    .offset(y: -geo.size.height * 0.04)
-                    .opacity(pulseAnimation ? 1.0 : 0.6)
-                    .animation(.easeInOut(duration: 2).repeatForever(autoreverses: true), value: pulseAnimation)
 
-                // Top label
+                // Oval border
+                Ellipse()
+                    .stroke(borderColor, lineWidth: 3)
+                    .frame(width: ovalWidth, height: ovalHeight)
+                    .scaleEffect(isPulsing ? 1.02 : 1.0)
+                    .animation(
+                        pulseAnimation ? .easeInOut(duration: 1.2).repeatForever(autoreverses: true) : .default,
+                        value: isPulsing
+                    )
+
+                // "Position your face" text
                 VStack {
-                    Text(label)
-                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                        .frame(height: geometry.size.height / 2 + ovalHeight / 2 + 24)
+
+                    Text("Position your face in the oval")
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.black.opacity(0.6)))
-                        .padding(.top, geo.size.height * 0.04)
-                    Spacer()
-                }
 
-                // Bottom button
-                VStack {
-                    Spacer()
-                    Button(action: onReady) {
-                        Text(buttonLabel)
-                            .font(.body.weight(.bold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 32)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .fill(UseSenseTheme.Colors.indigo600)
-                            )
-                            .shadow(radius: 10)
+                    // Quality guidance messages
+                    if !qualityGuidance.isEmpty {
+                        VStack(spacing: 6) {
+                            ForEach(Array(qualityGuidance.prefix(2).enumerated()), id: \.offset) { _, guidance in
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(guidanceColor(guidance.severity))
+                                        .frame(width: 8, height: 8)
+                                    Text(guidance.message)
+                                        .font(.system(size: 14))
+                                        .foregroundColor(.white)
+                                }
+                            }
+                        }
+                        .padding(.top, 8)
                     }
-                    .padding(.bottom, geo.size.height * 0.06)
+
+                    Spacer()
                 }
             }
-            .onAppear { pulseAnimation = true }
+            .onAppear {
+                if pulseAnimation {
+                    isPulsing = true
+                }
+            }
+        }
+    }
+
+    private var borderColor: Color {
+        if qualityGuidance.contains(where: { $0.severity == .critical }) {
+            return Color.UseSense.error
+        } else if qualityGuidance.contains(where: { $0.severity == .warning }) {
+            return Color.UseSense.manualReview
+        }
+        return Color.UseSense.success
+    }
+
+    private func guidanceColor(_ severity: QualityGuidance.Severity) -> Color {
+        switch severity {
+        case .critical: return Color.UseSense.qualityCritical
+        case .warning: return Color.UseSense.qualityWarning
+        case .info: return Color.UseSense.qualityInfo
         }
     }
 }

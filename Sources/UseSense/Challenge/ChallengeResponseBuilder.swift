@@ -1,51 +1,84 @@
 import Foundation
 
+struct ChallengeResponse: Codable, Sendable {
+    let challengeType: String
+    let seed: String
+    let responses: [ChallengeStepResponse]
+    let completedAt: String
+    let durationMs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case challengeType = "challenge_type"
+        case seed
+        case responses
+        case completedAt = "completed_at"
+        case durationMs = "duration_ms"
+    }
+}
+
+struct ChallengeStepResponse: Codable, Sendable {
+    let stepIndex: Int
+    let timestamp: String
+    let value: String?
+
+    enum CodingKeys: String, CodingKey {
+        case stepIndex = "step_index"
+        case timestamp
+        case value
+    }
+}
+
 final class ChallengeResponseBuilder: @unchecked Sendable {
-    private let spec: ChallengeSpec
-    private var startedAt: Date?
-    private var completedAt: Date?
-    private var waypointFrames: [String: [Int]] = [:]
-    private var stepFrames: [String: [Int]] = [:]
-    private var currentStepIndex: Int = 0
+    private var steps: [ChallengeStepResponse] = []
+    private var startTime: Date?
+    private let lock = NSLock()
 
-    init(spec: ChallengeSpec) {
-        self.spec = spec
+    func start() {
+        lock.lock()
+        defer { lock.unlock() }
+        startTime = Date()
+        steps.removeAll()
     }
 
-    func markStarted() {
-        startedAt = Date()
-    }
+    func recordStep(index: Int, value: String? = nil) {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
-    func markCompleted() {
-        completedAt = Date()
-    }
-
-    func setCurrentStep(_ index: Int) {
-        currentStepIndex = index
-    }
-
-    func recordFrame(index: Int) {
-        let key = String(currentStepIndex)
-        switch spec.type {
-        case .followDot:
-            waypointFrames[key, default: []].append(index)
-        case .headTurn:
-            stepFrames[key, default: []].append(index)
-        case .speakPhrase:
-            break
-        }
-    }
-
-    func build(frameTimestamps: [Int]) -> ChallengeResponsePayload {
-        ChallengeResponsePayload(
-            type: spec.type.rawValue,
-            seed: spec.seed,
-            completed: completedAt != nil,
-            waypointFrames: spec.type == .followDot ? waypointFrames : nil,
-            stepFrames: spec.type == .headTurn ? stepFrames : nil,
-            startedAt: startedAt,
-            completedAt: completedAt,
-            frameTimestamps: frameTimestamps
+        let step = ChallengeStepResponse(
+            stepIndex: index,
+            timestamp: formatter.string(from: Date()),
+            value: value
         )
+
+        lock.lock()
+        defer { lock.unlock() }
+        steps.append(step)
+    }
+
+    func build(challenge: ChallengeSpecWrapper) -> ChallengeResponse {
+        lock.lock()
+        let capturedSteps = steps
+        let start = startTime ?? Date()
+        lock.unlock()
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        let durationMs = Int(Date().timeIntervalSince(start) * 1000)
+
+        return ChallengeResponse(
+            challengeType: challenge.challengeType.rawValue,
+            seed: challenge.seed,
+            responses: capturedSteps,
+            completedAt: formatter.string(from: Date()),
+            durationMs: durationMs
+        )
+    }
+
+    func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        steps.removeAll()
+        startTime = nil
     }
 }

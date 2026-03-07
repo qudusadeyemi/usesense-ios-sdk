@@ -1,6 +1,5 @@
 import Foundation
 
-/// A type-erased Codable value for use in metadata dictionaries.
 public enum AnyCodableValue: Sendable {
     case string(String)
     case int(Int)
@@ -34,18 +33,7 @@ extension AnyCodableValue: Decodable {
     }
 }
 
-extension AnyCodableValue: ExpressibleByStringLiteral {
-    public init(stringLiteral value: String) { self = .string(value) }
-}
-
-extension AnyCodableValue: ExpressibleByIntegerLiteral {
-    public init(integerLiteral value: Int) { self = .int(value) }
-}
-
-extension AnyCodableValue: ExpressibleByBooleanLiteral {
-    public init(booleanLiteral value: Bool) { self = .bool(value) }
-}
-
-extension AnyCodableValue: ExpressibleByFloatLiteral {
-    public init(floatLiteral value: Double) { self = .double(value) }
-}
+extension AnyCodableValue: ExpressibleByStringLiteral { public init(stringLiteral value: String) { self = .string(value) } }
+extension AnyCodableValue: ExpressibleByIntegerLiteral { public init(integerLiteral value: Int) { self = .int(value) } }
+extension AnyCodableValue: ExpressibleByBooleanLiteral { public init(booleanLiteral value: Bool) { self = .bool(value) } }
+extension AnyCodableValue: ExpressibleByFloatLiteral { public init(floatLiteral value: Double) { self = .double(value) } }

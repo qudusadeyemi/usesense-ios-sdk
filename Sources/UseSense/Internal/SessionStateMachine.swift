@@ -1,31 +1,23 @@
 import Foundation
 
-enum PermissionType: Sendable {
-    case camera
-    case microphone
-}
+enum PermissionType: Sendable { case camera, microphone }
 
 enum CapturePhase: String, CaseIterable, Sendable {
-    case instructions
-    case faceGuide
-    case baseline
-    case countdown
-    case challenge
-    case done
+    case instructions, faceGuide, baseline, countdown, challenge, done
 }
 
 enum SessionState: Sendable {
     case idle
     case created(session: SessionData)
     case permissionsRequired(permissions: [PermissionType])
-    case instructions(challenge: ChallengeSpec)
+    case instructions(challenge: ChallengeSpecWrapper)
     case faceGuide
     case baseline(remaining: TimeInterval)
     case countdown(number: Int)
-    case challenge(spec: ChallengeSpec)
+    case challenge(spec: ChallengeSpecWrapper)
     case uploading(progress: Double)
     case completing
-    case done(result: UseSenseResult)
+    case done(decision: RedactedDecisionObject)
     case error(UseSenseError)
 }
 
@@ -37,9 +29,7 @@ struct SessionData: Sendable {
     let policy: SessionPolicy
     let upload: UploadConfig
 
-    var isExpired: Bool {
-        Date() >= expiresAt
-    }
+    var isExpired: Bool { Date() >= expiresAt }
 }
 
 extension SessionData {
@@ -56,9 +46,3 @@ extension SessionData {
         self.upload = response.upload
     }
 }
-
-// Make types Sendable where needed
-extension SessionPolicy: @unchecked Sendable {}
-extension ChallengeSpec: @unchecked Sendable {}
-extension AudioChallengeSpec: @unchecked Sendable {}
-extension UploadConfig: @unchecked Sendable {}

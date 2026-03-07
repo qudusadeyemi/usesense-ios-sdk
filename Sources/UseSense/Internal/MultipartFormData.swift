@@ -8,9 +8,7 @@ struct MultipartFormData {
         self.boundary = boundary
     }
 
-    var contentType: String {
-        "multipart/form-data; boundary=\(boundary)"
-    }
+    var contentType: String { "multipart/form-data; boundary=\(boundary)" }
 
     mutating func appendFile(name: String, filename: String, contentType: String, data: Data) {
         body.append("--\(boundary)\r\n")
@@ -28,8 +26,6 @@ struct MultipartFormData {
 
 extension Data {
     mutating func append(_ string: String) {
-        if let data = string.data(using: .utf8) {
-            append(data)
-        }
+        if let data = string.data(using: .utf8) { append(data) }
     }
 }

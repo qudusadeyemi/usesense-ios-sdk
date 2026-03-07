@@ -1,12 +1,12 @@
 import Foundation
 
-struct CreateSessionResponse: Decodable {
-    let sessionId: String
-    let sessionToken: String
-    let expiresAt: String
-    let nonce: String
-    let policy: SessionPolicy
-    let upload: UploadConfig
+public struct CreateSessionResponse: Codable, Sendable {
+    public let sessionId: String
+    public let sessionToken: String
+    public let expiresAt: String
+    public let nonce: String
+    public let policy: SessionPolicy
+    public let upload: UploadConfig
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -16,13 +16,12 @@ struct CreateSessionResponse: Decodable {
     }
 }
 
-struct SessionPolicy: Decodable {
-    let requiresAudio: Bool?
-    let requiresStepup: Bool?
-    let challengeType: String?
-    let challenge: ChallengeSpec?
-    let audioChallenge: AudioChallengeSpec?
-    let policySource: String?
+public struct SessionPolicy: Codable, Sendable {
+    public let requiresAudio: Bool
+    public let requiresStepup: Bool
+    public let challengeType: String
+    public let challenge: ChallengeSpecWrapper?
+    public let audioChallenge: SpeakPhraseChallenge?
 
     enum CodingKeys: String, CodingKey {
         case requiresAudio = "requires_audio"
@@ -30,28 +29,13 @@ struct SessionPolicy: Decodable {
         case challengeType = "challenge_type"
         case challenge
         case audioChallenge = "audio_challenge"
-        case policySource = "policy_source"
     }
 }
 
-struct AudioChallengeSpec: Decodable {
-    let type: String
-    let seed: String?
-    let phrase: String?
-    let phraseLanguage: String?
-    let totalDurationMs: Int
-
-    enum CodingKeys: String, CodingKey {
-        case type, seed, phrase
-        case phraseLanguage = "phrase_language"
-        case totalDurationMs = "total_duration_ms"
-    }
-}
-
-struct UploadConfig: Decodable {
-    let maxFrames: Int
-    let targetFps: Int
-    let captureDurationMs: Int
+public struct UploadConfig: Codable, Sendable {
+    public let maxFrames: Int
+    public let targetFps: Int
+    public let captureDurationMs: Int
 
     enum CodingKeys: String, CodingKey {
         case maxFrames = "max_frames"

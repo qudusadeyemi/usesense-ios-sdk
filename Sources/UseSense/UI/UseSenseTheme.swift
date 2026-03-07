@@ -1,75 +1,37 @@
-#if canImport(SwiftUI) && canImport(UIKit)
+#if canImport(SwiftUI)
 import SwiftUI
-import UIKit
 
-public struct UseSenseTheme: Sendable {
-    public var primaryColor: Color
-    public var backgroundColor: Color
-    public var buttonCornerRadius: CGFloat
-    public var showResultScreen: Bool
-    public var localization: Localization
+extension Color {
+    public enum UseSense {
+        // Brand & Primary
+        public static let primary = Color(red: 0.31, green: 0.39, blue: 0.96)
+        public static let primaryDark = Color(red: 0.31, green: 0.27, blue: 0.90)
+        public static let primaryLight = Color(red: 0.39, green: 0.40, blue: 0.95)
 
-    public init(
-        primaryColor: Color = Colors.indigo600,
-        backgroundColor: Color = .black,
-        buttonCornerRadius: CGFloat = 16,
-        showResultScreen: Bool = true,
-        localization: Localization = Localization()
-    ) {
-        self.primaryColor = primaryColor
-        self.backgroundColor = backgroundColor
-        self.buttonCornerRadius = buttonCornerRadius
-        self.showResultScreen = showResultScreen
-        self.localization = localization
+        // Semantic Outcomes
+        public static let success = Color(red: 0.06, green: 0.73, blue: 0.51)
+        public static let error = Color(red: 0.94, green: 0.27, blue: 0.27)
+        public static let manualReview = Color(red: 0.96, green: 0.62, blue: 0.04)
+
+        // Neutrals
+        public static let background = Color(red: 0.97, green: 0.98, blue: 0.98)
+        public static let surface = Color.white
+        public static let textPrimary = Color(red: 0.10, green: 0.10, blue: 0.10)
+        public static let textSecondary = Color(red: 0.42, green: 0.45, blue: 0.50)
+        public static let border = Color(red: 0.90, green: 0.91, blue: 0.92)
+
+        // Quality Indicators (indigo guidance theme)
+        public static let qualityCritical = Color(red: 0.49, green: 0.23, blue: 0.93)
+        public static let qualityWarning = Color(red: 0.65, green: 0.55, blue: 0.98)
+        public static let qualityInfo = Color(red: 0.39, green: 0.40, blue: 0.95)
+        public static let criticalBannerText = Color(red: 0.43, green: 0.16, blue: 0.85)
+        public static let warningBannerText = Color(red: 0.49, green: 0.23, blue: 0.93)
+
+        // Challenge-specific
+        public static let challengeDot = Color(red: 0.39, green: 0.40, blue: 0.95)
+        public static let instructionIconBg = Color(red: 0.88, green: 0.91, blue: 1.0)
+        public static let instructionTitle = Color(red: 0.12, green: 0.16, blue: 0.23)
+        public static let instructionBody = Color(red: 0.39, green: 0.44, blue: 0.53)
     }
-
-    public struct Localization: Sendable {
-        public var instructionsTitle: String
-        public var instructionsBody: String
-        public var instructionsButton: String
-        public var faceGuideLabel: String
-        public var faceGuideButton: String
-        public var countdownLabel: String
-        public var baselineLabel: String
-        public var processingLabel: String
-        public var successLabel: String
-        public var failureLabel: String
-        public var retryLabel: String
-
-        public init(
-            instructionsTitle: String = "Identity Verification",
-            instructionsBody: String = "We need to verify you're a real person. Follow the on-screen instructions.",
-            instructionsButton: String = "Got it - Start",
-            faceGuideLabel: String = "Position your face in the oval",
-            faceGuideButton: String = "My face is ready",
-            countdownLabel: String = "Get ready...",
-            baselineLabel: String = "Look straight ahead",
-            processingLabel: String = "Verifying...",
-            successLabel: String = "Verification successful",
-            failureLabel: String = "Verification failed",
-            retryLabel: String = "Try again"
-        ) {
-            self.instructionsTitle = instructionsTitle
-            self.instructionsBody = instructionsBody
-            self.instructionsButton = instructionsButton
-            self.faceGuideLabel = faceGuideLabel
-            self.faceGuideButton = faceGuideButton
-            self.countdownLabel = countdownLabel
-            self.baselineLabel = baselineLabel
-            self.processingLabel = processingLabel
-            self.successLabel = successLabel
-            self.failureLabel = failureLabel
-            self.retryLabel = retryLabel
-        }
-    }
-
-    public struct Colors {
-        public static let indigo500 = Color(red: 99/255, green: 102/255, blue: 241/255)
-        public static let indigo600 = Color(red: 79/255, green: 70/255, blue: 229/255)
-        public static let indigo700 = Color(red: 67/255, green: 56/255, blue: 202/255)
-        public static let violet500 = Color(red: 139/255, green: 92/255, blue: 246/255)
-    }
-
-    public static let `default` = UseSenseTheme()
 }
 #endif

@@ -1,456 +1,421 @@
-#if canImport(UIKit) && canImport(AVFoundation)
-import Foundation
-import UIKit
+#if canImport(AVFoundation) && canImport(UIKit)
 import AVFoundation
+import UIKit
+import Foundation
 
-public struct VerificationRequest: Sendable {
-    public let sessionType: SessionType
-    public let externalUserId: String?
-    public let identityId: String?
-    public let metadata: [String: AnyCodableValue]?
+public final class UseSenseSession: @unchecked Sendable {
+    // MARK: - Public Properties
 
-    public init(
-        sessionType: SessionType = .enrollment,
-        externalUserId: String? = nil,
-        identityId: String? = nil,
-        metadata: [String: AnyCodableValue]? = nil
-    ) {
-        self.sessionType = sessionType
-        self.externalUserId = externalUserId
-        self.identityId = identityId
-        self.metadata = metadata
+    var onStateChange: ((SessionState) -> Void)?
+    var onQualityUpdate: (([QualityGuidance]) -> Void)?
+
+    var previewLayer: AVCaptureVideoPreviewLayer? {
+        frameCaptureManager.previewLayer
     }
-}
 
-@MainActor
-final class UseSenseSessionManager: NSObject, ObservableObject {
-    @Published var state: SessionState = .idle
-    @Published var currentCapturePhase: CapturePhase = .instructions
-    @Published var currentWaypointIndex: Int = 0
-    @Published var currentStepIndex: Int = 0
-    @Published var countdownNumber: Int = 3
+    // MARK: - Private Properties
 
     private let config: UseSenseConfig
-    private let theme: UseSenseTheme
-    private let request: VerificationRequest
-    private let apiClient: UseSenseAPIClient
+    private let sessionType: SessionType
+    private let identityId: String?
+    private let externalUserId: String?
+    private let metadata: [String: AnyCodableValue]?
 
-    let frameCaptureManager = FrameCaptureManager()
+    private let apiClient: UseSenseAPIClient
+    private let eventEmitter: EventEmitter
+    private let frameCaptureManager = FrameCaptureManager()
     private let audioCaptureManager = AudioCaptureManager()
+    private let frameBuffer: FrameBuffer
+    private let qualityAnalyzer = ImageQualityAnalyzer()
+    private let metadataBuilder = MetadataBuilder()
+    private let challengeResponseBuilder = ChallengeResponseBuilder()
     private let deviceSignalCollector = DeviceSignalCollector()
-    private let frameBuffer = FrameBuffer(maxCapacity: 30)
+
+    #if canImport(DeviceCheck) && canImport(CryptoKit)
+    private let appAttestManager = AppAttestManager()
+    #endif
 
     private var sessionData: SessionData?
-    private var challengeResponseBuilder: ChallengeResponseBuilder?
+    private var currentState: SessionState = .idle {
+        didSet { onStateChange?(currentState) }
+    }
+    private var audioRecordingURL: URL?
     private var captureStartTime: Date?
-    private var captureEndTime: Date?
+    private var baselineDuration: TimeInterval = 1.5
 
-    private var challengeTimer: Timer?
-    private var baselineTimer: Timer?
+    // MARK: - Init
 
-    var onResult: ((Result<UseSenseResult, UseSenseError>) -> Void)?
-    var onCancelled: (() -> Void)?
-
-    init(config: UseSenseConfig, theme: UseSenseTheme, request: VerificationRequest) {
+    public init(
+        config: UseSenseConfig,
+        sessionType: SessionType,
+        identityId: String? = nil,
+        externalUserId: String? = nil,
+        metadata: [String: AnyCodableValue]? = nil,
+        eventEmitter: EventEmitter = EventEmitter()
+    ) {
         self.config = config
-        self.theme = theme
-        self.request = request
+        self.sessionType = sessionType
+        self.identityId = identityId
+        self.externalUserId = externalUserId
+        self.metadata = metadata
         self.apiClient = UseSenseAPIClient(config: config)
-        super.init()
+        self.eventEmitter = eventEmitter
+
+        let maxFrames = config.options?.maxFrames ?? 40
+        let targetFps = config.options?.targetFps ?? 15
+        self.frameBuffer = FrameBuffer(maxFrames: maxFrames, targetFps: targetFps)
+
         frameCaptureManager.delegate = self
     }
 
-    // MARK: - Public Flow
+    // MARK: - Public Event Listener
+
+    public func addEventListener(_ callback: @escaping EventCallback) -> () -> Void {
+        eventEmitter.addListener(callback)
+    }
+
+    // MARK: - Session Lifecycle
 
     func start() async {
         do {
-            try frameCaptureManager.configure()
-        } catch {
-            state = .error(error as? UseSenseError ?? UseSenseError(code: .cameraUnavailable, message: error.localizedDescription))
-            return
-        }
+            // Phase 1: App Attest (non-blocking)
+            #if canImport(DeviceCheck) && canImport(CryptoKit)
+            try? await appAttestManager.attestIfNeeded(apiClient: apiClient)
+            #endif
 
-        // Check permissions
+            // Phase 2: Create session
+            let request = CreateSessionRequest(
+                sessionType: sessionType.rawValue,
+                identityId: identityId,
+                externalUserId: externalUserId,
+                metadata: metadata
+            )
+            let response = try await apiClient.createSession(request: request)
+            let data = SessionData(from: response)
+            self.sessionData = data
+
+            eventEmitter.emit(.sessionCreated, data: ["session_id": data.sessionId])
+            currentState = .created(session: data)
+
+            // Phase 3: Check permissions
+            await checkPermissions()
+        } catch let error as UseSenseError {
+            handleError(error)
+        } catch {
+            handleError(UseSenseError(code: .networkError, message: error.localizedDescription))
+        }
+    }
+
+    func requestPermissions() async {
+        eventEmitter.emit(.permissionsRequested)
+
         let cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
         if cameraStatus == .notDetermined {
             let granted = await AVCaptureDevice.requestAccess(for: .video)
             if !granted {
-                state = .error(.cameraPermissionDenied())
+                eventEmitter.emit(.permissionsDenied, data: ["type": "camera"])
+                handleError(UseSenseError(code: .cameraPermissionDenied))
                 return
             }
-        } else if cameraStatus != .authorized {
-            state = .error(.cameraPermissionDenied())
+        } else if cameraStatus == .denied || cameraStatus == .restricted {
+            eventEmitter.emit(.permissionsDenied, data: ["type": "camera"])
+            handleError(UseSenseError(code: .cameraPermissionDenied))
             return
         }
 
-        // Create session
-        do {
-            let apiRequest = CreateSessionRequest(
-                sessionType: request.sessionType.rawValue,
-                identityId: request.identityId,
-                externalUserId: request.externalUserId,
-                metadata: request.metadata
-            )
-            let response = try await apiClient.createSession(request: apiRequest)
-            let session = SessionData(from: response)
-            sessionData = session
-            state = .created(session: session)
-
-            frameCaptureManager.setCaptureParameters(
-                maxFrames: session.upload.maxFrames,
-                targetFps: session.upload.targetFps
-            )
-
-            // Check if audio permission needed
-            if session.policy.requiresAudio == true {
-                let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-                if micStatus == .notDetermined {
-                    let granted = await AVCaptureDevice.requestAccess(for: .audio)
-                    if !granted {
-                        state = .error(.microphonePermissionDenied())
-                        return
-                    }
-                } else if micStatus != .authorized {
-                    state = .error(.microphonePermissionDenied())
+        if needsAudio {
+            let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+            if micStatus == .notDetermined {
+                let granted = await AVCaptureDevice.requestAccess(for: .audio)
+                if !granted {
+                    eventEmitter.emit(.permissionsDenied, data: ["type": "microphone"])
+                    handleError(UseSenseError(code: .micPermissionDenied))
                     return
                 }
+            } else if micStatus == .denied || micStatus == .restricted {
+                eventEmitter.emit(.permissionsDenied, data: ["type": "microphone"])
+                handleError(UseSenseError(code: .micPermissionDenied))
+                return
             }
-
-            frameCaptureManager.startPreview()
-
-            // If there's a challenge, show instructions; otherwise go directly to baseline
-            if let challenge = session.policy.challenge, session.policy.requiresStepup == true {
-                state = .instructions(challenge: challenge)
-                currentCapturePhase = .instructions
-            } else {
-                startBaseline()
-            }
-        } catch {
-            let useSenseError = error as? UseSenseError ?? UseSenseError(code: .sessionCreationFailed, message: error.localizedDescription)
-            state = .error(useSenseError)
-            onResult?(.failure(useSenseError))
         }
+
+        eventEmitter.emit(.permissionsGranted)
+        await startCapturePipeline()
     }
 
-    func didTapInstructionsButton() {
-        state = .faceGuide
-        currentCapturePhase = .faceGuide
+    func proceedFromInstructions() async {
+        await startFaceGuide()
     }
 
-    func didTapFaceReady() {
-        startBaseline()
+    func challengeCompleted() async {
+        eventEmitter.emit(.challengeCompleted)
+        frameCaptureManager.stop()
+        await stopAudioIfNeeded()
+        await uploadAndComplete()
+    }
+
+    func challengeStepReached(_ index: Int) {
+        challengeResponseBuilder.recordStep(index: index)
+    }
+
+    func retry() async {
+        frameBuffer.reset()
+        challengeResponseBuilder.reset()
+        currentState = .idle
+        await start()
     }
 
     func cancel() {
-        cleanup()
-        onCancelled?()
+        frameCaptureManager.stop()
+        audioCaptureManager.cleanup()
+        frameBuffer.reset()
+        currentState = .error(UseSenseError(code: .userCancelled))
     }
 
-    // MARK: - Capture Flow
+    // MARK: - Private Flow
 
-    private func startBaseline() {
-        currentCapturePhase = .baseline
-        state = .baseline(remaining: 2.0)
-        captureStartTime = Date()
-        frameCaptureManager.startCapture()
-        deviceSignalCollector.startSensorCapture()
+    private func checkPermissions() async {
+        let cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        var needed: [PermissionType] = []
 
-        // Start audio recording if required
-        if sessionData?.policy.requiresAudio == true {
-            if let audioDuration = sessionData?.policy.audioChallenge?.totalDurationMs {
-                try? audioCaptureManager.startRecording(durationMs: audioDuration)
-            }
+        if cameraStatus != .authorized { needed.append(.camera) }
+        if needsAudio {
+            let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+            if micStatus != .authorized { needed.append(.microphone) }
         }
 
-        // After 2 seconds, move to countdown or challenge
-        baselineTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.baselineComplete()
-            }
-        }
-    }
-
-    private func baselineComplete() {
-        guard let session = sessionData else { return }
-
-        if session.policy.challenge != nil && session.policy.requiresStepup == true {
-            startCountdown()
+        if needed.isEmpty {
+            eventEmitter.emit(.permissionsGranted)
+            await startCapturePipeline()
         } else {
-            captureComplete()
+            currentState = .permissionsRequired(permissions: needed)
         }
     }
 
-    private func startCountdown() {
-        currentCapturePhase = .countdown
-        countdownNumber = 3
-        state = .countdown(number: 3)
-
-        let feedbackGenerator = UIImpactFeedbackGenerator(style: .medium)
-
-        var count = 3
-        challengeTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
-            Task { @MainActor in
-                guard let self = self else { timer.invalidate(); return }
-                count -= 1
-                if count > 0 {
-                    self.countdownNumber = count
-                    self.state = .countdown(number: count)
-                    feedbackGenerator.impactOccurred()
-                } else {
-                    timer.invalidate()
-                    self.startChallenge()
-                }
-            }
-        }
-        feedbackGenerator.impactOccurred()
-    }
-
-    private func startChallenge() {
-        guard let session = sessionData, let challenge = session.policy.challenge else {
-            captureComplete()
+    private func startCapturePipeline() async {
+        do {
+            try frameCaptureManager.configure()
+        } catch {
+            handleError(UseSenseError(code: .cameraPermissionDenied, message: "Failed to configure camera: \(error.localizedDescription)"))
             return
         }
 
-        currentCapturePhase = .challenge
-        state = .challenge(spec: challenge)
-        challengeResponseBuilder = ChallengeResponseBuilder(spec: challenge)
-        challengeResponseBuilder?.markStarted()
-        currentWaypointIndex = 0
-        currentStepIndex = 0
-        challengeResponseBuilder?.setCurrentStep(0)
-
-        let feedbackGenerator = UIImpactFeedbackGenerator(style: .light)
-
-        switch challenge.type {
-        case .followDot:
-            guard let waypoints = challenge.waypoints, !waypoints.isEmpty else {
-                captureComplete()
-                return
-            }
-            runWaypoints(waypoints, durationPerStep: waypoints.first?.durationMs ?? 1500, feedback: feedbackGenerator)
-
-        case .headTurn:
-            guard let sequence = challenge.sequence, !sequence.isEmpty else {
-                captureComplete()
-                return
-            }
-            runHeadTurnSequence(sequence, feedback: feedbackGenerator)
-
-        case .speakPhrase:
-            let duration = TimeInterval(challenge.totalDurationMs) / 1000.0
-            challengeTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
-                Task { @MainActor in
-                    self?.challengeResponseBuilder?.markCompleted()
-                    self?.captureComplete()
-                }
-            }
+        // Show instructions if there's a challenge
+        if let challenge = sessionData?.policy.challenge {
+            currentState = .instructions(challenge: challenge)
+        } else {
+            await startFaceGuide()
         }
     }
 
-    private func runWaypoints(_ waypoints: [Waypoint], durationPerStep: Int, feedback: UIImpactFeedbackGenerator) {
-        var stepIndex = 0
-        let stepDuration = TimeInterval(durationPerStep) / 1000.0
+    private func startFaceGuide() async {
+        frameCaptureManager.start()
+        currentState = .faceGuide
 
-        challengeTimer = Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { [weak self] timer in
-            Task { @MainActor in
-                guard let self = self else { timer.invalidate(); return }
-                stepIndex += 1
-                if stepIndex < waypoints.count {
-                    self.currentWaypointIndex = stepIndex
-                    self.challengeResponseBuilder?.setCurrentStep(stepIndex)
-                    feedback.impactOccurred()
-                } else {
-                    timer.invalidate()
-                    self.challengeResponseBuilder?.markCompleted()
-                    self.captureComplete()
-                }
-            }
+        // Wait briefly for face positioning
+        try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+
+        await startBaseline()
+    }
+
+    private func startBaseline() async {
+        eventEmitter.emit(.captureStarted)
+        captureStartTime = Date()
+        frameBuffer.reset()
+        currentState = .baseline(remaining: baselineDuration)
+
+        // Start audio if needed
+        if needsAudio {
+            startAudioRecording()
+        }
+
+        // Wait for baseline duration
+        try? await Task.sleep(nanoseconds: UInt64(baselineDuration * 1_000_000_000))
+
+        // Countdown
+        for i in stride(from: 3, through: 1, by: -1) {
+            currentState = .countdown(number: i)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+
+        // Start challenge phase
+        challengeResponseBuilder.start()
+        if let challenge = sessionData?.policy.challenge {
+            eventEmitter.emit(.challengeStarted, data: ["type": challenge.challengeType.rawValue])
+            currentState = .challenge(spec: challenge)
+        } else {
+            // No challenge, just capture for the configured duration
+            let captureDurationMs = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 2500
+            try? await Task.sleep(nanoseconds: UInt64(captureDurationMs) * 1_000_000)
+            frameCaptureManager.stop()
+            await stopAudioIfNeeded()
+            await uploadAndComplete()
         }
     }
 
-    private func runHeadTurnSequence(_ sequence: [HeadTurnStep], feedback: UIImpactFeedbackGenerator) {
-        var stepIndex = 0
-
-        func runStep() {
-            guard stepIndex < sequence.count else {
-                challengeResponseBuilder?.markCompleted()
-                captureComplete()
-                return
-            }
-
-            let step = sequence[stepIndex]
-            currentStepIndex = stepIndex
-            challengeResponseBuilder?.setCurrentStep(stepIndex)
-            feedback.impactOccurred()
-
-            let duration = TimeInterval(step.durationMs) / 1000.0
-            challengeTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
-                Task { @MainActor in
-                    stepIndex += 1
-                    self?.runHeadTurnStep(sequence: sequence, currentIndex: stepIndex, feedback: feedback)
-                }
-            }
+    private func startAudioRecording() {
+        eventEmitter.emit(.audioRecordStarted)
+        do {
+            audioRecordingURL = try audioCaptureManager.startRecording()
+        } catch {
+            // Audio failure should not block verification
         }
-
-        runStep()
     }
 
-    private func runHeadTurnStep(sequence: [HeadTurnStep], currentIndex: Int, feedback: UIImpactFeedbackGenerator) {
-        guard currentIndex < sequence.count else {
-            challengeResponseBuilder?.markCompleted()
-            captureComplete()
+    private func stopAudioIfNeeded() async {
+        if audioCaptureManager.isRecording {
+            _ = audioCaptureManager.stopRecording()
+            eventEmitter.emit(.audioRecordCompleted)
+        }
+    }
+
+    private func uploadAndComplete() async {
+        guard let session = sessionData else {
+            handleError(UseSenseError(code: .unknownError, message: "No session data available."))
             return
         }
 
-        let step = sequence[currentIndex]
-        currentStepIndex = currentIndex
-        challengeResponseBuilder?.setCurrentStep(currentIndex)
-        feedback.impactOccurred()
-
-        let duration = TimeInterval(step.durationMs) / 1000.0
-        challengeTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                self?.runHeadTurnStep(sequence: sequence, currentIndex: currentIndex + 1, feedback: feedback)
-            }
+        guard !session.isExpired else {
+            handleError(UseSenseError(code: .sessionExpired))
+            return
         }
-    }
 
-    private func captureComplete() {
-        currentCapturePhase = .done
-        frameCaptureManager.stopCapture()
-        captureEndTime = Date()
-        deviceSignalCollector.stopSensorCapture()
-
-        let audioData = audioCaptureManager.stopRecording()
-
-        let feedbackGenerator = UINotificationFeedbackGenerator()
-        feedbackGenerator.notificationOccurred(.success)
-
-        Task {
-            await uploadAndComplete(audioData: audioData)
-        }
-    }
-
-    // MARK: - Upload & Complete
-
-    private func uploadAndComplete(audioData: Data?) async {
-        guard let session = sessionData else { return }
-
-        state = .uploading(progress: 0.5)
-
-        let frames = frameBuffer.allFrames()
-        let timestamps = frameBuffer.allTimestamps()
-
+        // Build signals
+        let frames = frameBuffer.getFrames()
         guard !frames.isEmpty else {
-            let error = UseSenseError(code: .noFramesCaptured, message: "No frames were captured during the session.")
-            state = .error(error)
-            onResult?(.failure(error))
+            handleError(UseSenseError(code: .unknownError, message: "No frames captured."))
             return
         }
 
-        // Build challenge response
-        let challengePayload = challengeResponseBuilder?.build(frameTimestamps: timestamps)
+        eventEmitter.emit(.captureCompleted, data: ["frame_count": "\(frames.count)"])
+
+        // Get App Attest token
+        var appAttestToken: String?
+        #if canImport(DeviceCheck) && canImport(CryptoKit)
+        appAttestToken = await appAttestManager.generateAssertionSafe(nonce: session.nonce)
+        #endif
+
+        let integritySignals = deviceSignalCollector.collect(appAttestToken: appAttestToken)
 
         // Build metadata
-        let webIntegrity = deviceSignalCollector.collectSignals()
-        let deviceTelemetry = deviceSignalCollector.collectDeviceTelemetry()
-
-        guard let metadataJSON = MetadataBuilder.build(
-            challengeResponse: challengePayload,
-            webIntegrity: webIntegrity,
-            deviceTelemetry: deviceTelemetry,
-            captureStartTime: captureStartTime ?? Date(),
-            captureEndTime: captureEndTime ?? Date(),
-            framesCount: frames.count,
-            frameTimestamps: timestamps
-        ) else {
-            let error = UseSenseError(code: .encodingFailed, message: "Failed to build metadata.")
-            state = .error(error)
-            onResult?(.failure(error))
+        let metadataData: Data
+        do {
+            let captureDurationMs = captureStartTime.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
+            metadataData = try metadataBuilder.build(
+                sessionId: session.sessionId,
+                nonce: session.nonce,
+                challenge: session.policy.challenge,
+                captureDurationMs: captureDurationMs,
+                frameTimestamps: frameBuffer.getTimestamps(),
+                hasAudio: audioCaptureManager.isRecording || audioRecordingURL != nil,
+                integritySignals: integritySignals
+            )
+        } catch {
+            handleError(UseSenseError(code: .unknownError, message: "Failed to build metadata."))
             return
         }
 
-        // Upload signals
+        // Get audio data
+        let audioData: Data?
+        if let url = audioRecordingURL {
+            audioData = try? Data(contentsOf: url)
+            try? FileManager.default.removeItem(at: url)
+        } else {
+            audioData = audioCaptureManager.stopRecording()
+        }
+
+        // Upload
+        currentState = .uploading(progress: 0)
+        eventEmitter.emit(.uploadStarted)
+
         do {
             _ = try await apiClient.uploadSignals(
                 sessionId: session.sessionId,
-                sessionData: session,
+                sessionToken: session.sessionToken,
+                nonce: session.nonce,
                 frames: frames,
-                metadata: metadataJSON,
+                metadata: metadataData,
                 audio: audioData
             )
+            eventEmitter.emit(.uploadCompleted)
+            currentState = .uploading(progress: 1.0)
+        } catch let error as UseSenseError {
+            handleError(error)
+            return
         } catch {
-            let useSenseError = error as? UseSenseError ?? UseSenseError(code: .uploadFailed, message: error.localizedDescription)
-            state = .error(useSenseError)
-            onResult?(.failure(useSenseError))
+            handleError(UseSenseError(code: .networkError, message: error.localizedDescription))
             return
         }
 
-        // Complete session
-        state = .completing
+        // Complete
+        currentState = .completing
+        eventEmitter.emit(.completeStarted)
 
         do {
-            let verdict = try await apiClient.completeSession(sessionId: session.sessionId, sessionData: session)
-            let result = makeResult(from: verdict)
-            state = .done(result: result)
-            onResult?(.success(result))
+            let fullDecision = try await apiClient.completeSession(
+                sessionId: session.sessionId,
+                sessionToken: session.sessionToken,
+                nonce: session.nonce
+            )
+            let redacted = fullDecision.redacted()
+            eventEmitter.emit(.decisionReceived, data: ["decision": redacted.decision])
+            currentState = .done(decision: redacted)
+        } catch let error as UseSenseError {
+            handleError(error)
         } catch {
-            let useSenseError = error as? UseSenseError ?? UseSenseError(code: .sessionCreationFailed, message: error.localizedDescription)
-            state = .error(useSenseError)
-            onResult?(.failure(useSenseError))
+            handleError(UseSenseError(code: .serverError, message: error.localizedDescription))
         }
     }
 
-    private func makeResult(from verdict: VerdictResponse) -> UseSenseResult {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    // MARK: - Helpers
 
-        return UseSenseResult(
-            sessionId: verdict.sessionId,
-            sessionType: SessionType(rawValue: verdict.sessionType) ?? .enrollment,
-            identityId: verdict.identityId,
-            decision: Decision(rawValue: verdict.decision) ?? .error,
-            channelTrustScore: verdict.channelTrustScore,
-            livenessScore: verdict.livenessScore,
-            dedupeRiskScore: verdict.dedupeRiskScore,
-            pillarVerdicts: verdict.pillarVerdicts,
-            reasons: verdict.reasons,
-            timestamp: formatter.date(from: verdict.timestamp) ?? Date(),
-            signature: verdict.signature,
-            rawResponse: verdict
-        )
+    private var needsAudio: Bool {
+        guard let policy = sessionData?.policy else {
+            switch config.options?.audioEnabled {
+            case .always: return true
+            case .never: return false
+            default: return false
+            }
+        }
+        if policy.requiresAudio { return true }
+        if policy.audioChallenge != nil { return true }
+        switch config.options?.audioEnabled {
+        case .always: return true
+        case .never: return false
+        default: return policy.requiresAudio
+        }
     }
 
-    private func cleanup() {
-        challengeTimer?.invalidate()
-        challengeTimer = nil
-        baselineTimer?.invalidate()
-        baselineTimer = nil
-        frameCaptureManager.stopCapture()
-        frameCaptureManager.stopPreview()
-        deviceSignalCollector.stopSensorCapture()
-        _ = audioCaptureManager.stopRecording()
-        frameBuffer.reset()
-    }
-
-    deinit {
-        challengeTimer?.invalidate()
-        baselineTimer?.invalidate()
+    private func handleError(_ error: UseSenseError) {
+        eventEmitter.emit(.error, data: ["code": error.code.rawValue, "message": error.message])
+        currentState = .error(error)
     }
 }
 
 // MARK: - FrameCaptureDelegate
 
-extension UseSenseSessionManager: FrameCaptureDelegate {
-    nonisolated func frameCaptureManager(_ manager: FrameCaptureManager, didCaptureFrame data: Data, index: Int, timestampMs: Int) {
-        frameBuffer.append(frame: data, timestampMs: timestampMs)
-        Task { @MainActor in
-            challengeResponseBuilder?.recordFrame(index: index)
+extension UseSenseSession: FrameCaptureDelegate {
+    func frameCaptureManager(_ manager: FrameCaptureManager, didCapture pixelBuffer: CVPixelBuffer, timestamp: CMTime) {
+        // Quality analysis at 4Hz
+        if qualityAnalyzer.shouldAnalyze() {
+            let report = qualityAnalyzer.analyze(pixelBuffer)
+            onQualityUpdate?(report.guidanceMessages)
+            eventEmitter.emit(.imageQualityCheck, data: [
+                "score": String(format: "%.1f", report.overallScore),
+                "blur": String(format: "%.1f", report.laplacianVariance),
+                "brightness": String(format: "%.1f", report.meanBrightness)
+            ])
+        }
+
+        // Frame capture at target FPS
+        if frameBuffer.shouldCapture() && !frameBuffer.isFull {
+            frameBuffer.addFrame(pixelBuffer, timestamp: CMTimeGetSeconds(timestamp))
+            eventEmitter.emit(.frameCaptured, data: ["count": "\(frameBuffer.count)"])
         }
     }
 
-    nonisolated func frameCaptureManagerDidReachFrameLimit(_ manager: FrameCaptureManager) {
-        // Frame limit reached - capture will stop naturally
+    func frameCaptureManager(_ manager: FrameCaptureManager, didFailWithError error: Error) {
+        handleError(UseSenseError(code: .unknownError, message: "Camera error: \(error.localizedDescription)"))
     }
 }
 #endif

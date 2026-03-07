@@ -1,36 +1,26 @@
-#if canImport(AVFoundation) && canImport(UIKit)
+#if canImport(AVFoundation)
 import AVFoundation
-import UIKit
+import Foundation
 
 protocol FrameCaptureDelegate: AnyObject {
-    func frameCaptureManager(_ manager: FrameCaptureManager, didCaptureFrame data: Data, index: Int, timestampMs: Int)
-    func frameCaptureManagerDidReachFrameLimit(_ manager: FrameCaptureManager)
+    func frameCaptureManager(_ manager: FrameCaptureManager, didCapture pixelBuffer: CVPixelBuffer, timestamp: CMTime)
+    func frameCaptureManager(_ manager: FrameCaptureManager, didFailWithError error: Error)
 }
 
 final class FrameCaptureManager: NSObject, @unchecked Sendable {
     weak var delegate: FrameCaptureDelegate?
 
-    let captureSession = AVCaptureSession()
+    private let captureSession = AVCaptureSession()
     private let videoOutput = AVCaptureVideoDataOutput()
-    private let captureQueue = DispatchQueue(label: "com.usesense.capture", qos: .userInteractive)
-    private let encodingQueue = DispatchQueue(label: "com.usesense.encode", qos: .userInitiated)
+    private let sessionQueue = DispatchQueue(label: "com.usesense.capture.session")
+    private let outputQueue = DispatchQueue(label: "com.usesense.capture.output", qos: .userInitiated)
 
-    private var isCapturing = false
-    private var frameCount = 0
-    private var maxFrames: Int = 30
-    private var captureInterval: TimeInterval = 0.5
-    private var lastCaptureTime: CFAbsoluteTime = 0
-    private var captureStartTime: CFAbsoluteTime = 0
-
-    private lazy var ciContext = CIContext()
+    private(set) var isRunning = false
+    private var isMirrored = false
 
     var previewLayer: AVCaptureVideoPreviewLayer {
         let layer = AVCaptureVideoPreviewLayer(session: captureSession)
         layer.videoGravity = .resizeAspectFill
-        if let connection = layer.connection, connection.isVideoMirroringSupported {
-            connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored = true
-        }
         return layer
     }
 
@@ -38,102 +28,66 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
         captureSession.beginConfiguration()
         defer { captureSession.commitConfiguration() }
 
-        captureSession.sessionPreset = .vga640x480
+        captureSession.sessionPreset = .hd1280x720
 
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
-              let input = try? AVCaptureDeviceInput(device: device)
-        else {
-            throw UseSenseError.cameraUnavailable()
+        guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
+            throw UseSenseError(code: .cameraPermissionDenied, message: "No front camera available.")
         }
 
-        if captureSession.canAddInput(input) {
-            captureSession.addInput(input)
+        let input = try AVCaptureDeviceInput(device: camera)
+        guard captureSession.canAddInput(input) else {
+            throw UseSenseError(code: .unknownError, message: "Cannot add camera input.")
         }
+        captureSession.addInput(input)
 
-        videoOutput.setSampleBufferDelegate(self, queue: captureQueue)
         videoOutput.alwaysDiscardsLateVideoFrames = true
         videoOutput.videoSettings = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
+        videoOutput.setSampleBufferDelegate(self, queue: outputQueue)
 
-        if captureSession.canAddOutput(videoOutput) {
-            captureSession.addOutput(videoOutput)
+        guard captureSession.canAddOutput(videoOutput) else {
+            throw UseSenseError(code: .unknownError, message: "Cannot add video output.")
         }
+        captureSession.addOutput(videoOutput)
 
-        // Non-mirrored raw frames for upload
+        // Disable mirroring for raw frames
         if let connection = videoOutput.connection(with: .video) {
             connection.isVideoMirrored = false
-            connection.videoOrientation = .portrait
+            isMirrored = false
         }
     }
 
-    func setCaptureParameters(maxFrames: Int, targetFps: Int) {
-        self.maxFrames = maxFrames
-        self.captureInterval = 1.0 / Double(targetFps)
-    }
-
-    func startPreview() {
-        captureQueue.async { [weak self] in
-            self?.captureSession.startRunning()
+    func start() {
+        sessionQueue.async { [weak self] in
+            guard let self = self, !self.captureSession.isRunning else { return }
+            self.captureSession.startRunning()
+            self.isRunning = true
         }
     }
 
-    func stopPreview() {
-        captureQueue.async { [weak self] in
-            self?.captureSession.stopRunning()
+    func stop() {
+        sessionQueue.async { [weak self] in
+            guard let self = self, self.captureSession.isRunning else { return }
+            self.captureSession.stopRunning()
+            self.isRunning = false
         }
     }
 
-    func startCapture() {
-        frameCount = 0
-        captureStartTime = CFAbsoluteTimeGetCurrent()
-        lastCaptureTime = 0
-        isCapturing = true
-    }
-
-    func stopCapture() {
-        isCapturing = false
-    }
-
-    var currentFrameCount: Int { frameCount }
-
-    private func encodeToJPEG(_ sampleBuffer: CMSampleBuffer, quality: CGFloat = 0.82) -> Data? {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return nil }
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        return ciContext.jpegRepresentation(
-            of: ciImage,
-            colorSpace: colorSpace,
-            options: [kCGImageDestinationLossyCompressionQuality as CIImageRepresentationOption: quality]
-        )
+    func captureCurrentFrame() -> CVPixelBuffer? {
+        return nil // Frames come through delegate
     }
 }
 
 extension FrameCaptureManager: AVCaptureVideoDataOutputSampleBufferDelegate {
-    func captureOutput(
-        _ output: AVCaptureOutput,
-        didOutput sampleBuffer: CMSampleBuffer,
-        from connection: AVCaptureConnection
-    ) {
-        guard isCapturing else { return }
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        delegate?.frameCaptureManager(self, didCapture: pixelBuffer, timestamp: timestamp)
+    }
 
-        let now = CFAbsoluteTimeGetCurrent()
-        let elapsed = now - lastCaptureTime
-
-        guard elapsed >= captureInterval, frameCount < maxFrames else { return }
-
-        lastCaptureTime = now
-        let index = frameCount
-        frameCount += 1
-        let timestampMs = Int((now - captureStartTime) * 1000)
-
-        encodingQueue.async { [weak self] in
-            guard let self = self, let data = self.encodeToJPEG(sampleBuffer) else { return }
-            self.delegate?.frameCaptureManager(self, didCaptureFrame: data, index: index, timestampMs: timestampMs)
-            if self.frameCount >= self.maxFrames {
-                self.delegate?.frameCaptureManagerDidReachFrameLimit(self)
-            }
-        }
+    func captureOutput(_ output: AVCaptureOutput, didDrop sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        // Frame dropped, no action needed
     }
 }
 #endif

@@ -3,37 +3,35 @@ import SwiftUI
 
 struct CountdownOverlay: View {
     let number: Int
-    let label: String
+
+    @State private var scale: CGFloat = 0.3
+    @State private var opacity: Double = 0
 
     var body: some View {
         ZStack {
             Color.black.opacity(0.4)
+                .ignoresSafeArea()
 
-            VStack(spacing: 12) {
-                Text("\(number)")
-                    .font(.system(size: 64, weight: .black))
-                    .foregroundColor(UseSenseTheme.Colors.indigo600)
-                    .frame(width: 112, height: 112)
-                    .background(Circle().fill(Color.white.opacity(0.95)))
-                    .shadow(radius: 12)
-                    .scaleEffect(scaleForNumber)
-                    .animation(.interpolatingSpring(stiffness: 200, damping: 12), value: number)
-
-                Text(label)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(Color.black.opacity(0.6)))
-            }
+            Text("\(number)")
+                .font(.system(size: 96, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+                .scaleEffect(scale)
+                .opacity(opacity)
+                .onAppear {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
+                        scale = 1.0
+                        opacity = 1.0
+                    }
+                }
+                .onChange(of: number) { _ in
+                    scale = 0.3
+                    opacity = 0
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
+                        scale = 1.0
+                        opacity = 1.0
+                    }
+                }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(number). \(label)")
-    }
-
-    private var scaleForNumber: CGFloat {
-        // Pop effect
-        1.0
     }
 }
 #endif

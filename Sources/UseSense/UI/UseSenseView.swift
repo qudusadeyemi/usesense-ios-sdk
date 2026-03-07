@@ -2,246 +2,323 @@
 import SwiftUI
 import AVFoundation
 
-struct UseSenseVerificationView: View {
-    @StateObject private var session: UseSenseSessionManager
-    @Environment(\.dismiss) private var dismiss
-    private let theme: UseSenseTheme
+public struct UseSenseView: View {
+    @ObservedObject private var viewModel: UseSenseViewModel
+    private let onComplete: (Result<RedactedDecisionObject, UseSenseError>) -> Void
+    private let onCancel: (() -> Void)?
 
-    init(
-        config: UseSenseConfig,
-        theme: UseSenseTheme,
-        request: VerificationRequest,
-        onResult: @escaping (Result<UseSenseResult, UseSenseError>) -> Void,
-        onCancelled: @escaping () -> Void
+    public init(
+        session: UseSenseSession,
+        onComplete: @escaping (Result<RedactedDecisionObject, UseSenseError>) -> Void,
+        onCancel: (() -> Void)? = nil
     ) {
-        let manager = UseSenseSessionManager(config: config, theme: theme, request: request)
-        manager.onResult = onResult
-        manager.onCancelled = onCancelled
-        _session = StateObject(wrappedValue: manager)
-        self.theme = theme
+        self._viewModel = ObservedObject(wrappedValue: UseSenseViewModel(session: session))
+        self.onComplete = onComplete
+        self.onCancel = onCancel
     }
 
-    var body: some View {
+    public var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            switch session.state {
-            case .idle, .created:
+            switch viewModel.state {
+            case .idle:
                 ProgressView()
-                    .tint(UseSenseTheme.Colors.indigo500)
+                    .tint(.white)
+                    .onAppear { viewModel.start() }
+
+            case .created:
+                ProgressView("Creating session...")
+                    .tint(.white)
+                    .foregroundColor(.white)
 
             case .permissionsRequired:
                 permissionsView
 
             case .instructions(let challenge):
-                InstructionsView(
-                    theme: theme,
-                    challengeType: challenge.type,
-                    onStart: { session.didTapInstructionsButton() }
-                )
+                InstructionsView(challenge: challenge) {
+                    viewModel.continueFromInstructions()
+                }
 
             case .faceGuide:
-                cameraWithOverlay {
-                    FaceGuideOverlay(
-                        label: theme.localization.faceGuideLabel,
-                        buttonLabel: theme.localization.faceGuideButton,
-                        onReady: { session.didTapFaceReady() }
-                    )
-                }
+                cameraWithFaceGuide
 
             case .baseline:
-                cameraWithOverlay {
-                    baselineOverlay
-                }
+                cameraWithFaceGuide
 
             case .countdown(let number):
-                cameraWithOverlay {
-                    CountdownOverlay(number: number, label: theme.localization.countdownLabel)
+                ZStack {
+                    cameraLayer
+                    CountdownOverlay(number: number)
                 }
 
             case .challenge(let spec):
-                cameraWithOverlay {
-                    challengeOverlay(for: spec)
+                ZStack {
+                    cameraLayer
+                    challengeOverlay(spec)
                 }
 
             case .uploading(let progress):
-                ProcessingView(label: "Uploading...", progress: progress)
+                ProcessingView(
+                    title: "Uploading",
+                    subtitle: "Sending verification data...",
+                    progress: progress
+                )
 
             case .completing:
-                ProcessingView(label: theme.localization.processingLabel, progress: nil)
+                ProcessingView(
+                    title: "Verifying",
+                    subtitle: "Analyzing your identity..."
+                )
 
-            case .done(let result):
-                if theme.showResultScreen {
-                    resultView(result: result)
+            case .done(let decision):
+                ResultView(decision: decision) {
+                    onComplete(.success(decision))
                 }
 
             case .error(let error):
-                errorView(error: error)
+                errorView(error)
             }
         }
-        .statusBarHidden(true)
-        .task { await session.start() }
-    }
-
-    // MARK: - Subviews
-
-    private func cameraWithOverlay<Overlay: View>(@ViewBuilder overlay: () -> Overlay) -> some View {
-        ZStack {
-            CameraPreviewView(session: session.frameCaptureManager.captureSession)
-                .ignoresSafeArea()
-            overlay()
+        .statusBarHidden(viewModel.isCameraActive)
+        .onChange(of: viewModel.completionResult) { result in
+            if let result = result {
+                onComplete(result)
+            }
         }
     }
 
-    private var baselineOverlay: some View {
-        VStack {
-            Text(theme.localization.baselineLabel)
-                .font(.subheadline.weight(.medium))
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(UseSenseTheme.Colors.indigo500.opacity(0.9)))
-                .padding(.top, 60)
-            Spacer()
-        }
-    }
+    // MARK: - Camera Views
 
-    private func challengeOverlay(for spec: ChallengeSpec) -> some View {
+    private var cameraLayer: some View {
         Group {
-            switch spec.type {
-            case .followDot:
-                if let waypoints = spec.waypoints {
-                    FollowDotChallengeView(
-                        waypoints: waypoints,
-                        dotSizePx: spec.dotSizePx ?? 20,
-                        currentWaypointIndex: $session.currentWaypointIndex
-                    )
-                }
-            case .headTurn:
-                if let sequence = spec.sequence {
-                    HeadTurnChallengeView(
-                        sequence: sequence,
-                        currentStepIndex: $session.currentStepIndex
-                    )
-                }
-            case .speakPhrase:
-                SpeakPhraseChallengeView(
-                    phrase: spec.phrase ?? ""
-                )
+            if let previewLayer = viewModel.previewLayer {
+                CameraPreviewView(previewLayer: previewLayer)
+                    .ignoresSafeArea()
+            } else {
+                Color.black
             }
         }
     }
+
+    private var cameraWithFaceGuide: some View {
+        ZStack {
+            cameraLayer
+            FaceGuideOverlay(qualityGuidance: viewModel.qualityGuidance)
+
+            // Close button
+            VStack {
+                HStack {
+                    Spacer()
+                    closeButton
+                }
+                Spacer()
+            }
+            .padding()
+        }
+    }
+
+    // MARK: - Challenge Overlay
+
+    @ViewBuilder
+    private func challengeOverlay(_ spec: ChallengeSpecWrapper) -> some View {
+        switch spec {
+        case .followDot(let challenge):
+            FollowDotChallengeView(
+                challenge: challenge,
+                onComplete: { viewModel.challengeCompleted() },
+                onStepReached: { viewModel.challengeStepReached($0) }
+            )
+        case .headTurn(let challenge):
+            HeadTurnChallengeView(
+                challenge: challenge,
+                onComplete: { viewModel.challengeCompleted() },
+                onStepReached: { viewModel.challengeStepReached($0) }
+            )
+        case .speakPhrase(let challenge):
+            SpeakPhraseChallengeView(
+                challenge: challenge,
+                onComplete: { viewModel.challengeCompleted() }
+            )
+        }
+    }
+
+    // MARK: - Permissions View
 
     private var permissionsView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "camera.fill")
-                .font(.system(size: 48))
-                .foregroundColor(UseSenseTheme.Colors.indigo500)
-            Text("Camera access is required for verification.")
-                .font(.body)
-                .foregroundColor(.white)
-                .multilineTextAlignment(.center)
-        }
-        .padding()
-    }
-
-    private func resultView(result: UseSenseResult) -> some View {
         VStack(spacing: 24) {
             Spacer()
 
-            Image(systemName: result.decision == .approve ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .font(.system(size: 72))
-                .foregroundColor(result.decision == .approve ? .green : .red)
+            VStack(spacing: 20) {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(Color.UseSense.primary)
 
-            Text(result.decision == .approve ? theme.localization.successLabel : theme.localization.failureLabel)
-                .font(.title2.weight(.bold))
-                .foregroundColor(.white)
+                Text("Camera Access Required")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(Color.UseSense.textPrimary)
+
+                Text("We need camera access to verify your identity. Your privacy is protected.")
+                    .font(.system(size: 16))
+                    .foregroundColor(Color.UseSense.textSecondary)
+                    .multilineTextAlignment(.center)
+
+                Button(action: { viewModel.requestPermissions() }) {
+                    Text("Grant Access")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background(Color.UseSense.primary)
+                        .cornerRadius(12)
+                }
+            }
+            .padding(32)
+            .background(Color.UseSense.surface)
+            .cornerRadius(24)
+            .shadow(color: .black.opacity(0.1), radius: 16, y: 4)
+            .padding(.horizontal, 24)
 
             Spacer()
-
-            Button("Done") { dismiss() }
-                .font(.body.weight(.bold))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(RoundedRectangle(cornerRadius: theme.buttonCornerRadius).fill(UseSenseTheme.Colors.indigo600))
-                .padding(.horizontal, 24)
-                .padding(.bottom, 48)
         }
-        .background(Color.black)
+        .background(Color.UseSense.background.ignoresSafeArea())
     }
 
-    private func errorView(error: UseSenseError) -> some View {
+    // MARK: - Error View
+
+    private func errorView(_ error: UseSenseError) -> some View {
         VStack(spacing: 24) {
             Spacer()
 
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 56))
-                .foregroundColor(.orange)
+            VStack(spacing: 20) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(Color.UseSense.error)
 
-            Text(error.message)
-                .font(.body)
-                .foregroundColor(.white)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                Text("Something went wrong")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(Color.UseSense.textPrimary)
+
+                Text(error.message)
+                    .font(.system(size: 16))
+                    .foregroundColor(Color.UseSense.textSecondary)
+                    .multilineTextAlignment(.center)
+
+                HStack(spacing: 12) {
+                    Button(action: { viewModel.retry() }) {
+                        Text("Retry")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 52)
+                            .background(Color.UseSense.primary)
+                            .cornerRadius(12)
+                    }
+
+                    if let onCancel = onCancel {
+                        Button(action: {
+                            onCancel()
+                        }) {
+                            Text("Cancel")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundColor(Color.UseSense.textPrimary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 52)
+                                .background(Color.UseSense.border)
+                                .cornerRadius(12)
+                        }
+                    }
+                }
+            }
+            .padding(32)
+            .background(Color.UseSense.surface)
+            .cornerRadius(24)
+            .shadow(color: .black.opacity(0.1), radius: 16, y: 4)
+            .padding(.horizontal, 24)
 
             Spacer()
-
-            Button("Close") { dismiss() }
-                .font(.body.weight(.bold))
-                .foregroundColor(.white)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .background(RoundedRectangle(cornerRadius: theme.buttonCornerRadius).fill(UseSenseTheme.Colors.indigo600))
-                .padding(.horizontal, 24)
-                .padding(.bottom, 48)
         }
-        .background(Color.black)
+        .background(Color.UseSense.background.ignoresSafeArea())
+    }
+
+    // MARK: - Close Button
+
+    private var closeButton: some View {
+        Button(action: {
+            viewModel.cancel()
+            onCancel?()
+        }) {
+            Image(systemName: "xmark")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 36, height: 36)
+                .background(Color.black.opacity(0.5))
+                .clipShape(Circle())
+        }
     }
 }
 
-// MARK: - View Modifier for SwiftUI Integration
+// MARK: - ViewModel
 
-public struct UseSenseVerificationModifier: ViewModifier {
-    @Binding var isPresented: Bool
-    let request: VerificationRequest
-    let onResult: (Result<UseSenseResult, UseSenseError>) -> Void
-    let onCancelled: () -> Void
+final class UseSenseViewModel: ObservableObject {
+    @Published var state: SessionState = .idle
+    @Published var qualityGuidance: [QualityGuidance] = []
+    @Published var completionResult: Result<RedactedDecisionObject, UseSenseError>?
 
-    public func body(content: Content) -> some View {
-        content.fullScreenCover(isPresented: $isPresented) {
-            if let config = UseSense.shared.config {
-                UseSenseVerificationView(
-                    config: config,
-                    theme: UseSense.shared.theme,
-                    request: request,
-                    onResult: { result in
-                        isPresented = false
-                        onResult(result)
-                    },
-                    onCancelled: {
-                        isPresented = false
-                        onCancelled()
-                    }
-                )
+    private let session: UseSenseSession
+    private var stateObserver: (() -> Void)?
+
+    var previewLayer: AVCaptureVideoPreviewLayer? {
+        session.previewLayer
+    }
+
+    var isCameraActive: Bool {
+        switch state {
+        case .faceGuide, .baseline, .countdown, .challenge: return true
+        default: return false
+        }
+    }
+
+    init(session: UseSenseSession) {
+        self.session = session
+        session.onStateChange = { [weak self] newState in
+            DispatchQueue.main.async {
+                self?.state = newState
+            }
+        }
+        session.onQualityUpdate = { [weak self] guidance in
+            DispatchQueue.main.async {
+                self?.qualityGuidance = guidance
             }
         }
     }
-}
 
-public extension View {
-    func useSenseVerification(
-        isPresented: Binding<Bool>,
-        request: VerificationRequest,
-        onResult: @escaping (Result<UseSenseResult, UseSenseError>) -> Void,
-        onCancelled: @escaping () -> Void = {}
-    ) -> some View {
-        modifier(UseSenseVerificationModifier(
-            isPresented: isPresented,
-            request: request,
-            onResult: onResult,
-            onCancelled: onCancelled
-        ))
+    func start() {
+        Task { await session.start() }
+    }
+
+    func continueFromInstructions() {
+        Task { await session.proceedFromInstructions() }
+    }
+
+    func requestPermissions() {
+        Task { await session.requestPermissions() }
+    }
+
+    func challengeCompleted() {
+        Task { await session.challengeCompleted() }
+    }
+
+    func challengeStepReached(_ index: Int) {
+        session.recordChallengeStep(index: index)
+    }
+
+    func retry() {
+        Task { await session.retry() }
+    }
+
+    func cancel() {
+        session.cancel()
     }
 }
 #endif

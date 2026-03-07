@@ -1,78 +1,75 @@
 import Foundation
 
-public enum UseSenseErrorCode: Int, Sendable {
-    // Camera
-    case cameraUnavailable = 1001
-    case cameraPermissionDenied = 1002
-    case microphonePermissionDenied = 1003
+public enum UseSenseErrorCode: String, CaseIterable, Sendable {
+    case cameraPermissionDenied = "CAMERA_PERMISSION_DENIED"
+    case micPermissionDenied = "MIC_PERMISSION_DENIED"
+    case networkError = "NETWORK_ERROR"
+    case sessionExpired = "SESSION_EXPIRED"
+    case unauthorized = "UNAUTHORIZED"
+    case invalidToken = "INVALID_TOKEN"
+    case sessionNotFound = "SESSION_NOT_FOUND"
+    case identityNotFound = "IDENTITY_NOT_FOUND"
+    case invalidRequest = "INVALID_REQUEST"
+    case quotaExceeded = "QUOTA_EXCEEDED"
+    case userCancelled = "USER_CANCELLED"
+    case faceNotDetected = "FACE_NOT_DETECTED"
+    case lowLight = "LOW_LIGHT"
+    case timeout = "TIMEOUT"
+    case serverError = "SERVER_ERROR"
+    case serviceUnavailable = "SERVICE_UNAVAILABLE"
+    case unknownError = "UNKNOWN_ERROR"
 
-    // Network
-    case networkError = 2001
-    case networkTimeout = 2002
-
-    // Session
-    case sessionExpired = 3001
-    case uploadFailed = 3002
-    case sessionCreationFailed = 3003
-
-    // Capture
-    case captureFailed = 4001
-    case encodingFailed = 4002
-    case noFramesCaptured = 4003
-
-    // Configuration
-    case invalidConfig = 5001
-    case missingApiKey = 5002
+    public var userMessage: String {
+        switch self {
+        case .cameraPermissionDenied: return "We need camera access to verify your identity. Please allow camera access in Settings."
+        case .micPermissionDenied: return "We need microphone access to complete verification. Please allow microphone access in Settings."
+        case .networkError: return "Connection issue. Please check your internet and try again."
+        case .sessionExpired: return "Your session has expired. Please start over."
+        case .unauthorized: return "Authentication failed. Please check your API key."
+        case .invalidToken: return "Session token is invalid. Please start a new session."
+        case .sessionNotFound: return "Session not found. Please start a new session."
+        case .identityNotFound: return "Identity not found. Please ensure the identity ID is correct."
+        case .invalidRequest: return "Invalid request. Please check the parameters."
+        case .quotaExceeded: return "Rate limit reached. Please try again later."
+        case .userCancelled: return "Verification was cancelled."
+        case .faceNotDetected: return "Please position your face in the frame and try again."
+        case .lowLight: return "Lighting is too low. Please move to a brighter area."
+        case .timeout: return "Verification took too long. Please try again."
+        case .serverError: return "Server error. Please try again or contact support."
+        case .serviceUnavailable: return "Service unavailable. Try again later."
+        case .unknownError: return "Something went wrong. Please try again."
+        }
+    }
 }
 
 public struct UseSenseError: Error, LocalizedError, Sendable {
     public let code: UseSenseErrorCode
-    public let serverCode: String?
     public let message: String
-    public let isRetryable: Bool
-    public let underlyingError: (any Error)?
+    public let details: String?
 
     public var errorDescription: String? { message }
 
-    public init(
-        code: UseSenseErrorCode,
-        serverCode: String? = nil,
-        message: String,
-        isRetryable: Bool = false,
-        underlyingError: (any Error)? = nil
-    ) {
+    public init(code: UseSenseErrorCode, message: String? = nil, details: String? = nil) {
         self.code = code
-        self.serverCode = serverCode
-        self.message = message
-        self.isRetryable = isRetryable
-        self.underlyingError = underlyingError
+        self.message = message ?? code.userMessage
+        self.details = details
     }
 
-    static func cameraUnavailable() -> UseSenseError {
-        UseSenseError(code: .cameraUnavailable, message: "Front camera is not available on this device.")
-    }
-
-    static func cameraPermissionDenied() -> UseSenseError {
-        UseSenseError(code: .cameraPermissionDenied, message: "Camera permission was denied. Please enable camera access in Settings.")
-    }
-
-    static func microphonePermissionDenied() -> UseSenseError {
-        UseSenseError(code: .microphonePermissionDenied, message: "Microphone permission was denied. Please enable microphone access in Settings.")
-    }
-
-    static func sessionExpired() -> UseSenseError {
-        UseSenseError(code: .sessionExpired, serverCode: "session_expired", message: "The verification session has expired. Please try again.")
-    }
-
-    static func networkError(_ error: Error) -> UseSenseError {
-        UseSenseError(code: .networkError, message: "A network error occurred.", isRetryable: true, underlyingError: error)
-    }
-
-    static func networkTimeout() -> UseSenseError {
-        UseSenseError(code: .networkTimeout, message: "The request timed out.", isRetryable: true)
-    }
-
-    static func serverError(code: String, message: String, isRetryable: Bool = false) -> UseSenseError {
-        UseSenseError(code: .sessionCreationFailed, serverCode: code, message: message, isRetryable: isRetryable)
+    static func fromHTTP(statusCode: Int, serverCode: String?, serverMessage: String?) -> UseSenseError {
+        let code: UseSenseErrorCode
+        switch statusCode {
+        case 400: code = .invalidRequest
+        case 401:
+            switch serverCode {
+            case "session_expired": code = .sessionExpired
+            case "invalid_token": code = .invalidToken
+            default: code = .unauthorized
+            }
+        case 404: code = serverCode == "identity_not_found" ? .identityNotFound : .sessionNotFound
+        case 429: code = .quotaExceeded
+        case 503: code = .serviceUnavailable
+        default: code = statusCode >= 500 ? .serverError : .unknownError
+        }
+        return UseSenseError(code: code, message: serverMessage, details: serverCode)
     }
 }
