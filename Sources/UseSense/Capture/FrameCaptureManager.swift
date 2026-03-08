@@ -18,10 +18,16 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
     private(set) var isRunning = false
     private var isMirrored = false
 
-    var previewLayer: AVCaptureVideoPreviewLayer {
+    /// Cached preview layer – must return the **same** instance every time so the
+    /// UIView that hosts it keeps showing the live feed across SwiftUI re-renders.
+    private lazy var _previewLayer: AVCaptureVideoPreviewLayer = {
         let layer = AVCaptureVideoPreviewLayer(session: captureSession)
         layer.videoGravity = .resizeAspectFill
         return layer
+    }()
+
+    var previewLayer: AVCaptureVideoPreviewLayer {
+        _previewLayer
     }
 
     func configure() throws {

@@ -195,6 +195,8 @@ public struct UseSenseView: View {
 
     @ViewBuilder
     private func challengeOverlay(_ spec: ChallengeSpecWrapper) -> some View {
+        // Use the challenge seed as a stable identity so SwiftUI does not
+        // recreate (and reset @State in) the challenge view on parent re-renders.
         switch spec {
         case .followDot(let challenge):
             FollowDotChallengeView(
@@ -203,6 +205,7 @@ public struct UseSenseView: View {
                 onStepReached: { viewModel.challengeStepReached($0) },
                 onProgress: { viewModel.challengeProgress = $0 }
             )
+            .id(challenge.seed)
         case .headTurn(let challenge):
             HeadTurnChallengeView(
                 challenge: challenge,
@@ -210,11 +213,13 @@ public struct UseSenseView: View {
                 onStepReached: { viewModel.challengeStepReached($0) },
                 onProgress: { viewModel.challengeProgress = $0 }
             )
+            .id(challenge.seed)
         case .speakPhrase(let challenge):
             SpeakPhraseChallengeView(
                 challenge: challenge,
                 onComplete: { viewModel.challengeCompleted() }
             )
+            .id(challenge.seed)
         }
     }
 
