@@ -9,9 +9,7 @@ struct EnrollmentView: View {
     @State private var error: UseSenseError?
     @State private var eventLog: [String] = []
 
-    @AppStorage("apiBaseUrl") private var apiBaseUrl = "https://api.usesense.ai/functions/v1/make-server-fc4cf30d"
     @AppStorage("apiKey") private var apiKey = ""
-    @AppStorage("gatewayKey") private var gatewayKey = ""
 
     var body: some View {
         VStack(spacing: 20) {
@@ -71,11 +69,7 @@ struct EnrollmentView: View {
     }
 
     private var liveVerificationView: some View {
-        let config = UseSenseConfig(
-            apiBaseUrl: apiBaseUrl,
-            apiKey: apiKey,
-            gatewayKey: gatewayKey.isEmpty ? nil : gatewayKey
-        )
+        let config = UseSenseConfig(apiKey: apiKey)
         let sdk = UseSense(config: config)
         let session = sdk.createSession(
             type: .enrollment,

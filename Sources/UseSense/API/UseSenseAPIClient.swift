@@ -1,8 +1,7 @@
 import Foundation
 
 final class UseSenseAPIClient: @unchecked Sendable {
-    // Default Supabase anonymous key (public, safe to bundle)
-    static let defaultGatewayKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR6ZnNycXNqZ3hjcHN4eXB4am9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyMDQ5MjgsImV4cCI6MjA4Njc4MDkyOH0._PM_8RU9a6-l10mchYv5eipIhwWwt4gh8G1vdJgWcXw"
+    static let defaultGatewayKey = UseSenseConfig.defaultGatewayKey
 
     static let sdkVersion = "1.17.25"
     private static let userAgent = "UseSense-iOS-SDK/\(sdkVersion)"
@@ -23,7 +22,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
 
     init(config: UseSenseConfig) {
         self.config = config
-        self.gatewayKey = config.gatewayKey ?? Self.defaultGatewayKey
+        self.gatewayKey = config.gatewayKey
 
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.timeoutIntervalForResource = 120
@@ -37,16 +36,14 @@ final class UseSenseAPIClient: @unchecked Sendable {
 
     // MARK: - URL Builder
 
-    private static let defaultBaseUrl = "https://api.usesense.ai/functions/v1/make-server-fc4cf30d"
-
     private func buildURL(path: String, includeNonce: Bool = false) -> URL {
-        let baseUrl = config.apiBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseUrl = config.apiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         let effectiveBase = baseUrl.isEmpty || URLComponents(string: baseUrl)?.scheme == nil
-            ? Self.defaultBaseUrl
+            ? UseSenseConfig.defaultEndpoint
             : baseUrl
         guard let parsed = URLComponents(string: "\(effectiveBase)\(path)"),
               parsed.scheme != nil, parsed.host != nil else {
-            fatalError("UseSense: Invalid apiBaseUrl '\(config.apiBaseUrl)'. Must be a full URL including https:// scheme.")
+            fatalError("UseSense: Invalid apiEndpoint '\(config.apiEndpoint)'. Must be a full URL including https:// scheme.")
         }
         var components = parsed
         let env = (config.environment ?? .auto).resolved(apiKey: config.apiKey)
