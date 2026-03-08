@@ -7,7 +7,8 @@ struct AuthenticationView: View {
     @State private var showVerification = false
     @State private var result: RedactedDecisionObject?
     @State private var error: UseSenseError?
-    @StateObject private var eventLogger = EventLogger()
+    @State private var eventLogger = EventLogger()
+    @State private var eventLogSnapshot: [String] = []
 
     @AppStorage("apiKey") private var apiKey = ""
 
@@ -48,9 +49,9 @@ struct AuthenticationView: View {
                     }
                 }
 
-                if !eventLogger.events.isEmpty {
+                if !eventLogSnapshot.isEmpty {
                     Section("Event Log") {
-                        ForEach(Array(eventLogger.events.enumerated()), id: \.offset) { _, event in
+                        ForEach(Array(eventLogSnapshot.enumerated()), id: \.offset) { _, event in
                             Text(event)
                                 .font(.system(size: 12, design: .monospaced))
                         }
@@ -78,14 +79,13 @@ struct AuthenticationView: View {
 
         let logger = eventLogger
         let _ = session.addEventListener { event in
-            DispatchQueue.main.async {
-                logger.events.append("[\(event.type.rawValue)] \(event.data?.description ?? "")")
-            }
+            logger.append("[\(event.type.rawValue)] \(event.data?.description ?? "")")
         }
 
         return UseSenseView(
             session: session,
             onComplete: { completionResult in
+                eventLogSnapshot = logger.events
                 showVerification = false
                 switch completionResult {
                 case .success(let decision):
@@ -97,6 +97,7 @@ struct AuthenticationView: View {
                 }
             },
             onCancel: {
+                eventLogSnapshot = logger.events
                 showVerification = false
             }
         )
