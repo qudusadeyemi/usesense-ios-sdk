@@ -14,7 +14,7 @@ struct FaceGuideOverlay: View {
     var body: some View {
         GeometryReader { geometry in
             let ovalWidth = geometry.size.width * 0.55
-            let ovalHeight = min(ovalWidth * (4.0 / 3.0), geometry.size.height * 0.8)
+            let ovalHeight = min(ovalWidth * (4.0 / 3.0), geometry.size.height * 0.5)
 
             ZStack {
                 // Dimmed background with cutout
@@ -24,6 +24,7 @@ struct FaceGuideOverlay: View {
                             .overlay(
                                 Ellipse()
                                     .frame(width: ovalWidth, height: ovalHeight)
+                                    .offset(y: -geometry.size.height * 0.1)
                                     .blendMode(.destinationOut)
                             )
                             .compositingGroup()
@@ -34,6 +35,7 @@ struct FaceGuideOverlay: View {
                     .stroke(style: StrokeStyle(lineWidth: 3, dash: [12, 8]))
                     .foregroundColor(borderColor)
                     .frame(width: ovalWidth, height: ovalHeight)
+                    .offset(y: -geometry.size.height * 0.1)
                     .scaleEffect(isPulsing ? 1.1 : 1.0)
                     .opacity(isPulsing ? 0.6 : 1.0)
                     .animation(
@@ -41,9 +43,14 @@ struct FaceGuideOverlay: View {
                         value: isPulsing
                     )
 
-                VStack {
+                // Content below the oval – pinned to the bottom so the button
+                // is always reachable, even on smaller screens.
+                VStack(spacing: 8) {
                     Spacer()
-                        .frame(height: geometry.size.height / 2 + ovalHeight / 2 + 16)
+
+                    Text("Position your face in the oval")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white)
 
                     // Quality indicator
                     QualityIndicatorView(
@@ -52,15 +59,9 @@ struct FaceGuideOverlay: View {
                         message: qualityGuidance.first?.message
                     )
 
-                    Text("Position your face in the oval")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.top, 8)
-
                     // Quality warning banner
                     if let guidance = qualityGuidance.first {
                         QualityWarningBanner(guidance: guidance, qualityLevel: qualityLevel)
-                            .padding(.top, 8)
                             .padding(.horizontal, 24)
                     }
 
@@ -75,11 +76,10 @@ struct FaceGuideOverlay: View {
                                 .cornerRadius(12)
                         }
                         .padding(.horizontal, 32)
-                        .padding(.top, 16)
+                        .padding(.top, 8)
                     }
-
-                    Spacer()
                 }
+                .padding(.bottom, 48)
             }
             .onAppear {
                 isPulsing = true
