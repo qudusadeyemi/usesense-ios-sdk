@@ -57,8 +57,9 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
         }
         captureSession.addOutput(videoOutput)
 
-        // Disable mirroring for raw frames
+        // Orient frames to portrait and disable mirroring for raw frames
         if let connection = videoOutput.connection(with: .video) {
+            connection.videoOrientation = .portrait
             connection.isVideoMirrored = false
             isMirrored = false
         }
