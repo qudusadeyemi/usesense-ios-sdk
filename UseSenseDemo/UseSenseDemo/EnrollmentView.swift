@@ -9,7 +9,7 @@ struct EnrollmentView: View {
     @State private var error: UseSenseError?
     @State private var eventLog: [String] = []
 
-    @AppStorage("apiBaseUrl") private var apiBaseUrl = ""
+    @AppStorage("apiBaseUrl") private var apiBaseUrl = "https://api.usesense.ai/functions/v1/make-server-fc4cf30d"
     @AppStorage("apiKey") private var apiKey = ""
     @AppStorage("gatewayKey") private var gatewayKey = ""
 

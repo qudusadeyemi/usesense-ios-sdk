@@ -38,7 +38,11 @@ final class UseSenseAPIClient: @unchecked Sendable {
     // MARK: - URL Builder
 
     private func buildURL(path: String, includeNonce: Bool = false) -> URL {
-        var components = URLComponents(string: "\(config.apiBaseUrl)\(path)")!
+        guard let components = URLComponents(string: "\(config.apiBaseUrl)\(path)"),
+              components.scheme != nil, components.host != nil else {
+            fatalError("UseSense: Invalid apiBaseUrl '\(config.apiBaseUrl)'. Must be a full URL including https:// scheme.")
+        }
+        var components = components
         let env = (config.environment ?? .auto).resolved(apiKey: config.apiKey)
         var queryItems = [URLQueryItem(name: "env", value: env)]
 
