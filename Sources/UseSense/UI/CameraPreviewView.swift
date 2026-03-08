@@ -5,7 +5,7 @@ import AVFoundation
 /// Hosts the AVCaptureVideoPreviewLayer inside a UIView whose `layoutSubviews`
 /// keeps the layer frame in sync with the view bounds, avoiding the black-frame
 /// flash caused by the zero-bounds race in UIViewRepresentable.
-private class PreviewHostView: UIView {
+fileprivate class PreviewHostView: UIView {
     let previewLayer: AVCaptureVideoPreviewLayer
 
     init(previewLayer: AVCaptureVideoPreviewLayer) {
