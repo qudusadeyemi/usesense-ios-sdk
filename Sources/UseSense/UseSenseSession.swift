@@ -49,6 +49,10 @@ public final class UseSenseSession: @unchecked Sendable {
     private var framesDropped: Int = 0
     private var baselineDuration: TimeInterval = 2.0
     private var latestQualityReport: ImageQualityReport?
+    /// Gates frame storage so we only capture during baseline/countdown/challenge.
+    private var isCapturingFrames = false
+    /// Server-provided frame limit; used as a hard cap at upload time.
+    private var serverMaxFrames: Int?
 
     // MARK: - Init
 
@@ -185,6 +189,7 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     func challengeCompleted() async {
+        isCapturingFrames = false
         challengeResponseBuilder.markCompleted()
         eventEmitter.emit(.challengeCompleted)
         frameCaptureManager.stop()
@@ -203,6 +208,7 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     func retry() async {
+        isCapturingFrames = false
         frameBuffer.reset()
         challengeResponseBuilder.reset()
         deviceSignalCollector.release()
@@ -213,6 +219,7 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     func cancel() {
+        isCapturingFrames = false
         frameCaptureManager.stop()
         audioCaptureManager.cleanup()
         frameBuffer.reset()
@@ -249,6 +256,16 @@ public final class UseSenseSession: @unchecked Sendable {
             return
         }
 
+        // Reconfigure frame buffer with server-provided limits so we never
+        // exceed the server's allowed budget.
+        if let upload = sessionData?.upload {
+            reconfigureFrameBuffer(maxFrames: upload.maxFrames, targetFps: upload.targetFps)
+        }
+
+        // Start camera immediately so the preview layer has frames by the
+        // time the face guide screen renders (avoids initial black flash).
+        frameCaptureManager.start()
+
         // Show instructions if there's a challenge
         if let challenge = sessionData?.policy.challenge {
             currentState = .instructions(challenge: challenge)
@@ -258,15 +275,21 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     private func startFaceGuide() async {
-        frameCaptureManager.start()
         currentState = .faceGuide
         // The view will show a "My face is ready" button which calls faceReady()
+    }
+
+    /// Re-create the frame buffer with server-provided limits.
+    private func reconfigureFrameBuffer(maxFrames: Int, targetFps: Int) {
+        serverMaxFrames = maxFrames
+        frameBuffer.reconfigure(maxFrames: maxFrames, targetFps: targetFps)
     }
 
     private func startBaseline() async {
         eventEmitter.emit(.captureStarted)
         captureStartTime = Date()
         frameBuffer.reset()
+        isCapturingFrames = true
         currentState = .baseline(remaining: baselineDuration)
 
         // Start audio if needed
@@ -292,6 +315,7 @@ public final class UseSenseSession: @unchecked Sendable {
             // No challenge, just capture for the configured duration
             let captureDurationMs = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 2500
             try? await Task.sleep(nanoseconds: UInt64(captureDurationMs) * 1_000_000)
+            isCapturingFrames = false
             frameCaptureManager.stop()
             captureEndTime = Date()
             deviceSignalCollector.stopSensorCollection()
@@ -327,8 +351,12 @@ public final class UseSenseSession: @unchecked Sendable {
             return
         }
 
-        // Build signals
-        let frames = frameBuffer.getFrames()
+        // Build signals – hard-cap to server's maxFrames so we never exceed
+        // the allowed budget, regardless of how many the buffer collected.
+        var frames = frameBuffer.getFrames()
+        if let cap = serverMaxFrames ?? sessionData?.upload.maxFrames, frames.count > cap {
+            frames = Array(frames.prefix(cap))
+        }
         guard !frames.isEmpty else {
             handleError(UseSenseError(code: .unknownError, message: "No frames captured."))
             return
@@ -463,7 +491,7 @@ public final class UseSenseSession: @unchecked Sendable {
 
 extension UseSenseSession: FrameCaptureDelegate {
     func frameCaptureManager(_ manager: FrameCaptureManager, didCapture pixelBuffer: CVPixelBuffer, timestamp: CMTime) {
-        // Quality analysis at 4Hz
+        // Quality analysis at 4Hz (always runs, even during face guide)
         if qualityAnalyzer.shouldAnalyze() {
             let report = qualityAnalyzer.analyze(pixelBuffer)
             latestQualityReport = report
@@ -476,6 +504,10 @@ extension UseSenseSession: FrameCaptureDelegate {
                 "brightness": String(format: "%.1f", report.meanBrightness)
             ])
         }
+
+        // Only store frames during active capture phases (baseline / countdown / challenge).
+        // During face guide, the camera runs for preview + quality analysis only.
+        guard isCapturingFrames else { return }
 
         // Frame capture at target FPS
         if frameBuffer.shouldCapture() && !frameBuffer.isFull {

@@ -6,12 +6,21 @@ import Foundation
 final class FrameBuffer: @unchecked Sendable {
     private var frames: [(data: Data, timestamp: TimeInterval)] = []
     private let lock = NSLock()
-    private let maxFrames: Int
-    private let targetFps: Int
+    private var maxFrames: Int
+    private var targetFps: Int
     private var lastCaptureTime: CFAbsoluteTime = 0
-    private let captureInterval: TimeInterval
+    private var captureInterval: TimeInterval
 
     init(maxFrames: Int = 40, targetFps: Int = 15) {
+        self.maxFrames = maxFrames
+        self.targetFps = targetFps
+        self.captureInterval = 1.0 / Double(targetFps)
+    }
+
+    /// Re-configure with server-provided limits (called after session creation).
+    func reconfigure(maxFrames: Int, targetFps: Int) {
+        lock.lock()
+        defer { lock.unlock() }
         self.maxFrames = maxFrames
         self.targetFps = targetFps
         self.captureInterval = 1.0 / Double(targetFps)
