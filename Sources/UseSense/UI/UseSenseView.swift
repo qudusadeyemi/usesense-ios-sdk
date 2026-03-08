@@ -57,6 +57,7 @@ public struct UseSenseView: View {
             case .challenge(let spec):
                 ZStack {
                     cameraLayer
+                    BaselineOvalView()
                     challengeOverlay(spec)
                     captureOverlayChrome(phase: "CHALLENGE")
                 }
