@@ -5,50 +5,38 @@ struct HeadTurnChallengeView: View {
     let challenge: HeadTurnChallenge
     let onComplete: () -> Void
     let onStepReached: (Int) -> Void
+    var onProgress: ((Double) -> Void)?
 
     @State private var currentStepIndex = 0
     @State private var isActive = false
 
     var body: some View {
-        ZStack {
-            VStack(spacing: 0) {
-                // Progress
-                HStack(spacing: 4) {
-                    ForEach(0..<challenge.sequence.count, id: \.self) { index in
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(index <= currentStepIndex ? Color.UseSense.primary : Color.white.opacity(0.3))
-                            .frame(height: 4)
-                    }
+        VStack(spacing: 0) {
+            Spacer()
+
+            // Direction indicator
+            VStack(spacing: 16) {
+                if currentStepIndex < challenge.sequence.count {
+                    let step = challenge.sequence[currentStepIndex]
+
+                    Image(systemName: arrowIcon(for: step.direction))
+                        .font(.system(size: 64, weight: .light))
+                        .foregroundColor(.white)
+                        .transition(.scale.combined(with: .opacity))
+
+                    Text(directionText(for: step.direction))
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white)
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 12)
-
-                Spacer()
-
-                // Direction indicator
-                VStack(spacing: 16) {
-                    if currentStepIndex < challenge.sequence.count {
-                        let step = challenge.sequence[currentStepIndex]
-
-                        Image(systemName: arrowIcon(for: step.direction))
-                            .font(.system(size: 64, weight: .light))
-                            .foregroundColor(.white)
-                            .transition(.scale.combined(with: .opacity))
-
-                        Text(directionText(for: step.direction))
-                            .font(.system(size: 22, weight: .semibold))
-                            .foregroundColor(.white)
-                    }
-                }
-                .animation(.easeInOut(duration: 0.3), value: currentStepIndex)
-
-                Spacer()
-
-                Text("Turn your head slowly")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.white.opacity(0.8))
-                    .padding(.bottom, 24)
             }
+            .animation(.easeInOut(duration: 0.3), value: currentStepIndex)
+
+            Spacer()
+
+            Text("Turn your head slowly")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(.white.opacity(0.8))
+                .padding(.bottom, 80)
         }
         .onAppear { startChallenge() }
     }
@@ -67,6 +55,8 @@ struct HeadTurnChallengeView: View {
 
         let step = challenge.sequence[currentStepIndex]
         onStepReached(step.index)
+        let total = Double(challenge.sequence.count)
+        onProgress?(Double(currentStepIndex + 1) / total)
 
         let delay = Double(step.durationMs) / 1000.0
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in

@@ -5,6 +5,7 @@ struct FollowDotChallengeView: View {
     let challenge: FollowDotChallenge
     let onComplete: () -> Void
     let onStepReached: (Int) -> Void
+    var onProgress: ((Double) -> Void)?
 
     @State private var currentWaypointIndex = 0
     @State private var dotPosition: CGPoint = .zero
@@ -22,24 +23,14 @@ struct FollowDotChallengeView: View {
                     .position(dotPosition)
                     .animation(.easeInOut(duration: currentStepDuration), value: dotPosition)
 
-                // Progress indicator at top
+                // Instruction text at bottom (above chrome area)
                 VStack {
-                    HStack(spacing: 4) {
-                        ForEach(0..<challenge.waypoints.count, id: \.self) { index in
-                            RoundedRectangle(cornerRadius: 2)
-                                .fill(index <= currentWaypointIndex ? Color.UseSense.primary : Color.white.opacity(0.3))
-                                .frame(height: 4)
-                        }
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 12)
-
                     Spacer()
 
                     Text("Follow the dot with your eyes")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(.white)
-                        .padding(.bottom, 24)
+                        .padding(.bottom, 80)
                 }
             }
             .onAppear {
@@ -83,6 +74,8 @@ struct FollowDotChallengeView: View {
 
         dotPosition = target
         onStepReached(waypoint.index)
+        let total = Double(challenge.waypoints.count)
+        onProgress?(Double(currentWaypointIndex + 1) / total)
 
         let delay = Double(waypoint.durationMs) / 1000.0
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in

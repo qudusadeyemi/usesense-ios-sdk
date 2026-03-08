@@ -22,7 +22,7 @@ struct ProcessingView: View {
                 // Spinner
                 ZStack {
                     Circle()
-                        .stroke(Color.UseSense.border, lineWidth: 4)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 4)
                         .frame(width: 56, height: 56)
 
                     Circle()
@@ -35,12 +35,12 @@ struct ProcessingView: View {
 
                 Text(title)
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(Color.UseSense.textPrimary)
+                    .foregroundColor(.white)
 
                 if let subtitle = subtitle {
                     Text(subtitle)
                         .font(.system(size: 15))
-                        .foregroundColor(Color.UseSense.textSecondary)
+                        .foregroundColor(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
                 }
 
@@ -49,7 +49,7 @@ struct ProcessingView: View {
                         GeometryReader { geometry in
                             ZStack(alignment: .leading) {
                                 RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color.UseSense.border)
+                                    .fill(Color.white.opacity(0.2))
                                     .frame(height: 8)
 
                                 RoundedRectangle(cornerRadius: 4)
@@ -61,20 +61,15 @@ struct ProcessingView: View {
 
                         Text("\(Int(progress * 100))%")
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(Color.UseSense.textSecondary)
+                            .foregroundColor(.white.opacity(0.7))
                     }
                     .padding(.horizontal, 40)
                 }
             }
             .padding(32)
-            .background(Color.UseSense.surface)
-            .cornerRadius(24)
-            .shadow(color: .black.opacity(0.1), radius: 16, y: 4)
-            .padding(.horizontal, 32)
 
             Spacer()
         }
-        .background(Color.UseSense.background.ignoresSafeArea())
         .onAppear { isAnimating = true }
     }
 }

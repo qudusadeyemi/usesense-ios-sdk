@@ -200,13 +200,15 @@ public struct UseSenseView: View {
             FollowDotChallengeView(
                 challenge: challenge,
                 onComplete: { viewModel.challengeCompleted() },
-                onStepReached: { viewModel.challengeStepReached($0) }
+                onStepReached: { viewModel.challengeStepReached($0) },
+                onProgress: { viewModel.challengeProgress = $0 }
             )
         case .headTurn(let challenge):
             HeadTurnChallengeView(
                 challenge: challenge,
                 onComplete: { viewModel.challengeCompleted() },
-                onStepReached: { viewModel.challengeStepReached($0) }
+                onStepReached: { viewModel.challengeStepReached($0) },
+                onProgress: { viewModel.challengeProgress = $0 }
             )
         case .speakPhrase(let challenge):
             SpeakPhraseChallengeView(

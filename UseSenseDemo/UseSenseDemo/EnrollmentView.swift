@@ -16,6 +16,7 @@ struct EnrollmentView: View {
     let mode: DemoMode
     @State private var externalUserId = ""
     @State private var showVerification = false
+    @State private var activeSession: UseSenseSession?
     @State private var result: RedactedDecisionObject?
     @State private var error: UseSenseError?
     @State private var eventLogger = EventLogger()
@@ -32,7 +33,7 @@ struct EnrollmentView: View {
                 }
 
                 Section {
-                    Button(action: { showVerification = true }) {
+                    Button(action: { startEnrollment() }) {
                         Label("Start Enrollment", systemImage: "person.badge.plus")
                             .font(.system(size: 17, weight: .semibold))
                             .frame(maxWidth: .infinity)
@@ -72,46 +73,51 @@ struct EnrollmentView: View {
         }
         .navigationTitle("Enrollment")
         .fullScreenCover(isPresented: $showVerification) {
-            if mode == .live {
-                makeLiveVerificationView()
+            if mode == .live, let session = activeSession {
+                UseSenseView(
+                    session: session,
+                    onComplete: { completionResult in
+                        eventLogSnapshot = eventLogger.events
+                        showVerification = false
+                        activeSession = nil
+                        switch completionResult {
+                        case .success(let decision):
+                            result = decision
+                            error = nil
+                        case .failure(let err):
+                            error = err
+                            result = nil
+                        }
+                    },
+                    onCancel: {
+                        eventLogSnapshot = eventLogger.events
+                        showVerification = false
+                        activeSession = nil
+                    }
+                )
             } else {
                 mockResultView
             }
         }
     }
 
-    private func makeLiveVerificationView() -> some View {
-        let config = UseSenseConfig(apiKey: apiKey)
-        let sdk = UseSense(config: config)
-        let session = sdk.createSession(
-            type: .enrollment,
-            externalUserId: externalUserId.isEmpty ? nil : externalUserId
-        )
+    private func startEnrollment() {
+        if mode == .live {
+            let config = UseSenseConfig(apiKey: apiKey)
+            let sdk = UseSense(config: config)
+            let session = sdk.createSession(
+                type: .enrollment,
+                externalUserId: externalUserId.isEmpty ? nil : externalUserId
+            )
 
-        let logger = eventLogger
-        let _ = session.addEventListener { event in
-            logger.append("[\(event.type.rawValue)] \(event.data?.description ?? "")")
-        }
-
-        return UseSenseView(
-            session: session,
-            onComplete: { completionResult in
-                eventLogSnapshot = logger.events
-                showVerification = false
-                switch completionResult {
-                case .success(let decision):
-                    result = decision
-                    error = nil
-                case .failure(let err):
-                    error = err
-                    result = nil
-                }
-            },
-            onCancel: {
-                eventLogSnapshot = logger.events
-                showVerification = false
+            let logger = eventLogger
+            let _ = session.addEventListener { event in
+                logger.append("[\(event.type.rawValue)] \(event.data?.description ?? "")")
             }
-        )
+
+            activeSession = session
+        }
+        showVerification = true
     }
 
     private var mockResultView: some View {
