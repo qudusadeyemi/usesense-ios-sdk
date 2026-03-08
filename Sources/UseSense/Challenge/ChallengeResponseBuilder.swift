@@ -1,84 +1,104 @@
 import Foundation
 
-struct ChallengeResponse: Codable, Sendable {
-    let challengeType: String
-    let seed: String
-    let responses: [ChallengeStepResponse]
-    let completedAt: String
-    let durationMs: Int
-
-    enum CodingKeys: String, CodingKey {
-        case challengeType = "challenge_type"
-        case seed
-        case responses
-        case completedAt = "completed_at"
-        case durationMs = "duration_ms"
-    }
-}
-
-struct ChallengeStepResponse: Codable, Sendable {
-    let stepIndex: Int
-    let timestamp: String
-    let value: String?
-
-    enum CodingKeys: String, CodingKey {
-        case stepIndex = "step_index"
-        case timestamp
-        case value
-    }
-}
-
+/// Tracks challenge completion during capture, mapping frame indices to challenge steps.
+/// Matches Android's ChallengeResponseBuilder structure with waypoint_frames/step_frames.
 final class ChallengeResponseBuilder: @unchecked Sendable {
-    private var steps: [ChallengeStepResponse] = []
-    private var startTime: Date?
+    private var waypointFrames: [Int: [Int]] = [:]  // step index → list of frame indices
+    private var frameTimestamps: [Int64] = []
+    private var startedAt: String?
+    private var completedAt: String?
+    private var completed = false
+    private var currentStepIndex = 0
     private let lock = NSLock()
 
-    func start() {
+    private let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    func markStarted() {
         lock.lock()
         defer { lock.unlock() }
-        startTime = Date()
-        steps.removeAll()
+        startedAt = isoFormatter.string(from: Date())
     }
+
+    func markCompleted() {
+        lock.lock()
+        defer { lock.unlock() }
+        completedAt = isoFormatter.string(from: Date())
+        completed = true
+    }
+
+    func setCurrentStep(_ stepIndex: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        currentStepIndex = stepIndex
+    }
+
+    func recordFrame(frameIndex: Int, timestampMs: Int64) {
+        lock.lock()
+        defer { lock.unlock() }
+        if waypointFrames[currentStepIndex] == nil {
+            waypointFrames[currentStepIndex] = []
+        }
+        waypointFrames[currentStepIndex]?.append(frameIndex)
+        frameTimestamps.append(timestampMs)
+    }
+
+    // Legacy API for compatibility
+    func start() { markStarted() }
 
     func recordStep(index: Int, value: String? = nil) {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-        let step = ChallengeStepResponse(
-            stepIndex: index,
-            timestamp: formatter.string(from: Date()),
-            value: value
-        )
-
-        lock.lock()
-        defer { lock.unlock() }
-        steps.append(step)
+        setCurrentStep(index)
     }
 
-    func build(challenge: ChallengeSpecWrapper) -> ChallengeResponse {
+    /// Build the challenge response as a dictionary matching Android's JSON structure.
+    func build(challenge: ChallengeSpecWrapper) -> [String: Any] {
         lock.lock()
-        let capturedSteps = steps
-        let start = startTime ?? Date()
+        let frames = waypointFrames
+        let timestamps = frameTimestamps
+        let started = startedAt
+        let ended = completedAt
+        let isCompleted = completed
         lock.unlock()
 
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        var json: [String: Any] = [:]
+        json["type"] = challenge.challengeType.rawValue
+        json["seed"] = challenge.seed
+        json["completed"] = isCompleted
 
-        let durationMs = Int(Date().timeIntervalSince(start) * 1000)
+        // Use waypoint_frames for follow_dot, step_frames for head_turn
+        let framesKey: String?
+        switch challenge.challengeType {
+        case .followDot: framesKey = "waypoint_frames"
+        case .headTurn: framesKey = "step_frames"
+        case .speakPhrase: framesKey = nil
+        }
 
-        return ChallengeResponse(
-            challengeType: challenge.challengeType.rawValue,
-            seed: challenge.seed,
-            responses: capturedSteps,
-            completedAt: formatter.string(from: Date()),
-            durationMs: durationMs
-        )
+        if let key = framesKey {
+            var framesObj: [String: [Int]] = [:]
+            for (stepIdx, frameList) in frames {
+                framesObj["\(stepIdx)"] = frameList
+            }
+            json[key] = framesObj
+        }
+
+        if let s = started { json["started_at"] = s }
+        if let e = ended { json["completed_at"] = e }
+        json["frame_timestamps"] = timestamps
+
+        return json
     }
 
     func reset() {
         lock.lock()
         defer { lock.unlock() }
-        steps.removeAll()
-        startTime = nil
+        waypointFrames.removeAll()
+        frameTimestamps.removeAll()
+        startedAt = nil
+        completedAt = nil
+        completed = false
+        currentStepIndex = 0
     }
 }

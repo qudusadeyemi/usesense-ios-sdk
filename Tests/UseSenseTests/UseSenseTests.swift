@@ -15,6 +15,18 @@ final class UseSenseConfigTests: XCTestCase {
         XCTAssertEqual(config.environment, .production)
     }
 
+    func testDkPrefixSandbox() {
+        let config = UseSenseConfig(apiKey: "dk_test_key")
+        XCTAssertEqual(config.environment, .sandbox)
+    }
+
+    func testAutoEnvironmentResolution() {
+        let auto = Environment.auto
+        XCTAssertEqual(auto.resolved(apiKey: "pk_live"), "production")
+        XCTAssertEqual(auto.resolved(apiKey: "sk_test"), "sandbox")
+        XCTAssertEqual(auto.resolved(apiKey: "dk_dev"), "sandbox")
+    }
+
     func testCustomConfig() {
         let config = UseSenseConfig(
             apiBaseUrl: "https://custom.api.com",
@@ -69,6 +81,30 @@ final class UseSenseErrorTests: XCTestCase {
         let e503 = UseSenseError.fromHTTP(statusCode: 503, serverCode: nil, serverMessage: nil)
         XCTAssertEqual(e503.code, .serviceUnavailable)
     }
+
+    func testIsRetryable() {
+        let e500 = UseSenseError.fromHTTP(statusCode: 500, serverCode: nil, serverMessage: nil)
+        XCTAssertTrue(e500.isRetryable)
+
+        let e400 = UseSenseError.fromHTTP(statusCode: 400, serverCode: nil, serverMessage: nil)
+        XCTAssertFalse(e400.isRetryable)
+
+        let networkError = UseSenseError.networkError()
+        XCTAssertTrue(networkError.isRetryable)
+
+        let uploadFailed = UseSenseError.uploadFailed()
+        XCTAssertTrue(uploadFailed.isRetryable)
+    }
+
+    func testFactoryMethods() {
+        XCTAssertEqual(UseSenseError.cameraUnavailable().code, .cameraUnavailable)
+        XCTAssertEqual(UseSenseError.networkTimeout().code, .networkTimeout)
+        XCTAssertTrue(UseSenseError.networkTimeout().isRetryable)
+        XCTAssertEqual(UseSenseError.sessionExpired().code, .sessionExpired)
+        XCTAssertEqual(UseSenseError.encodingFailed().code, .encodingFailed)
+        XCTAssertEqual(UseSenseError.invalidConfig("test").code, .invalidConfig)
+        XCTAssertEqual(UseSenseError.quotaExceeded().code, .quotaExceeded)
+    }
 }
 
 final class UseSenseResultTests: XCTestCase {
@@ -82,6 +118,28 @@ final class UseSenseResultTests: XCTestCase {
         )
         XCTAssertEqual(redacted.sessionId, "sess_123")
         XCTAssertEqual(redacted.decision, "APPROVE")
+    }
+
+    func testDecisionHelpers() {
+        let approved = RedactedDecisionObject(
+            sessionId: "s1", sessionType: nil, identityId: nil,
+            decision: "APPROVE", timestamp: "t"
+        )
+        XCTAssertTrue(approved.isApproved)
+        XCTAssertFalse(approved.isRejected)
+        XCTAssertFalse(approved.isPendingReview)
+
+        let rejected = RedactedDecisionObject(
+            sessionId: "s2", sessionType: nil, identityId: nil,
+            decision: "REJECT", timestamp: "t"
+        )
+        XCTAssertTrue(rejected.isRejected)
+
+        let review = RedactedDecisionObject(
+            sessionId: "s3", sessionType: nil, identityId: nil,
+            decision: "MANUAL_REVIEW", timestamp: "t"
+        )
+        XCTAssertTrue(review.isPendingReview)
     }
 
     func testDecisionEnum() {
@@ -276,9 +334,13 @@ final class AnyCodableValueTests: XCTestCase {
 final class ChallengeResponseBuilderTests: XCTestCase {
     func testBuildResponse() {
         let builder = ChallengeResponseBuilder()
-        builder.start()
-        builder.recordStep(index: 0, value: "left")
-        builder.recordStep(index: 1, value: "right")
+        builder.markStarted()
+        builder.setCurrentStep(0)
+        builder.recordFrame(frameIndex: 0, timestampMs: 100)
+        builder.recordFrame(frameIndex: 1, timestampMs: 200)
+        builder.setCurrentStep(1)
+        builder.recordFrame(frameIndex: 2, timestampMs: 300)
+        builder.markCompleted()
 
         let challenge = HeadTurnChallenge(
             type: "head_turn",
@@ -290,17 +352,19 @@ final class ChallengeResponseBuilderTests: XCTestCase {
         )
         let response = builder.build(challenge: .headTurn(challenge))
 
-        XCTAssertEqual(response.challengeType, "head_turn")
-        XCTAssertEqual(response.seed, "test_seed")
-        XCTAssertEqual(response.responses.count, 2)
-        XCTAssertEqual(response.responses[0].stepIndex, 0)
-        XCTAssertEqual(response.responses[0].value, "left")
+        XCTAssertEqual(response["type"] as? String, "head_turn")
+        XCTAssertEqual(response["seed"] as? String, "test_seed")
+        XCTAssertEqual(response["completed"] as? Bool, true)
+        XCTAssertNotNil(response["step_frames"])
+        XCTAssertNotNil(response["started_at"])
+        XCTAssertNotNil(response["completed_at"])
     }
 
     func testReset() {
         let builder = ChallengeResponseBuilder()
-        builder.start()
-        builder.recordStep(index: 0)
+        builder.markStarted()
+        builder.setCurrentStep(0)
+        builder.recordFrame(frameIndex: 0, timestampMs: 100)
         builder.reset()
 
         let challenge = FollowDotChallenge(
@@ -313,7 +377,9 @@ final class ChallengeResponseBuilderTests: XCTestCase {
             captureFpsHint: nil
         )
         let response = builder.build(challenge: .followDot(challenge))
-        XCTAssertTrue(response.responses.isEmpty)
+        XCTAssertEqual(response["completed"] as? Bool, false)
+        let timestamps = response["frame_timestamps"] as? [Int64]
+        XCTAssertTrue(timestamps?.isEmpty ?? true)
     }
 }
 
@@ -375,26 +441,75 @@ final class UseSenseEntryPointTests: XCTestCase {
         let sdk = UseSense(config: config)
         XCTAssertEqual(sdk.sdkVersion, UseSense.version)
     }
+
+    func testSDKVersionMatchesAndroid() {
+        XCTAssertEqual(UseSense.version, "1.17.7")
+    }
+
+    func testVerificationRequest() {
+        let request = VerificationRequest(
+            sessionType: .enrollment,
+            externalUserId: "user_123",
+            identityId: nil,
+            metadata: ["key": .string("value")]
+        )
+        XCTAssertEqual(request.sessionType, .enrollment)
+        XCTAssertEqual(request.externalUserId, "user_123")
+        XCTAssertNil(request.identityId)
+    }
+
+    func testDefaultGatewayKey() {
+        XCTAssertFalse(UseSenseAPIClient.defaultGatewayKey.isEmpty)
+    }
+
+    func testEventEmitterClear() {
+        let emitter = EventEmitter()
+        var count = 0
+        _ = emitter.addListener { _ in count += 1 }
+        emitter.emit(.sessionCreated)
+        XCTAssertEqual(count, 1)
+
+        emitter.clear()
+        emitter.emit(.captureStarted)
+        XCTAssertEqual(count, 1)
+    }
 }
 
 final class MetadataBuilderTests: XCTestCase {
     func testBuildMetadata() throws {
         let builder = MetadataBuilder()
+        let channelIntegrity: [String: Any] = [
+            "platform": "ios",
+            "sdk_version": "1.17.7",
+            "device_model": "iPhone15,2"
+        ]
+        let deviceTelemetry: [String: Any] = [
+            "cpu_abi": "arm64",
+            "processor_count": 6
+        ]
+        let startTime = Date()
+        let endTime = startTime.addingTimeInterval(2.5)
+
         let data = try builder.build(
-            sessionId: "sess_123",
-            nonce: "nonce_abc",
-            challenge: nil,
-            captureDurationMs: 2500,
-            frameTimestamps: [0.0, 0.066, 0.133],
-            hasAudio: false,
-            integritySignals: nil
+            challengeResponse: nil,
+            channelIntegrity: channelIntegrity,
+            deviceTelemetry: deviceTelemetry,
+            captureStartTime: startTime,
+            captureEndTime: endTime,
+            framesCaptured: 37,
+            framesDropped: 3,
+            avgFrameIntervalMs: 67
         )
 
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        XCTAssertEqual(json["session_id"] as? String, "sess_123")
-        XCTAssertEqual(json["nonce"] as? String, "nonce_abc")
-        XCTAssertEqual(json["frame_count"] as? Int, 3)
-        XCTAssertEqual(json["has_audio"] as? Bool, false)
-        XCTAssertNotNil(json["device_info"])
+        XCTAssertNotNil(json["channel_integrity"])
+        XCTAssertNotNil(json["device_telemetry"])
+
+        let ci = json["channel_integrity"] as! [String: Any]
+        XCTAssertEqual(ci["platform"] as? String, "ios")
+        XCTAssertEqual(ci["frames_captured"] as? Int, 37)
+        XCTAssertEqual(ci["frames_dropped"] as? Int, 3)
+        XCTAssertNotNil(ci["capture_start_time"])
+        XCTAssertNotNil(ci["capture_end_time"])
     }
 }

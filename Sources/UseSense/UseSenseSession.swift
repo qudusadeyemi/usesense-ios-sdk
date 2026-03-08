@@ -7,7 +7,7 @@ public final class UseSenseSession: @unchecked Sendable {
     // MARK: - Public Properties
 
     var onStateChange: ((SessionState) -> Void)?
-    var onQualityUpdate: (([QualityGuidance]) -> Void)?
+    var onQualityUpdate: ((ImageQualityReport) -> Void)?
 
     var previewLayer: AVCaptureVideoPreviewLayer? {
         frameCaptureManager.previewLayer
@@ -35,13 +35,19 @@ public final class UseSenseSession: @unchecked Sendable {
     private let appAttestManager = AppAttestManager()
     #endif
 
+    /// App Attest token fetched concurrently during session creation (like Android's integrityJob)
+    private var appAttestTask: Task<String?, Never>?
+
     private var sessionData: SessionData?
     private var currentState: SessionState = .idle {
         didSet { onStateChange?(currentState) }
     }
     private var audioRecordingURL: URL?
     private var captureStartTime: Date?
-    private var baselineDuration: TimeInterval = 1.5
+    private var captureEndTime: Date?
+    private var framesDropped: Int = 0
+    private var baselineDuration: TimeInterval = 2.0
+    private var latestQualityReport: ImageQualityReport?
 
     // MARK: - Init
 
@@ -78,12 +84,14 @@ public final class UseSenseSession: @unchecked Sendable {
 
     func start() async {
         do {
-            // Phase 1: App Attest (non-blocking)
+            // Phase 1: Start App Attest concurrently (like Android's integrityJob)
             #if canImport(DeviceCheck) && canImport(CryptoKit)
             try? await appAttestManager.attestIfNeeded(apiClient: apiClient)
             #endif
 
-            // Phase 2: Create session
+            // Phase 2: Create session + start sensor collection concurrently
+            deviceSignalCollector.startSensorCollection()
+
             let request = CreateSessionRequest(
                 sessionType: sessionType.rawValue,
                 identityId: identityId,
@@ -93,6 +101,13 @@ public final class UseSenseSession: @unchecked Sendable {
             let response = try await apiClient.createSession(request: request)
             let data = SessionData(from: response)
             self.sessionData = data
+
+            // Start App Attest assertion fetch concurrently (bound to session nonce)
+            #if canImport(DeviceCheck) && canImport(CryptoKit)
+            appAttestTask = Task {
+                await appAttestManager.generateAssertionSafe(nonce: data.nonce)
+            }
+            #endif
 
             eventEmitter.emit(.sessionCreated, data: ["session_id": data.sessionId])
             currentState = .created(session: data)
@@ -147,20 +162,34 @@ public final class UseSenseSession: @unchecked Sendable {
         await startFaceGuide()
     }
 
+    /// Called by the face guide "My face is ready" button
+    func faceReady() async {
+        await startBaseline()
+    }
+
     func challengeCompleted() async {
+        challengeResponseBuilder.markCompleted()
         eventEmitter.emit(.challengeCompleted)
         frameCaptureManager.stop()
+        captureEndTime = Date()
+        deviceSignalCollector.stopSensorCollection()
         await stopAudioIfNeeded()
         await uploadAndComplete()
     }
 
     func challengeStepReached(_ index: Int) {
-        challengeResponseBuilder.recordStep(index: index)
+        challengeResponseBuilder.setCurrentStep(index)
+    }
+
+    func onFrameCapturedForChallenge(frameIndex: Int, timestampMs: Int64) {
+        challengeResponseBuilder.recordFrame(frameIndex: frameIndex, timestampMs: timestampMs)
     }
 
     func retry() async {
         frameBuffer.reset()
         challengeResponseBuilder.reset()
+        deviceSignalCollector.release()
+        apiClient.clearSession()
         currentState = .idle
         await start()
     }
@@ -169,6 +198,8 @@ public final class UseSenseSession: @unchecked Sendable {
         frameCaptureManager.stop()
         audioCaptureManager.cleanup()
         frameBuffer.reset()
+        deviceSignalCollector.release()
+        appAttestTask?.cancel()
         currentState = .error(UseSenseError(code: .userCancelled))
     }
 
@@ -196,7 +227,7 @@ public final class UseSenseSession: @unchecked Sendable {
         do {
             try frameCaptureManager.configure()
         } catch {
-            handleError(UseSenseError(code: .cameraPermissionDenied, message: "Failed to configure camera: \(error.localizedDescription)"))
+            handleError(UseSenseError(code: .cameraUnavailable, message: "Failed to configure camera: \(error.localizedDescription)"))
             return
         }
 
@@ -211,11 +242,7 @@ public final class UseSenseSession: @unchecked Sendable {
     private func startFaceGuide() async {
         frameCaptureManager.start()
         currentState = .faceGuide
-
-        // Wait briefly for face positioning
-        try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-
-        await startBaseline()
+        // The view will show a "My face is ready" button which calls faceReady()
     }
 
     private func startBaseline() async {
@@ -229,17 +256,17 @@ public final class UseSenseSession: @unchecked Sendable {
             startAudioRecording()
         }
 
-        // Wait for baseline duration
+        // Wait for baseline duration (2 seconds matching Android)
         try? await Task.sleep(nanoseconds: UInt64(baselineDuration * 1_000_000_000))
 
-        // Countdown
+        // Countdown (3 seconds matching Android)
         for i in stride(from: 3, through: 1, by: -1) {
             currentState = .countdown(number: i)
             try? await Task.sleep(nanoseconds: 1_000_000_000)
         }
 
         // Start challenge phase
-        challengeResponseBuilder.start()
+        challengeResponseBuilder.markStarted()
         if let challenge = sessionData?.policy.challenge {
             eventEmitter.emit(.challengeStarted, data: ["type": challenge.challengeType.rawValue])
             currentState = .challenge(spec: challenge)
@@ -248,6 +275,8 @@ public final class UseSenseSession: @unchecked Sendable {
             let captureDurationMs = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 2500
             try? await Task.sleep(nanoseconds: UInt64(captureDurationMs) * 1_000_000)
             frameCaptureManager.stop()
+            captureEndTime = Date()
+            deviceSignalCollector.stopSensorCollection()
             await stopAudioIfNeeded()
             await uploadAndComplete()
         }
@@ -289,26 +318,45 @@ public final class UseSenseSession: @unchecked Sendable {
 
         eventEmitter.emit(.captureCompleted, data: ["frame_count": "\(frames.count)"])
 
-        // Get App Attest token
+        // Wait for App Attest token (started concurrently during session creation)
         var appAttestToken: String?
         #if canImport(DeviceCheck) && canImport(CryptoKit)
-        appAttestToken = await appAttestManager.generateAssertionSafe(nonce: session.nonce)
+        appAttestToken = await appAttestTask?.value
         #endif
 
-        let integritySignals = deviceSignalCollector.collect(appAttestToken: appAttestToken)
+        // Collect channel integrity and device telemetry
+        let channelIntegrity = deviceSignalCollector.collectChannelIntegrity(appAttestToken: appAttestToken)
+        let deviceTelemetry = deviceSignalCollector.collectDeviceTelemetry()
 
-        // Build metadata
+        // Build challenge response if applicable
+        var challengeResponse: [String: Any]?
+        if let challenge = session.policy.challenge {
+            challengeResponse = challengeResponseBuilder.build(challenge: challenge)
+        }
+
+        // Build metadata (channel_integrity + device_telemetry structure)
         let metadataData: Data
+        let startTime = captureStartTime ?? Date()
+        let endTime = captureEndTime ?? Date()
+        let timestamps = frameBuffer.getTimestamps()
+        let avgInterval: Int
+        if timestamps.count > 1 {
+            let totalInterval = timestamps.last! - timestamps.first!
+            avgInterval = Int((totalInterval / Double(timestamps.count - 1)) * 1000)
+        } else {
+            avgInterval = 0
+        }
+
         do {
-            let captureDurationMs = captureStartTime.map { Int(Date().timeIntervalSince($0) * 1000) } ?? 0
             metadataData = try metadataBuilder.build(
-                sessionId: session.sessionId,
-                nonce: session.nonce,
-                challenge: session.policy.challenge,
-                captureDurationMs: captureDurationMs,
-                frameTimestamps: frameBuffer.getTimestamps(),
-                hasAudio: audioCaptureManager.isRecording || audioRecordingURL != nil,
-                integritySignals: integritySignals
+                challengeResponse: challengeResponse,
+                channelIntegrity: channelIntegrity,
+                deviceTelemetry: deviceTelemetry,
+                captureStartTime: startTime,
+                captureEndTime: endTime,
+                framesCaptured: frames.count,
+                framesDropped: framesDropped,
+                avgFrameIntervalMs: avgInterval
             )
         } catch {
             handleError(UseSenseError(code: .unknownError, message: "Failed to build metadata."))
@@ -387,6 +435,7 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     private func handleError(_ error: UseSenseError) {
+        deviceSignalCollector.release()
         eventEmitter.emit(.error, data: ["code": error.code.rawValue, "message": error.message])
         currentState = .error(error)
     }
@@ -399,9 +448,12 @@ extension UseSenseSession: FrameCaptureDelegate {
         // Quality analysis at 4Hz
         if qualityAnalyzer.shouldAnalyze() {
             let report = qualityAnalyzer.analyze(pixelBuffer)
-            onQualityUpdate?(report.guidanceMessages)
+            latestQualityReport = report
+            onQualityUpdate?(report)
             eventEmitter.emit(.imageQualityCheck, data: [
                 "score": String(format: "%.1f", report.overallScore),
+                "quality": report.qualityLevel.rawValue,
+                "acceptable": report.isAcceptable ? "true" : "false",
                 "blur": String(format: "%.1f", report.laplacianVariance),
                 "brightness": String(format: "%.1f", report.meanBrightness)
             ])
@@ -409,13 +461,21 @@ extension UseSenseSession: FrameCaptureDelegate {
 
         // Frame capture at target FPS
         if frameBuffer.shouldCapture() && !frameBuffer.isFull {
+            let frameIndex = frameBuffer.count
+            let timestampMs = Int64(CMTimeGetSeconds(timestamp) * 1000)
             frameBuffer.addFrame(pixelBuffer, timestamp: CMTimeGetSeconds(timestamp))
+
+            // Record frame for challenge response
+            challengeResponseBuilder.recordFrame(frameIndex: frameIndex, timestampMs: timestampMs)
+
             eventEmitter.emit(.frameCaptured, data: ["count": "\(frameBuffer.count)"])
+        } else if frameBuffer.isFull {
+            framesDropped += 1
         }
     }
 
     func frameCaptureManager(_ manager: FrameCaptureManager, didFailWithError error: Error) {
-        handleError(UseSenseError(code: .unknownError, message: "Camera error: \(error.localizedDescription)"))
+        handleError(UseSenseError(code: .captureFailed, message: "Camera error: \(error.localizedDescription)"))
     }
 }
 #endif

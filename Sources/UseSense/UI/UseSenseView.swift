@@ -44,18 +44,21 @@ public struct UseSenseView: View {
                 cameraWithFaceGuide
 
             case .baseline:
-                cameraWithFaceGuide
+                cameraWithBaseline
 
             case .countdown(let number):
                 ZStack {
                     cameraLayer
+                    BaselineOvalView()
                     CountdownOverlay(number: number)
+                    captureOverlayChrome(phase: "BASELINE")
                 }
 
             case .challenge(let spec):
                 ZStack {
                     cameraLayer
                     challengeOverlay(spec)
+                    captureOverlayChrome(phase: "CHALLENGE")
                 }
 
             case .uploading(let progress):
@@ -72,20 +75,23 @@ public struct UseSenseView: View {
                 )
 
             case .done(let decision):
-                ResultView(decision: decision) {
+                ResultView(decision: decision, onDismiss: {
                     onComplete(.success(decision))
-                }
+                }, onRetry: {
+                    viewModel.retry()
+                })
 
             case .error(let error):
-                errorView(error)
+                FailureView(error: error, onRetry: {
+                    if error.isRetryable {
+                        viewModel.retry()
+                    } else {
+                        onComplete(.failure(error))
+                    }
+                }, onCancel: onCancel)
             }
         }
         .statusBarHidden(viewModel.isCameraActive)
-        .onChange(of: viewModel.completionResult) { result in
-            if let result = result {
-                onComplete(result)
-            }
-        }
     }
 
     // MARK: - Camera Views
@@ -104,17 +110,84 @@ public struct UseSenseView: View {
     private var cameraWithFaceGuide: some View {
         ZStack {
             cameraLayer
-            FaceGuideOverlay(qualityGuidance: viewModel.qualityGuidance)
+            FaceGuideOverlay(
+                qualityGuidance: viewModel.qualityGuidance,
+                qualityLevel: viewModel.qualityLevel,
+                showReadyButton: true,
+                onReady: { viewModel.faceReady() }
+            )
 
-            // Close button
+            // Close button + quality dot
             VStack {
                 HStack {
+                    QualityIndicatorView(
+                        mode: .compact,
+                        qualityLevel: viewModel.qualityLevel,
+                        message: nil
+                    )
+                    .padding(.leading, 16)
+
                     Spacer()
                     closeButton
                 }
                 Spacer()
             }
-            .padding()
+            .padding(.top, 8)
+        }
+    }
+
+    private var cameraWithBaseline: some View {
+        ZStack {
+            cameraLayer
+            BaselineOvalView()
+
+            // Phase badge + close button
+            VStack {
+                HStack {
+                    PhaseBadge(phase: "BASELINE")
+                        .padding(.leading, 16)
+                    Spacer()
+                    closeButton
+                }
+                Spacer()
+            }
+            .padding(.top, 8)
+
+            // Quality warning at bottom
+            VStack {
+                Spacer()
+                if let guidance = viewModel.qualityGuidance.first {
+                    QualityWarningBanner(guidance: guidance, qualityLevel: viewModel.qualityLevel)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 32)
+                }
+            }
+        }
+    }
+
+    /// Chrome overlay for countdown and challenge phases: phase badge, close button, progress, quality.
+    private func captureOverlayChrome(phase: String) -> some View {
+        VStack {
+            HStack {
+                PhaseBadge(phase: phase)
+                    .padding(.leading, 16)
+                Spacer()
+                closeButton
+            }
+            .padding(.top, 8)
+
+            Spacer()
+
+            VStack(spacing: 8) {
+                if let guidance = viewModel.qualityGuidance.first {
+                    QualityWarningBanner(guidance: guidance, qualityLevel: viewModel.qualityLevel)
+                        .padding(.horizontal, 16)
+                }
+
+                ChallengeProgressBar(progress: viewModel.challengeProgress)
+                    .padding(.horizontal, 16)
+            }
+            .padding(.bottom, 32)
         }
     }
 
@@ -184,63 +257,6 @@ public struct UseSenseView: View {
         .background(Color.UseSense.background.ignoresSafeArea())
     }
 
-    // MARK: - Error View
-
-    private func errorView(_ error: UseSenseError) -> some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            VStack(spacing: 20) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 48))
-                    .foregroundColor(Color.UseSense.error)
-
-                Text("Something went wrong")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundColor(Color.UseSense.textPrimary)
-
-                Text(error.message)
-                    .font(.system(size: 16))
-                    .foregroundColor(Color.UseSense.textSecondary)
-                    .multilineTextAlignment(.center)
-
-                HStack(spacing: 12) {
-                    Button(action: { viewModel.retry() }) {
-                        Text("Retry")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 52)
-                            .background(Color.UseSense.primary)
-                            .cornerRadius(12)
-                    }
-
-                    if let onCancel = onCancel {
-                        Button(action: {
-                            onCancel()
-                        }) {
-                            Text("Cancel")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundColor(Color.UseSense.textPrimary)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 52)
-                                .background(Color.UseSense.border)
-                                .cornerRadius(12)
-                        }
-                    }
-                }
-            }
-            .padding(32)
-            .background(Color.UseSense.surface)
-            .cornerRadius(24)
-            .shadow(color: .black.opacity(0.1), radius: 16, y: 4)
-            .padding(.horizontal, 24)
-
-            Spacer()
-        }
-        .background(Color.UseSense.background.ignoresSafeArea())
-    }
-
     // MARK: - Close Button
 
     private var closeButton: some View {
@@ -255,6 +271,7 @@ public struct UseSenseView: View {
                 .background(Color.black.opacity(0.5))
                 .clipShape(Circle())
         }
+        .padding(.trailing, 16)
     }
 }
 
@@ -263,10 +280,11 @@ public struct UseSenseView: View {
 final class UseSenseViewModel: ObservableObject {
     @Published var state: SessionState = .idle
     @Published var qualityGuidance: [QualityGuidance] = []
+    @Published var qualityLevel: QualityLevel = .good
+    @Published var challengeProgress: Double = 0
     @Published var completionResult: Result<RedactedDecisionObject, UseSenseError>?
 
     private let session: UseSenseSession
-    private var stateObserver: (() -> Void)?
 
     var previewLayer: AVCaptureVideoPreviewLayer? {
         session.previewLayer
@@ -286,9 +304,10 @@ final class UseSenseViewModel: ObservableObject {
                 self?.state = newState
             }
         }
-        session.onQualityUpdate = { [weak self] guidance in
+        session.onQualityUpdate = { [weak self] report in
             DispatchQueue.main.async {
-                self?.qualityGuidance = guidance
+                self?.qualityGuidance = report.guidanceMessages
+                self?.qualityLevel = report.qualityLevel
             }
         }
     }
@@ -301,6 +320,10 @@ final class UseSenseViewModel: ObservableObject {
         Task { await session.proceedFromInstructions() }
     }
 
+    func faceReady() {
+        Task { await session.faceReady() }
+    }
+
     func requestPermissions() {
         Task { await session.requestPermissions() }
     }
@@ -310,7 +333,7 @@ final class UseSenseViewModel: ObservableObject {
     }
 
     func challengeStepReached(_ index: Int) {
-        session.recordChallengeStep(index: index)
+        session.challengeStepReached(index)
     }
 
     func retry() {
