@@ -51,13 +51,30 @@ public final class UseSenseSession: @unchecked Sendable {
 
     // MARK: - Init
 
-    public init(
+    public convenience init(
+        config: UseSenseConfig,
+        sessionType: SessionType,
+        identityId: String? = nil,
+        externalUserId: String? = nil,
+        metadata: [String: AnyCodableValue]? = nil
+    ) {
+        self.init(
+            config: config,
+            sessionType: sessionType,
+            identityId: identityId,
+            externalUserId: externalUserId,
+            metadata: metadata,
+            eventEmitter: EventEmitter()
+        )
+    }
+
+    init(
         config: UseSenseConfig,
         sessionType: SessionType,
         identityId: String? = nil,
         externalUserId: String? = nil,
         metadata: [String: AnyCodableValue]? = nil,
-        eventEmitter: EventEmitter = EventEmitter()
+        eventEmitter: EventEmitter
     ) {
         self.config = config
         self.sessionType = sessionType
