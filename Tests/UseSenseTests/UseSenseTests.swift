@@ -4,9 +4,9 @@ import XCTest
 final class UseSenseConfigTests: XCTestCase {
     func testDefaultConfig() {
         let config = UseSenseConfig(apiKey: "sk_test_123")
-        XCTAssertEqual(config.apiBaseUrl, "https://api.usesense.ai/functions/v1/make-server-fc4cf30d")
+        XCTAssertEqual(config.apiEndpoint, UseSenseConfig.defaultEndpoint)
         XCTAssertEqual(config.apiKey, "sk_test_123")
-        XCTAssertNil(config.gatewayKey)
+        XCTAssertEqual(config.gatewayKey, UseSenseConfig.defaultGatewayKey)
         XCTAssertEqual(config.environment, .sandbox)
     }
 
@@ -29,13 +29,13 @@ final class UseSenseConfigTests: XCTestCase {
 
     func testCustomConfig() {
         let config = UseSenseConfig(
-            apiBaseUrl: "https://custom.api.com",
+            apiEndpoint: "https://custom.api.com",
             apiKey: "key",
             gatewayKey: "gw_key",
             environment: .production,
             options: SDKOptions(audioEnabled: .always, targetFps: 10, maxFrames: 20)
         )
-        XCTAssertEqual(config.apiBaseUrl, "https://custom.api.com")
+        XCTAssertEqual(config.apiEndpoint, "https://custom.api.com")
         XCTAssertEqual(config.gatewayKey, "gw_key")
         XCTAssertEqual(config.environment, .production)
         XCTAssertEqual(config.options?.targetFps, 10)

@@ -1,24 +1,30 @@
 import Foundation
 
 public struct UseSenseConfig: Sendable {
-    public let apiBaseUrl: String
+    public static let defaultEndpoint = "https://api.usesense.ai/functions/v1/make-server-fc4cf30d"
+    public static let defaultGatewayKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR6ZnNycXNqZ3hjcHN4eXB4am9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyMDQ5MjgsImV4cCI6MjA4Njc4MDkyOH0._PM_8RU9a6-l10mchYv5eipIhwWwt4gh8G1vdJgWcXw"
+
+    public let apiEndpoint: String
     public let apiKey: String
-    public var gatewayKey: String?
+    public let gatewayKey: String
     public var environment: Environment?
     public var branding: BrandingConfig?
     public var options: SDKOptions?
 
     public init(
-        apiBaseUrl: String = "https://api.usesense.ai/functions/v1/make-server-fc4cf30d",
+        apiEndpoint: String = UseSenseConfig.defaultEndpoint,
         apiKey: String,
-        gatewayKey: String? = nil,
+        gatewayKey: String = UseSenseConfig.defaultGatewayKey,
         environment: Environment? = nil,
         branding: BrandingConfig? = nil,
         options: SDKOptions? = nil
     ) {
-        self.apiBaseUrl = apiBaseUrl
+        let trimmedUrl = apiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiEndpoint = trimmedUrl.isEmpty || URLComponents(string: trimmedUrl)?.scheme == nil
+            ? Self.defaultEndpoint
+            : trimmedUrl
         self.apiKey = apiKey
-        self.gatewayKey = gatewayKey
+        self.gatewayKey = gatewayKey.isEmpty ? Self.defaultGatewayKey : gatewayKey
         self.environment = environment ?? Environment.detect(from: apiKey)
         self.branding = branding
         self.options = options
