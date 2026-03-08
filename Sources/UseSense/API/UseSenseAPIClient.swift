@@ -4,7 +4,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
     // Default Supabase anonymous key (public, safe to bundle)
     static let defaultGatewayKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR6ZnNycXNqZ3hjcHN4eXB4am9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyMDQ5MjgsImV4cCI6MjA4Njc4MDkyOH0._PM_8RU9a6-l10mchYv5eipIhwWwt4gh8G1vdJgWcXw"
 
-    static let sdkVersion = "1.17.7"
+    static let sdkVersion = "1.17.25"
     private static let userAgent = "UseSense-iOS-SDK/\(sdkVersion)"
 
     // Retry delays in seconds: immediate, 1s, 3s
@@ -148,42 +148,6 @@ final class UseSenseAPIClient: @unchecked Sendable {
         request.timeoutInterval = 15
 
         return try await perform(request)
-    }
-
-    // MARK: - App Attest endpoints
-
-    func requestAttestationChallenge() async throws -> Data {
-        var request = URLRequest(url: buildURL(path: "/v1/devices/attest/challenge"))
-        request.httpMethod = "POST"
-        request.setValue(config.apiKey, forHTTPHeaderField: "X-API-Key")
-        applyHeaders(&request)
-        request.timeoutInterval = 10
-
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            throw UseSenseError(code: .serverError, message: "Failed to get attestation challenge")
-        }
-        return data
-    }
-
-    func registerAttestation(keyId: String, attestationObject: Data, challenge: Data) async throws {
-        var request = URLRequest(url: buildURL(path: "/v1/devices/attest"))
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(config.apiKey, forHTTPHeaderField: "X-API-Key")
-        applyHeaders(&request)
-        let body: [String: String] = [
-            "key_id": keyId,
-            "attestation": attestationObject.base64EncodedString(),
-            "challenge": challenge.base64EncodedString()
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        request.timeoutInterval = 10
-
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            throw UseSenseError(code: .serverError, message: "Failed to register attestation")
-        }
     }
 
     // MARK: - Retry Logic
