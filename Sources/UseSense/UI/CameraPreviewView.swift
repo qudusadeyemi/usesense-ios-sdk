@@ -5,7 +5,7 @@ import AVFoundation
 /// Hosts the AVCaptureVideoPreviewLayer inside a UIView whose `layoutSubviews`
 /// keeps the layer frame in sync with the view bounds, avoiding the black-frame
 /// flash caused by the zero-bounds race in UIViewRepresentable.
-fileprivate class PreviewHostView: UIView {
+private class PreviewHostView: UIView {
     let previewLayer: AVCaptureVideoPreviewLayer
 
     init(previewLayer: AVCaptureVideoPreviewLayer) {
@@ -28,11 +28,11 @@ fileprivate class PreviewHostView: UIView {
 struct CameraPreviewView: UIViewRepresentable {
     let previewLayer: AVCaptureVideoPreviewLayer
 
-    func makeUIView(context: Context) -> PreviewHostView {
+    func makeUIView(context: Context) -> UIView {
         PreviewHostView(previewLayer: previewLayer)
     }
 
-    func updateUIView(_ uiView: PreviewHostView, context: Context) {
+    func updateUIView(_ uiView: UIView, context: Context) {
         // layoutSubviews handles frame updates automatically.
     }
 }
