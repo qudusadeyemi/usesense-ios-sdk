@@ -42,6 +42,7 @@ public final class UseSenseSession: @unchecked Sendable {
     private var currentState: SessionState = .idle {
         didSet { onStateChange?(currentState) }
     }
+    private var isStarted = false
     private var audioRecordingURL: URL?
     private var captureStartTime: Date?
     private var captureEndTime: Date?
@@ -100,6 +101,9 @@ public final class UseSenseSession: @unchecked Sendable {
     // MARK: - Session Lifecycle
 
     func start() async {
+        guard !isStarted else { return }
+        isStarted = true
+
         do {
             // Phase 1: Create session + start sensor collection
             deviceSignalCollector.startSensorCollection()
@@ -203,6 +207,7 @@ public final class UseSenseSession: @unchecked Sendable {
         challengeResponseBuilder.reset()
         deviceSignalCollector.release()
         apiClient.clearSession()
+        isStarted = false
         currentState = .idle
         await start()
     }

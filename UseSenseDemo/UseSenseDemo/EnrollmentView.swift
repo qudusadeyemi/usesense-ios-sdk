@@ -1,10 +1,15 @@
 import SwiftUI
 import UseSenseSDK
 
-/// Holds event log entries in a reference type so that updates don't trigger
-/// parent-view re-renders that would recreate the UseSenseView/session.
-final class EventLogger: ObservableObject {
-    @Published var events: [String] = []
+/// Holds event log entries in a plain reference type.
+/// NOT an ObservableObject — appending events must not trigger parent-view
+/// re-renders that would re-evaluate the fullScreenCover content closure.
+final class EventLogger {
+    private(set) var events: [String] = []
+
+    func append(_ entry: String) {
+        events.append(entry)
+    }
 }
 
 struct EnrollmentView: View {
@@ -13,7 +18,8 @@ struct EnrollmentView: View {
     @State private var showVerification = false
     @State private var result: RedactedDecisionObject?
     @State private var error: UseSenseError?
-    @StateObject private var eventLogger = EventLogger()
+    @State private var eventLogger = EventLogger()
+    @State private var eventLogSnapshot: [String] = []
 
     @AppStorage("apiKey") private var apiKey = ""
 
@@ -54,9 +60,9 @@ struct EnrollmentView: View {
                     }
                 }
 
-                if !eventLogger.events.isEmpty {
+                if !eventLogSnapshot.isEmpty {
                     Section("Event Log") {
-                        ForEach(Array(eventLogger.events.enumerated()), id: \.offset) { _, event in
+                        ForEach(Array(eventLogSnapshot.enumerated()), id: \.offset) { _, event in
                             Text(event)
                                 .font(.system(size: 12, design: .monospaced))
                         }
@@ -84,14 +90,13 @@ struct EnrollmentView: View {
 
         let logger = eventLogger
         let _ = session.addEventListener { event in
-            DispatchQueue.main.async {
-                logger.events.append("[\(event.type.rawValue)] \(event.data?.description ?? "")")
-            }
+            logger.append("[\(event.type.rawValue)] \(event.data?.description ?? "")")
         }
 
         return UseSenseView(
             session: session,
             onComplete: { completionResult in
+                eventLogSnapshot = logger.events
                 showVerification = false
                 switch completionResult {
                 case .success(let decision):
@@ -103,6 +108,7 @@ struct EnrollmentView: View {
                 }
             },
             onCancel: {
+                eventLogSnapshot = logger.events
                 showVerification = false
             }
         )

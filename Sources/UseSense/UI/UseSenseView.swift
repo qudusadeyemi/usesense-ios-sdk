@@ -3,7 +3,7 @@ import SwiftUI
 import AVFoundation
 
 public struct UseSenseView: View {
-    @ObservedObject private var viewModel: UseSenseViewModel
+    @StateObject private var viewModel: UseSenseViewModel
     private let onComplete: (Result<RedactedDecisionObject, UseSenseError>) -> Void
     private let onCancel: (() -> Void)?
 
@@ -12,7 +12,7 @@ public struct UseSenseView: View {
         onComplete: @escaping (Result<RedactedDecisionObject, UseSenseError>) -> Void,
         onCancel: (() -> Void)? = nil
     ) {
-        self._viewModel = ObservedObject(wrappedValue: UseSenseViewModel(session: session))
+        self._viewModel = StateObject(wrappedValue: UseSenseViewModel(session: session))
         self.onComplete = onComplete
         self.onCancel = onCancel
     }
