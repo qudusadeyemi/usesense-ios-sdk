@@ -1,47 +1,189 @@
 #if canImport(UIKit)
 import UIKit
 import Foundation
+import CoreMotion
+import AVFoundation
+
+struct SensorSample: Codable, Sendable {
+    let t: Int64  // ms since sensor start
+    let x: Double
+    let y: Double
+    let z: Double
+}
 
 final class DeviceSignalCollector: @unchecked Sendable {
 
-    func collect(appAttestToken: String? = nil) -> IOSIntegritySignals {
+    private let motionManager = CMMotionManager()
+    private var accelerometerData: [SensorSample] = []
+    private var gyroscopeData: [SensorSample] = []
+    private var sensorStartTime: Date?
+    private let lock = NSLock()
+    private let maxSamples = 20
+    private let sampleInterval: TimeInterval = 0.5 // ~2Hz
+
+    private var cameraFacing: String = "front"
+    private var cameraResolution: String = "1280x720"
+
+    func setCaptureInfo(facing: String, resolution: String) {
+        cameraFacing = facing
+        cameraResolution = resolution
+    }
+
+    // MARK: - Sensor Collection
+
+    func startSensorCollection() {
+        lock.lock()
+        accelerometerData.removeAll()
+        gyroscopeData.removeAll()
+        sensorStartTime = Date()
+        lock.unlock()
+
+        if motionManager.isAccelerometerAvailable {
+            motionManager.accelerometerUpdateInterval = sampleInterval
+            motionManager.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
+                guard let self, let data else { return }
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                guard self.accelerometerData.count < self.maxSamples else { return }
+                let t = Int64((Date().timeIntervalSince(self.sensorStartTime ?? Date())) * 1000)
+                self.accelerometerData.append(SensorSample(
+                    t: t, x: data.acceleration.x, y: data.acceleration.y, z: data.acceleration.z
+                ))
+            }
+        }
+
+        if motionManager.isGyroAvailable {
+            motionManager.gyroUpdateInterval = sampleInterval
+            motionManager.startGyroUpdates(to: .main) { [weak self] data, _ in
+                guard let self, let data else { return }
+                self.lock.lock()
+                defer { self.lock.unlock() }
+                guard self.gyroscopeData.count < self.maxSamples else { return }
+                let t = Int64((Date().timeIntervalSince(self.sensorStartTime ?? Date())) * 1000)
+                self.gyroscopeData.append(SensorSample(
+                    t: t, x: data.rotationRate.x, y: data.rotationRate.y, z: data.rotationRate.z
+                ))
+            }
+        }
+    }
+
+    func stopSensorCollection() {
+        if motionManager.isAccelerometerActive { motionManager.stopAccelerometerUpdates() }
+        if motionManager.isGyroActive { motionManager.stopGyroUpdates() }
+    }
+
+    // MARK: - Channel Integrity Signals
+
+    /// Collect all channel integrity signals for the server's DeepSense scorer.
+    /// Maps to the `channel_integrity` object in the metadata payload.
+    func collectChannelIntegrity(appAttestToken: String? = nil) -> [String: Any] {
         let device = UIDevice.current
         device.isBatteryMonitoringEnabled = true
 
         let screen = UIScreen.main
-        let screenRes = "\(Int(screen.nativeBounds.width))x\(Int(screen.nativeBounds.height))"
+        var signals: [String: Any] = [:]
 
-        let batteryInfo: BatteryInfo?
+        // Platform
+        signals["platform"] = "ios"
+        signals["channel_type"] = "ios"
+        signals["sdk_version"] = UseSenseAPIClient.sdkVersion
+
+        // Device info
+        signals["device_model"] = deviceModelIdentifier()
+        signals["device_manufacturer"] = "Apple"
+        signals["os_version"] = "iOS \(device.systemVersion)"
+        signals["device_name"] = device.name
+
+        // Screen
+        signals["screen_width"] = Int(screen.nativeBounds.width)
+        signals["screen_height"] = Int(screen.nativeBounds.height)
+        signals["screen_density"] = Int(screen.scale)
+
+        // Camera
+        signals["camera_facing"] = cameraFacing
+        signals["camera_resolution"] = cameraResolution
+
+        // Battery
         if device.batteryState != .unknown {
-            let stateStr: String
-            switch device.batteryState {
-            case .unplugged: stateStr = "unplugged"
-            case .charging: stateStr = "charging"
-            case .full: stateStr = "full"
-            default: stateStr = "unknown"
-            }
-            batteryInfo = BatteryInfo(level: device.batteryLevel, state: stateStr)
-        } else {
-            batteryInfo = nil
+            signals["battery_level"] = device.batteryLevel
+            signals["battery_charging"] = device.batteryState == .charging || device.batteryState == .full
         }
 
-        return IOSIntegritySignals(
-            isSimulator: isRunningOnSimulator(),
-            isJailbroken: checkJailbroken(),
-            isDebuggerAttached: checkDebugger(),
-            appAttestToken: appAttestToken,
-            bundleId: Bundle.main.bundleIdentifier ?? "unknown",
-            deviceModel: deviceModelIdentifier(),
-            osVersion: device.systemVersion,
-            screenResolution: screenRes,
-            processorCount: ProcessInfo.processInfo.processorCount,
-            physicalMemoryMB: Int(ProcessInfo.processInfo.physicalMemory / (1024 * 1024)),
-            battery: batteryInfo,
-            connection: ConnectionInfo(type: "unknown"),
-            timezone: TimeZone.current.identifier,
-            locale: Locale.current.identifier
-        )
+        // Network
+        signals["network_type"] = "unknown"
+
+        // Locale/timezone
+        signals["locale"] = Locale.current.identifier
+        signals["timezone"] = TimeZone.current.identifier
+        signals["timezone_offset"] = TimeZone.current.secondsFromGMT() / 60
+
+        // App info
+        signals["app_package"] = Bundle.main.bundleIdentifier ?? "unknown"
+
+        // Device integrity
+        signals["is_simulator"] = isRunningOnSimulator()
+        signals["is_jailbroken"] = checkJailbroken()
+        signals["is_debugger_attached"] = checkDebugger()
+
+        // App Attest token (iOS equivalent of Play Integrity)
+        if let token = appAttestToken {
+            signals["app_attest_token"] = token
+        }
+
+        // Permissions
+        signals["camera_permission_granted"] = AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+        signals["microphone_permission_granted"] = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+
+        // Uptime
+        signals["uptime_ms"] = Int64(ProcessInfo.processInfo.systemUptime * 1000)
+
+        // Sensor data
+        lock.lock()
+        let accelData = accelerometerData
+        let gyroData = gyroscopeData
+        lock.unlock()
+
+        signals["accelerometer_data"] = accelData.map { ["t": $0.t, "x": $0.x, "y": $0.y, "z": $0.z] }
+        signals["gyroscope_data"] = gyroData.map { ["t": $0.t, "x": $0.x, "y": $0.y, "z": $0.z] }
+
+        return signals
     }
+
+    /// Collect device telemetry (supplementary hardware info).
+    func collectDeviceTelemetry() -> [String: Any] {
+        var telemetry: [String: Any] = [:]
+
+        #if arch(arm64)
+        telemetry["cpu_abi"] = "arm64"
+        #elseif arch(x86_64)
+        telemetry["cpu_abi"] = "x86_64"
+        #else
+        telemetry["cpu_abi"] = "unknown"
+        #endif
+
+        telemetry["processor_count"] = ProcessInfo.processInfo.processorCount
+        let totalRAM = ProcessInfo.processInfo.physicalMemory
+        telemetry["total_ram_mb"] = Int(totalRAM / (1024 * 1024))
+
+        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory()),
+           let freeSize = attrs[.systemFreeSize] as? Int64 {
+            telemetry["storage_available_mb"] = Int(freeSize / (1024 * 1024))
+        }
+
+        telemetry["os_build"] = ProcessInfo.processInfo.operatingSystemVersionString
+
+        return telemetry
+    }
+
+    func release() {
+        stopSensorCollection()
+        lock.lock()
+        accelerometerData.removeAll()
+        gyroscopeData.removeAll()
+        lock.unlock()
+    }
+
+    // MARK: - Device Integrity Checks
 
     private func isRunningOnSimulator() -> Bool {
         #if targetEnvironment(simulator)

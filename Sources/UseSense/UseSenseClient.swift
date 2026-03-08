@@ -11,8 +11,19 @@ public protocol UseSenseClientProtocol: AnyObject, Sendable {
         metadata: [String: AnyCodableValue]?
     ) -> UseSenseSession
 
+    /// Start verification with a request object (matches Android's startVerification).
+    func startVerification(request: VerificationRequest) -> UseSenseSession
+
     /// Register an event listener for all sessions.
+    @discardableResult
+    func onEvent(_ callback: @escaping EventCallback) -> () -> Void
+
+    /// Register an event listener for all sessions.
+    @discardableResult
     func addEventListener(_ callback: @escaping EventCallback) -> () -> Void
+
+    /// Clear all event listeners and reset state.
+    func reset()
 
     /// Get the current SDK version.
     var sdkVersion: String { get }

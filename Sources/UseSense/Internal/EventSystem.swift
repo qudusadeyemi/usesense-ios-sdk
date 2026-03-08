@@ -64,4 +64,11 @@ final class EventEmitter: @unchecked Sendable {
     func emit(_ type: UseSenseEventType, data: [String: String]? = nil) {
         emit(UseSenseEvent(type: type, data: data))
     }
+
+    /// Clear all listeners (matches Android's EventEmitter.clear()).
+    func clear() {
+        lock.lock()
+        callbacks.removeAll()
+        lock.unlock()
+    }
 }

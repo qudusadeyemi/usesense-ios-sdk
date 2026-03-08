@@ -28,9 +28,42 @@ public struct UseSenseConfig: Sendable {
 public enum Environment: String, Codable, Sendable {
     case sandbox
     case production
+    case auto
 
-    static func detect(from apiKey: String) -> Environment {
-        apiKey.hasPrefix("pk_") ? .production : .sandbox
+    public static func detect(from apiKey: String) -> Environment {
+        switch true {
+        case apiKey.hasPrefix("pk_"): return .production
+        case apiKey.hasPrefix("sk_"), apiKey.hasPrefix("dk_"): return .sandbox
+        default: return .production
+        }
+    }
+
+    /// Resolve AUTO to a concrete environment based on the API key.
+    public func resolved(apiKey: String) -> String {
+        switch self {
+        case .auto: return Environment.detect(from: apiKey).rawValue
+        case .sandbox: return "sandbox"
+        case .production: return "production"
+        }
+    }
+}
+
+public struct VerificationRequest: Sendable {
+    public let sessionType: SessionType
+    public let externalUserId: String?
+    public let identityId: String?
+    public let metadata: [String: AnyCodableValue]?
+
+    public init(
+        sessionType: SessionType,
+        externalUserId: String? = nil,
+        identityId: String? = nil,
+        metadata: [String: AnyCodableValue]? = nil
+    ) {
+        self.sessionType = sessionType
+        self.externalUserId = externalUserId
+        self.identityId = identityId
+        self.metadata = metadata
     }
 }
 

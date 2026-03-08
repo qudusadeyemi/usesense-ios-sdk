@@ -28,6 +28,10 @@ public struct RedactedDecisionObject: Codable, Sendable {
         self.timestamp = timestamp
     }
 
+    public var isApproved: Bool { decision == Decision.approve.rawValue }
+    public var isRejected: Bool { decision == Decision.reject.rawValue }
+    public var isPendingReview: Bool { decision == Decision.manualReview.rawValue }
+
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
         case sessionType = "session_type"

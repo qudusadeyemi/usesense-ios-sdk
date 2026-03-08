@@ -1,8 +1,9 @@
 import Foundation
 
 /// Main entry point for the UseSense SDK.
-public final class UseSense: UseSenseClientProtocol, @unchecked Sendable {
-    public static let version = "1.0.0"
+/// Matches Android's UseSense singleton pattern with `initialize()` and `startVerification()`.
+public final class UseSense: @unchecked Sendable {
+    public static let version = "1.17.7"
 
     private let config: UseSenseConfig
     private let globalEventEmitter = EventEmitter()
@@ -37,10 +38,36 @@ public final class UseSense: UseSenseClientProtocol, @unchecked Sendable {
         )
     }
 
+    /// Start verification using a VerificationRequest (matches Android's startVerification pattern).
+    /// - Parameter request: The verification request with session type and parameters.
+    /// - Returns: A configured `UseSenseSession` ready to be presented.
+    public func startVerification(request: VerificationRequest) -> UseSenseSession {
+        return createSession(
+            type: request.sessionType,
+            identityId: request.identityId,
+            externalUserId: request.externalUserId,
+            metadata: request.metadata
+        )
+    }
+
+    /// Register a global event listener (matches Android's onEvent pattern).
+    /// - Parameter callback: Closure invoked for each SDK event.
+    /// - Returns: A removal function. Call it to unsubscribe.
+    @discardableResult
+    public func onEvent(_ callback: @escaping EventCallback) -> () -> Void {
+        globalEventEmitter.addListener(callback)
+    }
+
     /// Register a global event listener.
     /// - Parameter callback: Closure invoked for each SDK event.
     /// - Returns: A removal function. Call it to unsubscribe.
+    @discardableResult
     public func addEventListener(_ callback: @escaping EventCallback) -> () -> Void {
         globalEventEmitter.addListener(callback)
+    }
+
+    /// Clear all event listeners (matches Android's reset pattern).
+    public func reset() {
+        globalEventEmitter.clear()
     }
 }

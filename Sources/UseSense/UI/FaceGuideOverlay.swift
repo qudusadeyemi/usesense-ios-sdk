@@ -1,16 +1,20 @@
 #if canImport(SwiftUI)
 import SwiftUI
 
+/// Face guide overlay with oval cutout, pulsing dashed border, and "My face is ready" button.
+/// Matches Android's FaceGuideOvalView: 55% width, 3:4 AR, max 80% height, dashed border.
 struct FaceGuideOverlay: View {
     let qualityGuidance: [QualityGuidance]
-    var pulseAnimation: Bool = true
+    let qualityLevel: QualityLevel
+    var showReadyButton: Bool = true
+    var onReady: (() -> Void)?
 
     @State private var isPulsing = false
 
     var body: some View {
         GeometryReader { geometry in
             let ovalWidth = geometry.size.width * 0.55
-            let ovalHeight = ovalWidth * (4.0 / 3.0)
+            let ovalHeight = min(ovalWidth * (4.0 / 3.0), geometry.size.height * 0.8)
 
             ZStack {
                 // Dimmed background with cutout
@@ -25,68 +29,71 @@ struct FaceGuideOverlay: View {
                             .compositingGroup()
                     )
 
-                // Oval border
+                // Dashed oval border with pulse animation
                 Ellipse()
-                    .stroke(borderColor, lineWidth: 3)
+                    .stroke(style: StrokeStyle(lineWidth: 3, dash: [12, 8]))
+                    .foregroundColor(borderColor)
                     .frame(width: ovalWidth, height: ovalHeight)
-                    .scaleEffect(isPulsing ? 1.02 : 1.0)
+                    .scaleEffect(isPulsing ? 1.1 : 1.0)
+                    .opacity(isPulsing ? 0.6 : 1.0)
                     .animation(
-                        pulseAnimation ? .easeInOut(duration: 1.2).repeatForever(autoreverses: true) : .default,
+                        .easeInOut(duration: 2.0).repeatForever(autoreverses: true),
                         value: isPulsing
                     )
 
-                // "Position your face" text
                 VStack {
                     Spacer()
-                        .frame(height: geometry.size.height / 2 + ovalHeight / 2 + 24)
+                        .frame(height: geometry.size.height / 2 + ovalHeight / 2 + 16)
+
+                    // Quality indicator
+                    QualityIndicatorView(
+                        mode: .full,
+                        qualityLevel: qualityLevel,
+                        message: qualityGuidance.first?.message
+                    )
 
                     Text("Position your face in the oval")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(.white)
-
-                    // Quality guidance messages
-                    if !qualityGuidance.isEmpty {
-                        VStack(spacing: 6) {
-                            ForEach(Array(qualityGuidance.prefix(2).enumerated()), id: \.offset) { _, guidance in
-                                HStack(spacing: 6) {
-                                    Circle()
-                                        .fill(guidanceColor(guidance.severity))
-                                        .frame(width: 8, height: 8)
-                                    Text(guidance.message)
-                                        .font(.system(size: 14))
-                                        .foregroundColor(.white)
-                                }
-                            }
-                        }
                         .padding(.top, 8)
+
+                    // Quality warning banner
+                    if let guidance = qualityGuidance.first {
+                        QualityWarningBanner(guidance: guidance, qualityLevel: qualityLevel)
+                            .padding(.top, 8)
+                            .padding(.horizontal, 24)
+                    }
+
+                    if showReadyButton {
+                        Button(action: { onReady?() }) {
+                            Text("My face is ready")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 52)
+                                .background(Color.UseSense.primary)
+                                .cornerRadius(12)
+                        }
+                        .padding(.horizontal, 32)
+                        .padding(.top, 16)
                     }
 
                     Spacer()
                 }
             }
             .onAppear {
-                if pulseAnimation {
-                    isPulsing = true
-                }
+                isPulsing = true
             }
         }
     }
 
     private var borderColor: Color {
         if qualityGuidance.contains(where: { $0.severity == .critical }) {
-            return Color.UseSense.error
+            return Color.UseSense.qualityCritical
         } else if qualityGuidance.contains(where: { $0.severity == .warning }) {
-            return Color.UseSense.manualReview
+            return Color.UseSense.qualityWarning
         }
-        return Color.UseSense.success
-    }
-
-    private func guidanceColor(_ severity: QualityGuidance.Severity) -> Color {
-        switch severity {
-        case .critical: return Color.UseSense.qualityCritical
-        case .warning: return Color.UseSense.qualityWarning
-        case .info: return Color.UseSense.qualityInfo
-        }
+        return Color.UseSense.qualityInfo
     }
 }
 #endif
