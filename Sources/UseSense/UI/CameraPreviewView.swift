@@ -28,11 +28,11 @@ fileprivate class PreviewHostView: UIView {
 struct CameraPreviewView: UIViewRepresentable {
     let previewLayer: AVCaptureVideoPreviewLayer
 
-    func makeUIView(context: Context) -> PreviewHostView {
+    func makeUIView(context: Context) -> UIView {
         PreviewHostView(previewLayer: previewLayer)
     }
 
-    func updateUIView(_ uiView: PreviewHostView, context: Context) {
+    func updateUIView(_ uiView: UIView, context: Context) {
         // layoutSubviews handles frame updates automatically.
     }
 }
