@@ -1,13 +1,19 @@
 import SwiftUI
 import UseSenseSDK
 
+/// Holds event log entries in a reference type so that updates don't trigger
+/// parent-view re-renders that would recreate the UseSenseView/session.
+final class EventLogger: ObservableObject {
+    @Published var events: [String] = []
+}
+
 struct EnrollmentView: View {
     let mode: DemoMode
     @State private var externalUserId = ""
     @State private var showVerification = false
     @State private var result: RedactedDecisionObject?
     @State private var error: UseSenseError?
-    @State private var eventLog: [String] = []
+    @StateObject private var eventLogger = EventLogger()
 
     @AppStorage("apiKey") private var apiKey = ""
 
@@ -48,9 +54,9 @@ struct EnrollmentView: View {
                     }
                 }
 
-                if !eventLog.isEmpty {
+                if !eventLogger.events.isEmpty {
                     Section("Event Log") {
-                        ForEach(Array(eventLog.enumerated()), id: \.offset) { _, event in
+                        ForEach(Array(eventLogger.events.enumerated()), id: \.offset) { _, event in
                             Text(event)
                                 .font(.system(size: 12, design: .monospaced))
                         }
@@ -61,14 +67,14 @@ struct EnrollmentView: View {
         .navigationTitle("Enrollment")
         .fullScreenCover(isPresented: $showVerification) {
             if mode == .live {
-                liveVerificationView
+                makeLiveVerificationView()
             } else {
                 mockResultView
             }
         }
     }
 
-    private var liveVerificationView: some View {
+    private func makeLiveVerificationView() -> some View {
         let config = UseSenseConfig(apiKey: apiKey)
         let sdk = UseSense(config: config)
         let session = sdk.createSession(
@@ -76,9 +82,10 @@ struct EnrollmentView: View {
             externalUserId: externalUserId.isEmpty ? nil : externalUserId
         )
 
+        let logger = eventLogger
         let _ = session.addEventListener { event in
             DispatchQueue.main.async {
-                eventLog.append("[\(event.type.rawValue)] \(event.data?.description ?? "")")
+                logger.events.append("[\(event.type.rawValue)] \(event.data?.description ?? "")")
             }
         }
 

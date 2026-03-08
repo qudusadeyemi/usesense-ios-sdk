@@ -7,7 +7,7 @@ struct AuthenticationView: View {
     @State private var showVerification = false
     @State private var result: RedactedDecisionObject?
     @State private var error: UseSenseError?
-    @State private var eventLog: [String] = []
+    @StateObject private var eventLogger = EventLogger()
 
     @AppStorage("apiKey") private var apiKey = ""
 
@@ -48,9 +48,9 @@ struct AuthenticationView: View {
                     }
                 }
 
-                if !eventLog.isEmpty {
+                if !eventLogger.events.isEmpty {
                     Section("Event Log") {
-                        ForEach(Array(eventLog.enumerated()), id: \.offset) { _, event in
+                        ForEach(Array(eventLogger.events.enumerated()), id: \.offset) { _, event in
                             Text(event)
                                 .font(.system(size: 12, design: .monospaced))
                         }
@@ -61,14 +61,14 @@ struct AuthenticationView: View {
         .navigationTitle("Authentication")
         .fullScreenCover(isPresented: $showVerification) {
             if mode == .live {
-                liveVerificationView
+                makeLiveVerificationView()
             } else {
                 mockResultView
             }
         }
     }
 
-    private var liveVerificationView: some View {
+    private func makeLiveVerificationView() -> some View {
         let config = UseSenseConfig(apiKey: apiKey)
         let sdk = UseSense(config: config)
         let session = sdk.createSession(
@@ -76,9 +76,10 @@ struct AuthenticationView: View {
             identityId: identityId
         )
 
+        let logger = eventLogger
         let _ = session.addEventListener { event in
             DispatchQueue.main.async {
-                eventLog.append("[\(event.type.rawValue)] \(event.data?.description ?? "")")
+                logger.events.append("[\(event.type.rawValue)] \(event.data?.description ?? "")")
             }
         }
 
