@@ -37,12 +37,18 @@ final class UseSenseAPIClient: @unchecked Sendable {
 
     // MARK: - URL Builder
 
+    private static let defaultBaseUrl = "https://api.usesense.ai/functions/v1/make-server-fc4cf30d"
+
     private func buildURL(path: String, includeNonce: Bool = false) -> URL {
-        guard let components = URLComponents(string: "\(config.apiBaseUrl)\(path)"),
-              components.scheme != nil, components.host != nil else {
+        let baseUrl = config.apiBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveBase = baseUrl.isEmpty || URLComponents(string: baseUrl)?.scheme == nil
+            ? Self.defaultBaseUrl
+            : baseUrl
+        guard let parsed = URLComponents(string: "\(effectiveBase)\(path)"),
+              parsed.scheme != nil, parsed.host != nil else {
             fatalError("UseSense: Invalid apiBaseUrl '\(config.apiBaseUrl)'. Must be a full URL including https:// scheme.")
         }
-        var components = components
+        var components = parsed
         let env = (config.environment ?? .auto).resolved(apiKey: config.apiKey)
         var queryItems = [URLQueryItem(name: "env", value: env)]
 

@@ -16,9 +16,10 @@ public struct UseSenseConfig: Sendable {
         branding: BrandingConfig? = nil,
         options: SDKOptions? = nil
     ) {
-        self.apiBaseUrl = apiBaseUrl.isEmpty
+        let trimmedUrl = apiBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.apiBaseUrl = trimmedUrl.isEmpty || URLComponents(string: trimmedUrl)?.scheme == nil
             ? "https://api.usesense.ai/functions/v1/make-server-fc4cf30d"
-            : apiBaseUrl
+            : trimmedUrl
         self.apiKey = apiKey
         self.gatewayKey = gatewayKey
         self.environment = environment ?? Environment.detect(from: apiKey)
