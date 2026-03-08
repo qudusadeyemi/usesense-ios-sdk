@@ -442,8 +442,8 @@ final class UseSenseEntryPointTests: XCTestCase {
         XCTAssertEqual(sdk.sdkVersion, UseSense.version)
     }
 
-    func testSDKVersionMatchesAndroid() {
-        XCTAssertEqual(UseSense.version, "1.17.7")
+    func testSDKVersionMatchesServer() {
+        XCTAssertEqual(UseSense.version, "1.17.25")
     }
 
     func testVerificationRequest() {
@@ -480,7 +480,7 @@ final class MetadataBuilderTests: XCTestCase {
         let builder = MetadataBuilder()
         let channelIntegrity: [String: Any] = [
             "platform": "ios",
-            "sdk_version": "1.17.7",
+            "sdk_version": "1.17.25",
             "device_model": "iPhone15,2"
         ]
         let deviceTelemetry: [String: Any] = [

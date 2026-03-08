@@ -76,7 +76,7 @@ final class DeviceSignalCollector: @unchecked Sendable {
 
     /// Collect all channel integrity signals for the server's DeepSense scorer.
     /// Maps to the `channel_integrity` object in the metadata payload.
-    func collectChannelIntegrity(appAttestToken: String? = nil) -> [String: Any] {
+    func collectChannelIntegrity(attestFields: [String: Any] = [:]) -> [String: Any] {
         let device = UIDevice.current
         device.isBatteryMonitoringEnabled = true
 
@@ -125,9 +125,9 @@ final class DeviceSignalCollector: @unchecked Sendable {
         signals["is_jailbroken"] = checkJailbroken()
         signals["is_debugger_attached"] = checkDebugger()
 
-        // App Attest token (iOS equivalent of Play Integrity)
-        if let token = appAttestToken {
-            signals["app_attest_token"] = token
+        // App Attest fields (attestation + assertion + key_id + nonce_used)
+        for (key, value) in attestFields {
+            signals[key] = value
         }
 
         // Permissions

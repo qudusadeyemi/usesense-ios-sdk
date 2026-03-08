@@ -3,7 +3,7 @@ import Foundation
 /// Main entry point for the UseSense SDK.
 /// Matches Android's UseSense singleton pattern with `initialize()` and `startVerification()`.
 public final class UseSense: @unchecked Sendable {
-    public static let version = "1.17.7"
+    public static let version = "1.17.25"
 
     private let config: UseSenseConfig
     private let globalEventEmitter = EventEmitter()

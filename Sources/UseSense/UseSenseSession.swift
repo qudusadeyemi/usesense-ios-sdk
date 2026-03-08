@@ -35,8 +35,8 @@ public final class UseSenseSession: @unchecked Sendable {
     private let appAttestManager = AppAttestManager()
     #endif
 
-    /// App Attest token fetched concurrently during session creation (like Android's integrityJob)
-    private var appAttestTask: Task<String?, Never>?
+    /// App Attest fields fetched concurrently during session creation (like Android's integrityJob)
+    private var appAttestTask: Task<[String: Any], Never>?
 
     private var sessionData: SessionData?
     private var currentState: SessionState = .idle {
@@ -84,12 +84,7 @@ public final class UseSenseSession: @unchecked Sendable {
 
     func start() async {
         do {
-            // Phase 1: Start App Attest concurrently (like Android's integrityJob)
-            #if canImport(DeviceCheck) && canImport(CryptoKit)
-            try? await appAttestManager.attestIfNeeded(apiClient: apiClient)
-            #endif
-
-            // Phase 2: Create session + start sensor collection concurrently
+            // Phase 1: Create session + start sensor collection
             deviceSignalCollector.startSensorCollection()
 
             let request = CreateSessionRequest(
@@ -102,10 +97,11 @@ public final class UseSenseSession: @unchecked Sendable {
             let data = SessionData(from: response)
             self.sessionData = data
 
-            // Start App Attest assertion fetch concurrently (bound to session nonce)
+            // Phase 2: Start App Attest fields fetch concurrently (bound to session nonce)
+            // Fetches key + attestation + per-session assertion in parallel with UI setup
             #if canImport(DeviceCheck) && canImport(CryptoKit)
             appAttestTask = Task {
-                await appAttestManager.generateAssertionSafe(nonce: data.nonce)
+                await appAttestManager.getAttestFields(sessionNonce: data.nonce)
             }
             #endif
 
@@ -318,14 +314,14 @@ public final class UseSenseSession: @unchecked Sendable {
 
         eventEmitter.emit(.captureCompleted, data: ["frame_count": "\(frames.count)"])
 
-        // Wait for App Attest token (started concurrently during session creation)
-        var appAttestToken: String?
+        // Wait for App Attest fields (started concurrently during session creation)
+        var attestFields: [String: Any] = [:]
         #if canImport(DeviceCheck) && canImport(CryptoKit)
-        appAttestToken = await appAttestTask?.value
+        attestFields = await appAttestTask?.value ?? [:]
         #endif
 
         // Collect channel integrity and device telemetry
-        let channelIntegrity = deviceSignalCollector.collectChannelIntegrity(appAttestToken: appAttestToken)
+        let channelIntegrity = deviceSignalCollector.collectChannelIntegrity(attestFields: attestFields)
         let deviceTelemetry = deviceSignalCollector.collectDeviceTelemetry()
 
         // Build challenge response if applicable
