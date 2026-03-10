@@ -3,6 +3,7 @@ import UIKit
 import Foundation
 import CoreMotion
 import AVFoundation
+import Network
 
 struct SensorSample: Codable, Sendable {
     let t: Int64  // ms since sensor start
@@ -24,6 +25,10 @@ final class DeviceSignalCollector: @unchecked Sendable {
     private var cameraFacing: String = "front"
     private var cameraResolution: String = "1280x720"
 
+    private let pathMonitor = NWPathMonitor()
+    private let monitorQueue = DispatchQueue(label: "com.usesense.network-monitor")
+    private var resolvedNetworkType: String = "unknown"
+
     func setCaptureInfo(facing: String, resolution: String) {
         cameraFacing = facing
         cameraResolution = resolution
@@ -37,6 +42,8 @@ final class DeviceSignalCollector: @unchecked Sendable {
         gyroscopeData.removeAll()
         sensorStartTime = Date()
         lock.unlock()
+
+        startNetworkMonitor()
 
         if motionManager.isAccelerometerAvailable {
             motionManager.accelerometerUpdateInterval = sampleInterval
@@ -70,6 +77,7 @@ final class DeviceSignalCollector: @unchecked Sendable {
     func stopSensorCollection() {
         if motionManager.isAccelerometerActive { motionManager.stopAccelerometerUpdates() }
         if motionManager.isGyroActive { motionManager.stopGyroUpdates() }
+        pathMonitor.cancel()
     }
 
     // MARK: - Channel Integrity Signals
@@ -110,7 +118,10 @@ final class DeviceSignalCollector: @unchecked Sendable {
         }
 
         // Network
-        signals["network_type"] = "unknown"
+        lock.lock()
+        let networkType = resolvedNetworkType
+        lock.unlock()
+        signals["network_type"] = networkType
 
         // Locale/timezone
         signals["locale"] = Locale.current.identifier
@@ -181,6 +192,34 @@ final class DeviceSignalCollector: @unchecked Sendable {
         accelerometerData.removeAll()
         gyroscopeData.removeAll()
         lock.unlock()
+    }
+
+    // MARK: - Network Monitoring
+
+    private func startNetworkMonitor() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            let type: String
+            if path.status != .satisfied {
+                type = "none"
+            } else if path.usesInterfaceType(.wifi) {
+                type = "wifi"
+            } else if path.usesInterfaceType(.cellular) {
+                type = "cellular"
+            } else if path.usesInterfaceType(.wiredEthernet) {
+                type = "ethernet"
+            } else if path.usesInterfaceType(.loopback) {
+                type = "loopback"
+            } else if path.usesInterfaceType(.other) {
+                type = "other"
+            } else {
+                type = "unknown"
+            }
+            self.lock.lock()
+            self.resolvedNetworkType = type
+            self.lock.unlock()
+        }
+        pathMonitor.start(queue: monitorQueue)
     }
 
     // MARK: - Device Integrity Checks
