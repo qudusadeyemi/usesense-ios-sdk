@@ -175,6 +175,7 @@ final class DeviceSignalCollector: @unchecked Sendable {
         telemetry["processor_count"] = ProcessInfo.processInfo.processorCount
         let totalRAM = ProcessInfo.processInfo.physicalMemory
         telemetry["total_ram_mb"] = Int(totalRAM / (1024 * 1024))
+        telemetry["available_ram_mb"] = Int(os_proc_available_memory() / (1024 * 1024))
 
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory()),
            let freeSize = attrs[.systemFreeSize] as? Int64 {
