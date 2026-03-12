@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Pod Lint
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Lint podspec
+        run: pod lib lint UseSenseSDK.podspec --allow-warnings --no-clean
+
+  build:
+    name: Build SDK
+    runs-on: macos-14
+    strategy:
+      matrix:
+        destination:
+          - 'generic/platform=iOS'
+          - 'generic/platform=iOS Simulator'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -scheme UseSenseSDK \
+            -destination '${{ matrix.destination }}' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO
+
+  test:
+    name: Unit Tests
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Run tests
+        run: |
+          xcodebuild test \
+            -scheme UseSenseSDK \
+            -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO
+
+  build-example:
+    name: Build Example App
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Install CocoaPods
+        run: |
+          cd Example
+          pod install
+
+      - name: Build example
+        run: |
+          xcodebuild build \
+            -workspace Example/UseSenseExample.xcworkspace \
+            -scheme UseSenseExample \
+            -destination 'platform=iOS Simulator,name=iPhone 15,OS=latest' \
+            CODE_SIGNING_ALLOWED=NO
