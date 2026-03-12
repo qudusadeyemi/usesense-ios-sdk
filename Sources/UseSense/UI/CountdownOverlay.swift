@@ -8,15 +8,18 @@ struct CountdownOverlay: View {
     @State private var opacity: Double = 0
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.4)
-                .ignoresSafeArea()
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
 
-            Text("\(number)")
-                .font(.system(size: 96, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
-                .scaleEffect(scale)
-                .opacity(opacity)
+                Text("\(number)")
+                    .font(.system(size: 96, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                    .scaleEffect(scale)
+                    .opacity(opacity)
+                    // Match oval's -10% vertical offset so number sits inside the oval
+                    .offset(y: -geometry.size.height * 0.1)
                 .onAppear {
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.6)) {
                         scale = 1.0
@@ -31,6 +34,7 @@ struct CountdownOverlay: View {
                         opacity = 1.0
                     }
                 }
+            }
         }
     }
 }
