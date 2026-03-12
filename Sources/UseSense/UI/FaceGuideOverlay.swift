@@ -19,8 +19,10 @@ struct FaceGuideOverlay: View {
             let ovalHeight = min(geometry.size.width * 0.93, geometry.size.height * 0.60, 420)
 
             ZStack {
-                // Dimmed background with cutout
-                Color.black.opacity(0.5)
+                // Blurred background with oval cutout — blurs camera feed outside the oval
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .ignoresSafeArea()
                     .mask(
                         Rectangle()
                             .overlay(

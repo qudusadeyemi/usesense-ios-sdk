@@ -106,7 +106,9 @@ struct QualityWarningBanner: View {
     }
 }
 
-/// Baseline oval: subtle white 30% opacity oval border during baseline/countdown/challenge.
+/// Baseline oval overlay during baseline/countdown/challenge phases.
+/// Blurs the region outside the oval so the user can focus on their face,
+/// and draws a subtle white border around the oval.
 /// Uses the SAME dimensions and vertical offset as FaceGuideOverlay so the oval
 /// does not shift when transitioning between phases.
 struct BaselineOvalView: View {
@@ -115,13 +117,31 @@ struct BaselineOvalView: View {
             // Match FaceGuideOverlay dimensions exactly
             let ovalWidth = min(geometry.size.width * 0.70, geometry.size.height * 0.45, 320)
             let ovalHeight = min(geometry.size.width * 0.93, geometry.size.height * 0.60, 420)
+            let ovalOffsetY = -geometry.size.height * 0.1
 
-            Ellipse()
-                .stroke(Color.white.opacity(0.3), lineWidth: 2)
-                .frame(width: ovalWidth, height: ovalHeight)
-                // Match FaceGuideOverlay's -10% vertical offset
-                .position(x: geometry.size.width / 2,
-                          y: geometry.size.height / 2 - geometry.size.height * 0.1)
+            ZStack {
+                // Backdrop blur outside the oval — uses system material to blur camera feed
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .ignoresSafeArea()
+                    .mask(
+                        Rectangle()
+                            .overlay(
+                                Ellipse()
+                                    .frame(width: ovalWidth, height: ovalHeight)
+                                    .offset(y: ovalOffsetY)
+                                    .blendMode(.destinationOut)
+                            )
+                            .compositingGroup()
+                    )
+
+                // Oval border
+                Ellipse()
+                    .stroke(Color.white.opacity(0.5), lineWidth: 2)
+                    .frame(width: ovalWidth, height: ovalHeight)
+                    .position(x: geometry.size.width / 2,
+                              y: geometry.size.height / 2 + ovalOffsetY)
+            }
         }
     }
 }
