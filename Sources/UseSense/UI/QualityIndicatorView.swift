@@ -114,22 +114,24 @@ struct QualityWarningBanner: View {
 struct BaselineOvalView: View {
     var body: some View {
         GeometryReader { geometry in
+            let screenW = geometry.size.width
+            let screenH = geometry.size.height
             // Match FaceGuideOverlay dimensions exactly
-            let ovalWidth = min(geometry.size.width * 0.70, geometry.size.height * 0.45, 320)
-            let ovalHeight = min(geometry.size.width * 0.93, geometry.size.height * 0.60, 420)
-            let ovalOffsetY = -geometry.size.height * 0.1
+            let ovalWidth = min(screenW * 0.70, screenH * 0.45, 320)
+            let ovalHeight = min(screenW * 0.93, screenH * 0.60, 420)
+            let ovalCenterY = screenH / 2 - screenH * 0.1
 
             ZStack {
                 // Backdrop blur outside the oval — uses system material to blur camera feed
                 Rectangle()
                     .fill(.ultraThinMaterial)
-                    .ignoresSafeArea()
                     .mask(
                         Rectangle()
+                            .fill(Color.white)
                             .overlay(
                                 Ellipse()
                                     .frame(width: ovalWidth, height: ovalHeight)
-                                    .offset(y: ovalOffsetY)
+                                    .position(x: screenW / 2, y: ovalCenterY)
                                     .blendMode(.destinationOut)
                             )
                             .compositingGroup()
@@ -139,10 +141,10 @@ struct BaselineOvalView: View {
                 Ellipse()
                     .stroke(Color.white.opacity(0.5), lineWidth: 2)
                     .frame(width: ovalWidth, height: ovalHeight)
-                    .position(x: geometry.size.width / 2,
-                              y: geometry.size.height / 2 + ovalOffsetY)
+                    .position(x: screenW / 2, y: ovalCenterY)
             }
         }
+        .ignoresSafeArea()
     }
 }
 
