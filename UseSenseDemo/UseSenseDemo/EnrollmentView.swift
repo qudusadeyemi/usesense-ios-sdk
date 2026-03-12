@@ -15,9 +15,12 @@ final class EventLogger {
 struct EnrollmentView: View {
     let mode: DemoMode
     @State private var externalUserId = ""
+    @State private var enrollmentId = ""
     @State private var showVerification = false
+    @State private var showHostedFlow = false
     @State private var activeSession: UseSenseSession?
     @State private var result: RedactedDecisionObject?
+    @State private var hostedResult: String?
     @State private var error: UseSenseError?
     @State private var eventLogger = EventLogger()
     @State private var eventLogSnapshot: [String] = []
@@ -29,6 +32,8 @@ struct EnrollmentView: View {
             Form {
                 Section("Enrollment Details") {
                     TextField("External User ID (optional)", text: $externalUserId)
+                        .autocapitalization(.none)
+                    TextField("Enrollment ID (for hosted flow)", text: $enrollmentId)
                         .autocapitalization(.none)
                 }
 
@@ -48,6 +53,12 @@ struct EnrollmentView: View {
                         if let identityId = result.identityId {
                             LabeledContent("Identity ID", value: identityId)
                         }
+                    }
+                }
+
+                if let hostedResult = hostedResult {
+                    Section("Hosted Flow Result") {
+                        LabeledContent("Decision", value: hostedResult)
                     }
                 }
 
@@ -99,10 +110,33 @@ struct EnrollmentView: View {
                 mockResultView
             }
         }
+        .fullScreenCover(isPresented: $showHostedFlow) {
+            HostedEnrollmentWrapper(
+                enrollmentId: enrollmentId,
+                apiKey: apiKey,
+                onResult: { decision in
+                    hostedResult = decision
+                    error = nil
+                    showHostedFlow = false
+                },
+                onError: { err in
+                    error = err
+                    hostedResult = nil
+                    showHostedFlow = false
+                }
+            )
+        }
     }
 
     private func startEnrollment() {
         if mode == .live {
+            // If an enrollment ID is provided, use the hosted flow
+            if !enrollmentId.isEmpty {
+                showHostedFlow = true
+                return
+            }
+
+            // Otherwise use the direct SDK flow
             let config = UseSenseConfig(apiKey: apiKey)
             let sdk = UseSense(config: config)
             let session = sdk.createSession(
@@ -160,4 +194,30 @@ struct EnrollmentView: View {
             .foregroundColor(.secondary)
         }
     }
+}
+
+/// SwiftUI wrapper for HostedEnrollmentViewController
+struct HostedEnrollmentWrapper: UIViewControllerRepresentable {
+    let enrollmentId: String
+    let apiKey: String
+    let onResult: (String) -> Void
+    let onError: (UseSenseError) -> Void
+
+    func makeUIViewController(context: Context) -> HostedEnrollmentViewController {
+        let config = UseSenseConfig(apiKey: apiKey)
+        return HostedEnrollmentViewController(
+            enrollmentId: enrollmentId,
+            config: config,
+            onComplete: { result in
+                switch result {
+                case .success(let decision):
+                    onResult(decision)
+                case .failure(let error):
+                    onError(error)
+                }
+            }
+        )
+    }
+
+    func updateUIViewController(_ uiViewController: HostedEnrollmentViewController, context: Context) {}
 }

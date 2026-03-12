@@ -4,9 +4,12 @@ import UseSenseSDK
 struct AuthenticationView: View {
     let mode: DemoMode
     @State private var identityId = ""
+    @State private var remoteSessionId = ""
     @State private var showVerification = false
+    @State private var showHostedFlow = false
     @State private var activeSession: UseSenseSession?
     @State private var result: RedactedDecisionObject?
+    @State private var hostedResult: String?
     @State private var error: UseSenseError?
     @State private var eventLogger = EventLogger()
     @State private var eventLogSnapshot: [String] = []
@@ -19,6 +22,8 @@ struct AuthenticationView: View {
                 Section("Authentication Details") {
                     TextField("Identity ID", text: $identityId)
                         .autocapitalization(.none)
+                    TextField("Remote Session ID (for hosted flow)", text: $remoteSessionId)
+                        .autocapitalization(.none)
                 }
 
                 Section {
@@ -27,7 +32,7 @@ struct AuthenticationView: View {
                             .font(.system(size: 17, weight: .semibold))
                             .frame(maxWidth: .infinity)
                     }
-                    .disabled((mode == .live && apiKey.isEmpty) || identityId.isEmpty)
+                    .disabled((mode == .live && apiKey.isEmpty) || (identityId.isEmpty && remoteSessionId.isEmpty))
                 }
 
                 if let result = result {
@@ -37,6 +42,12 @@ struct AuthenticationView: View {
                         if let identityId = result.identityId {
                             LabeledContent("Identity ID", value: identityId)
                         }
+                    }
+                }
+
+                if let hostedResult = hostedResult {
+                    Section("Hosted Flow Result") {
+                        LabeledContent("Decision", value: hostedResult)
                     }
                 }
 
@@ -88,10 +99,33 @@ struct AuthenticationView: View {
                 mockResultView
             }
         }
+        .fullScreenCover(isPresented: $showHostedFlow) {
+            HostedVerificationWrapper(
+                remoteSessionId: remoteSessionId,
+                apiKey: apiKey,
+                onResult: { decision in
+                    hostedResult = decision
+                    error = nil
+                    showHostedFlow = false
+                },
+                onError: { err in
+                    error = err
+                    hostedResult = nil
+                    showHostedFlow = false
+                }
+            )
+        }
     }
 
     private func startAuthentication() {
         if mode == .live {
+            // If a remote session ID is provided, use the hosted flow
+            if !remoteSessionId.isEmpty {
+                showHostedFlow = true
+                return
+            }
+
+            // Otherwise use the direct SDK flow
             let config = UseSenseConfig(apiKey: apiKey)
             let sdk = UseSense(config: config)
             let session = sdk.createSession(
@@ -164,4 +198,30 @@ struct AuthenticationView: View {
             .foregroundColor(.secondary)
         }
     }
+}
+
+/// SwiftUI wrapper for HostedVerificationViewController
+struct HostedVerificationWrapper: UIViewControllerRepresentable {
+    let remoteSessionId: String
+    let apiKey: String
+    let onResult: (String) -> Void
+    let onError: (UseSenseError) -> Void
+
+    func makeUIViewController(context: Context) -> HostedVerificationViewController {
+        let config = UseSenseConfig(apiKey: apiKey)
+        return HostedVerificationViewController(
+            remoteSessionId: remoteSessionId,
+            config: config,
+            onComplete: { result in
+                switch result {
+                case .success(let decision):
+                    onResult(decision)
+                case .failure(let error):
+                    onError(error)
+                }
+            }
+        )
+    }
+
+    func updateUIViewController(_ uiViewController: HostedVerificationViewController, context: Context) {}
 }

@@ -106,17 +106,22 @@ struct QualityWarningBanner: View {
     }
 }
 
-/// Baseline oval: subtle white 30% opacity oval border during baseline phase.
+/// Baseline oval: subtle white 30% opacity oval border during baseline/countdown/challenge.
+/// Uses the SAME dimensions and vertical offset as FaceGuideOverlay so the oval
+/// does not shift when transitioning between phases.
 struct BaselineOvalView: View {
     var body: some View {
         GeometryReader { geometry in
-            let ovalWidth = geometry.size.width * 0.55
-            let ovalHeight = min(ovalWidth * (4.0 / 3.0), geometry.size.height * 0.8)
+            // Match FaceGuideOverlay dimensions exactly
+            let ovalWidth = min(geometry.size.width * 0.70, geometry.size.height * 0.45, 320)
+            let ovalHeight = min(geometry.size.width * 0.93, geometry.size.height * 0.60, 420)
 
             Ellipse()
                 .stroke(Color.white.opacity(0.3), lineWidth: 2)
                 .frame(width: ovalWidth, height: ovalHeight)
-                .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                // Match FaceGuideOverlay's -10% vertical offset
+                .position(x: geometry.size.width / 2,
+                          y: geometry.size.height / 2 - geometry.size.height * 0.1)
         }
     }
 }
