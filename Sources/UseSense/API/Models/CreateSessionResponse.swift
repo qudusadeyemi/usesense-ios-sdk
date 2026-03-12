@@ -8,6 +8,22 @@ public struct CreateSessionResponse: Codable, Sendable {
     public let policy: SessionPolicy
     public let upload: UploadConfig
 
+    public init(
+        sessionId: String,
+        sessionToken: String,
+        expiresAt: String,
+        nonce: String,
+        policy: SessionPolicy,
+        upload: UploadConfig
+    ) {
+        self.sessionId = sessionId
+        self.sessionToken = sessionToken
+        self.expiresAt = expiresAt
+        self.nonce = nonce
+        self.policy = policy
+        self.upload = upload
+    }
+
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
         case sessionToken = "session_token"
@@ -22,6 +38,7 @@ public struct SessionPolicy: Codable, Sendable {
     public let challengeType: String
     public let challenge: ChallengeSpecWrapper?
     public let audioChallenge: SpeakPhraseChallenge?
+    public let policySource: String?
 
     enum CodingKeys: String, CodingKey {
         case requiresAudio = "requires_audio"
@@ -29,6 +46,7 @@ public struct SessionPolicy: Codable, Sendable {
         case challengeType = "challenge_type"
         case challenge
         case audioChallenge = "audio_challenge"
+        case policySource = "policy_source"
     }
 }
 

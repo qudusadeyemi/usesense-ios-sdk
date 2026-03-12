@@ -274,7 +274,7 @@ final class EventSystemTests: XCTestCase {
 
 final class SessionStateMachineTests: XCTestCase {
     func testCapturePhases() {
-        XCTAssertEqual(CapturePhase.allCases.count, 6)
+        XCTAssertEqual(CapturePhase.allCases.count, 11)
         XCTAssertEqual(CapturePhase.instructions.rawValue, "instructions")
         XCTAssertEqual(CapturePhase.done.rawValue, "done")
     }

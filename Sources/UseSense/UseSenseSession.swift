@@ -102,6 +102,21 @@ public final class UseSenseSession: @unchecked Sendable {
         eventEmitter.addListener(callback)
     }
 
+    // MARK: - Hosted Page Injection
+
+    /// Inject session credentials from a hosted page init-session response.
+    /// This bypasses the normal createSession call and jumps directly into the capture pipeline.
+    func injectHostedSessionData(_ response: CreateSessionResponse) {
+        let data = SessionData(from: response)
+        self.sessionData = data
+        self.apiClient.sessionToken = data.sessionToken
+        self.apiClient.nonce = data.nonce
+
+        // Reconfigure frame buffer with server limits
+        frameBuffer.reconfigure(maxFrames: data.upload.maxFrames, targetFps: data.upload.targetFps)
+        serverMaxFrames = data.upload.maxFrames
+    }
+
     // MARK: - Session Lifecycle
 
     func start() async {
@@ -109,21 +124,28 @@ public final class UseSenseSession: @unchecked Sendable {
         isStarted = true
 
         do {
-            // Phase 1: Create session + start sensor collection
+            // Start sensor collection
             deviceSignalCollector.startSensorCollection()
 
-            let request = CreateSessionRequest(
-                sessionType: sessionType.rawValue,
-                identityId: identityId,
-                externalUserId: externalUserId,
-                metadata: metadata
-            )
-            let response = try await apiClient.createSession(request: request)
-            let data = SessionData(from: response)
-            self.sessionData = data
+            // If session data was injected by a hosted page flow, skip createSession
+            if sessionData == nil {
+                let request = CreateSessionRequest(
+                    sessionType: sessionType.rawValue,
+                    identityId: identityId,
+                    externalUserId: externalUserId,
+                    metadata: metadata
+                )
+                let response = try await apiClient.createSession(request: request)
+                let data = SessionData(from: response)
+                self.sessionData = data
+            }
 
-            // Phase 2: Start App Attest fields fetch concurrently (bound to session nonce)
-            // Fetches key + attestation + per-session assertion in parallel with UI setup
+            guard let data = sessionData else {
+                handleError(UseSenseError(code: .unknownError, message: "No session data available."))
+                return
+            }
+
+            // Start App Attest fields fetch concurrently (bound to session nonce)
             #if canImport(DeviceCheck) && canImport(CryptoKit)
             appAttestTask = Task {
                 await appAttestManager.getAttestFields(sessionNonce: data.nonce)
@@ -133,7 +155,7 @@ public final class UseSenseSession: @unchecked Sendable {
             eventEmitter.emit(.sessionCreated, data: ["session_id": data.sessionId])
             currentState = .created(session: data)
 
-            // Phase 3: Check permissions
+            // Check permissions
             await checkPermissions()
         } catch let error as UseSenseError {
             handleError(error)
@@ -196,7 +218,13 @@ public final class UseSenseSession: @unchecked Sendable {
         captureEndTime = Date()
         deviceSignalCollector.stopSensorCollection()
         await stopAudioIfNeeded()
-        await uploadAndComplete()
+
+        // Safety net wraps upload + complete
+        do {
+            try await uploadAndCompleteWithSafetyNet()
+        } catch {
+            handleError(UseSenseError(code: .unknownError, message: "Unexpected error: \(error.localizedDescription)"))
+        }
     }
 
     func challengeStepReached(_ index: Int) {
@@ -252,7 +280,14 @@ public final class UseSenseSession: @unchecked Sendable {
         do {
             try frameCaptureManager.configure()
         } catch {
-            handleError(UseSenseError(code: .cameraUnavailable, message: "Failed to configure camera: \(error.localizedDescription)"))
+            // Spec: camera errors show retry UI, NOT onError
+            let message: String
+            if let senseError = error as? UseSenseError {
+                message = senseError.message
+            } else {
+                message = "Camera error: \(error.localizedDescription)"
+            }
+            currentState = .cameraError(message: message)
             return
         }
 
@@ -286,41 +321,53 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     private func startBaseline() async {
-        eventEmitter.emit(.captureStarted)
-        captureStartTime = Date()
-        frameBuffer.reset()
-        isCapturingFrames = true
-        currentState = .baseline(remaining: baselineDuration)
+        // Spec Section 13.1: Global safety net wraps entire post-camera pipeline
+        do {
+            eventEmitter.emit(.captureStarted)
+            captureStartTime = Date()
+            frameBuffer.reset()
+            isCapturingFrames = true
+            currentState = .baseline(remaining: baselineDuration)
 
-        // Start audio if needed
-        if needsAudio {
-            startAudioRecording()
-        }
+            // Start audio if needed
+            if needsAudio {
+                startAudioRecording()
+            }
 
-        // Wait for baseline duration (2 seconds matching Android)
-        try? await Task.sleep(nanoseconds: UInt64(baselineDuration * 1_000_000_000))
+            // Wait for baseline duration (2 seconds per spec)
+            try await Task.sleep(nanoseconds: UInt64(baselineDuration * 1_000_000_000))
 
-        // Countdown (3 seconds matching Android)
-        for i in stride(from: 3, through: 1, by: -1) {
-            currentState = .countdown(number: i)
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-        }
+            // Countdown (3 seconds: 3, 2, 1 per spec) with continued frame capture
+            if sessionData?.policy.challenge != nil {
+                for i in stride(from: 3, through: 1, by: -1) {
+                    currentState = .countdown(number: i)
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                }
+            }
 
-        // Start challenge phase
-        challengeResponseBuilder.markStarted()
-        if let challenge = sessionData?.policy.challenge {
-            eventEmitter.emit(.challengeStarted, data: ["type": challenge.challengeType.rawValue])
-            currentState = .challenge(spec: challenge)
-        } else {
-            // No challenge, just capture for the configured duration
-            let captureDurationMs = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 2500
-            try? await Task.sleep(nanoseconds: UInt64(captureDurationMs) * 1_000_000)
-            isCapturingFrames = false
-            frameCaptureManager.stop()
-            captureEndTime = Date()
-            deviceSignalCollector.stopSensorCollection()
-            await stopAudioIfNeeded()
-            await uploadAndComplete()
+            // Start challenge phase
+            challengeResponseBuilder.markStarted()
+            if let challenge = sessionData?.policy.challenge {
+                eventEmitter.emit(.challengeStarted, data: ["type": challenge.challengeType.rawValue])
+                currentState = .challenge(spec: challenge)
+                // Challenge completion is handled by challengeCompleted() callback
+            } else {
+                // No challenge, just capture for the configured duration
+                let captureDurationMs = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 2500
+                try await Task.sleep(nanoseconds: UInt64(captureDurationMs) * 1_000_000)
+                isCapturingFrames = false
+                frameCaptureManager.stop()
+                captureEndTime = Date()
+                deviceSignalCollector.stopSensorCollection()
+                await stopAudioIfNeeded()
+                try await uploadAndCompleteWithSafetyNet()
+            }
+        } catch is CancellationError {
+            // Task was cancelled (e.g. user navigated away)
+            return
+        } catch {
+            // Safety net: catch any unexpected error
+            handleError(UseSenseError(code: .unknownError, message: "Unexpected error: \(error.localizedDescription)"))
         }
     }
 
@@ -340,7 +387,7 @@ public final class UseSenseSession: @unchecked Sendable {
         }
     }
 
-    private func uploadAndComplete() async {
+    private func uploadAndCompleteWithSafetyNet() async throws {
         guard let session = sessionData else {
             handleError(UseSenseError(code: .unknownError, message: "No session data available."))
             return
@@ -395,6 +442,7 @@ public final class UseSenseSession: @unchecked Sendable {
 
         do {
             metadataData = try metadataBuilder.build(
+                sessionId: session.sessionId,
                 challengeResponse: challengeResponse,
                 channelIntegrity: channelIntegrity,
                 deviceTelemetry: deviceTelemetry,

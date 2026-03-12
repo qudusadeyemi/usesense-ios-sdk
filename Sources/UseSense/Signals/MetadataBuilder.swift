@@ -8,9 +8,10 @@ final class MetadataBuilder: @unchecked Sendable {
         return f
     }()
 
-    /// Build the metadata payload matching Android's structure:
-    /// `{ challenge_response, channel_integrity, device_telemetry }`
+    /// Build the metadata payload matching the spec Section 7.1 schema.
     func build(
+        sessionId: String? = nil,
+        source: String = "sdk",
         challengeResponse: [String: Any]?,
         channelIntegrity: [String: Any],
         deviceTelemetry: [String: Any],
@@ -18,9 +19,36 @@ final class MetadataBuilder: @unchecked Sendable {
         captureEndTime: Date,
         framesCaptured: Int,
         framesDropped: Int,
-        avgFrameIntervalMs: Int
+        avgFrameIntervalMs: Int,
+        captureConfig: [String: Any]? = nil,
+        framesManifest: [[String: Any]]? = nil
     ) throws -> Data {
         var metadata: [String: Any] = [:]
+
+        // Top-level fields per spec
+        if let sid = sessionId {
+            metadata["session_id"] = sid
+        }
+        metadata["sdk_version"] = UseSenseAPIClient.sdkVersion
+        metadata["platform"] = "ios"
+        metadata["source"] = source
+
+        // Capture config (if provided)
+        if let config = captureConfig {
+            metadata["capture_config"] = config
+        }
+
+        // Timestamps
+        metadata["timestamps"] = [
+            "session_started_at_ms": Int(captureStartTime.timeIntervalSince1970 * 1000),
+            "capture_started_at_ms": Int(captureStartTime.timeIntervalSince1970 * 1000),
+            "capture_ended_at_ms": Int(captureEndTime.timeIntervalSince1970 * 1000)
+        ]
+
+        // Frames manifest (if provided)
+        if let manifest = framesManifest {
+            metadata["frames_manifest"] = manifest
+        }
 
         // Challenge response (optional)
         if let cr = challengeResponse {

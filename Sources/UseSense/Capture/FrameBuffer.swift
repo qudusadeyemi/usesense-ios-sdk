@@ -72,7 +72,7 @@ final class FrameBuffer: @unchecked Sendable {
         lastCaptureTime = 0
     }
 
-    private func jpegEncode(_ pixelBuffer: CVPixelBuffer, quality: CGFloat = 0.82) -> Data? {
+    private func jpegEncode(_ pixelBuffer: CVPixelBuffer, quality: CGFloat = 0.80) -> Data? {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let context = CIContext()
         guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return nil }

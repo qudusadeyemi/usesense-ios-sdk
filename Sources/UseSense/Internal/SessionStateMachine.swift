@@ -2,14 +2,26 @@ import Foundation
 
 enum PermissionType: Sendable { case camera, microphone }
 
-enum CapturePhase: String, CaseIterable, Sendable {
-    case instructions, faceGuide, baseline, countdown, challenge, done
+/// Capture phase enum matching the spec state machine exactly.
+public enum CapturePhase: String, CaseIterable, Sendable {
+    case initializing    = "initializing"
+    case cameraRequest   = "camera-request"
+    case cameraError     = "camera-error"
+    case instructions    = "instructions"
+    case faceGuide       = "face-guide"
+    case baseline        = "baseline"
+    case countdown       = "countdown"
+    case challenge       = "challenge"
+    case uploading       = "uploading"
+    case completing      = "completing"
+    case done            = "done"
 }
 
 enum SessionState: Sendable {
     case idle
     case created(session: SessionData)
     case permissionsRequired(permissions: [PermissionType])
+    case cameraError(message: String)
     case instructions(challenge: ChallengeSpecWrapper)
     case faceGuide
     case baseline(remaining: TimeInterval)
