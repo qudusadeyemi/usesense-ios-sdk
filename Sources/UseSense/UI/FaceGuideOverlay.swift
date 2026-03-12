@@ -13,22 +13,25 @@ struct FaceGuideOverlay: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let screenW = geometry.size.width
+            let screenH = geometry.size.height
             // Spec: width = min(70% screenW, 45% screenH, 320pt)
             //        height = min(93% screenW, 60% screenH, 420pt)
-            let ovalWidth = min(geometry.size.width * 0.70, geometry.size.height * 0.45, 320)
-            let ovalHeight = min(geometry.size.width * 0.93, geometry.size.height * 0.60, 420)
+            let ovalWidth = min(screenW * 0.70, screenH * 0.45, 320)
+            let ovalHeight = min(screenW * 0.93, screenH * 0.60, 420)
+            let ovalCenterY = screenH / 2 - screenH * 0.1
 
             ZStack {
                 // Blurred background with oval cutout — blurs camera feed outside the oval
                 Rectangle()
                     .fill(.ultraThinMaterial)
-                    .ignoresSafeArea()
                     .mask(
                         Rectangle()
+                            .fill(Color.white)
                             .overlay(
                                 Ellipse()
                                     .frame(width: ovalWidth, height: ovalHeight)
-                                    .offset(y: -geometry.size.height * 0.1)
+                                    .position(x: screenW / 2, y: ovalCenterY)
                                     .blendMode(.destinationOut)
                             )
                             .compositingGroup()
@@ -38,7 +41,7 @@ struct FaceGuideOverlay: View {
                 Ellipse()
                     .stroke(Color.white.opacity(0.7), lineWidth: 3)
                     .frame(width: ovalWidth, height: ovalHeight)
-                    .offset(y: -geometry.size.height * 0.1)
+                    .position(x: screenW / 2, y: ovalCenterY)
                     .scaleEffect(isPulsing ? 1.1 : 1.0)
                     .opacity(isPulsing ? 0.6 : 1.0)
                     .animation(
@@ -88,6 +91,7 @@ struct FaceGuideOverlay: View {
                 isPulsing = true
             }
         }
+        .ignoresSafeArea()
     }
 
     private var borderColor: Color {
