@@ -19,10 +19,16 @@ struct HeadTurnChallengeView: View {
                 if currentStepIndex < challenge.sequence.count {
                     let step = challenge.sequence[currentStepIndex]
 
-                    Image(systemName: arrowIcon(for: step.direction))
-                        .font(.system(size: 64, weight: .light))
-                        .foregroundColor(.white)
-                        .transition(.scale.combined(with: .opacity))
+                    // Dark translucent rounded rect with direction arrow per spec
+                    VStack(spacing: 12) {
+                        Image(systemName: arrowIcon(for: step.direction))
+                            .font(.system(size: 40, weight: .regular))
+                            .foregroundColor(.white)
+                    }
+                    .padding(24)
+                    .background(Color.black.opacity(0.5))
+                    .cornerRadius(16)
+                    .transition(.scale.combined(with: .opacity))
 
                     Text(directionText(for: step.direction))
                         .font(.system(size: 22, weight: .semibold))
@@ -71,17 +77,17 @@ struct HeadTurnChallengeView: View {
         case .right: return "arrow.right"
         case .up: return "arrow.up"
         case .down: return "arrow.down"
-        case .center: return "circle"
+        case .center: return "scope"
         }
     }
 
     private func directionText(for direction: HeadDirection) -> String {
         switch direction {
-        case .left: return "Turn Left"
-        case .right: return "Turn Right"
-        case .up: return "Look Up"
-        case .down: return "Look Down"
-        case .center: return "Face Forward"
+        case .left: return "Turn LEFT"
+        case .right: return "Turn RIGHT"
+        case .up: return "Look UP"
+        case .down: return "Look DOWN"
+        case .center: return "Return to CENTER"
         }
     }
 }

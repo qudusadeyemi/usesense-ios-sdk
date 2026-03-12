@@ -13,8 +13,10 @@ struct FaceGuideOverlay: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let ovalWidth = geometry.size.width * 0.55
-            let ovalHeight = min(ovalWidth * (4.0 / 3.0), geometry.size.height * 0.5)
+            // Spec: width = min(70% screenW, 45% screenH, 320pt)
+            //        height = min(93% screenW, 60% screenH, 420pt)
+            let ovalWidth = min(geometry.size.width * 0.70, geometry.size.height * 0.45, 320)
+            let ovalHeight = min(geometry.size.width * 0.93, geometry.size.height * 0.60, 420)
 
             ZStack {
                 // Dimmed background with cutout
@@ -30,10 +32,9 @@ struct FaceGuideOverlay: View {
                             .compositingGroup()
                     )
 
-                // Dashed oval border with pulse animation
+                // Oval border: 3pt white at 70% opacity per spec
                 Ellipse()
-                    .stroke(style: StrokeStyle(lineWidth: 3, dash: [12, 8]))
-                    .foregroundColor(borderColor)
+                    .stroke(Color.white.opacity(0.7), lineWidth: 3)
                     .frame(width: ovalWidth, height: ovalHeight)
                     .offset(y: -geometry.size.height * 0.1)
                     .scaleEffect(isPulsing ? 1.1 : 1.0)
@@ -67,7 +68,7 @@ struct FaceGuideOverlay: View {
 
                     if showReadyButton {
                         Button(action: { onReady?() }) {
-                            Text("My face is ready")
+                            Text("I'm Ready")
                                 .font(.system(size: 17, weight: .semibold))
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)

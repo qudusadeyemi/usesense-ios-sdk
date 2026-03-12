@@ -3,7 +3,7 @@ import Foundation
 final class UseSenseAPIClient: @unchecked Sendable {
     static let defaultGatewayKey = UseSenseConfig.defaultGatewayKey
 
-    static let sdkVersion = "1.17.25"
+    static let sdkVersion = "1.17.57"
     private static let userAgent = "UseSense-iOS-SDK/\(sdkVersion)"
 
     // Retry delays in seconds: immediate, 1s, 3s
@@ -16,9 +16,9 @@ final class UseSenseAPIClient: @unchecked Sendable {
 
     private let gatewayKey: String
 
-    // Session-scoped state (set after createSession)
-    private(set) var sessionToken: String?
-    private(set) var nonce: String?
+    // Session-scoped state (set after createSession or injected by hosted page flow)
+    var sessionToken: String?
+    var nonce: String?
 
     init(config: UseSenseConfig) {
         self.config = config
@@ -144,6 +144,97 @@ final class UseSenseAPIClient: @unchecked Sendable {
         return try await performWithRetry(request)
     }
 
+    // MARK: - Hosted Page Endpoints
+
+    /// GET /remote-enrollment/{id}/data
+    func getRemoteEnrollmentData(enrollmentId: String) async throws -> RemoteEnrollmentData {
+        var request = URLRequest(url: buildURL(path: "/remote-enrollment/\(enrollmentId)/data"))
+        request.httpMethod = "GET"
+        applyHeaders(&request)
+        request.timeoutInterval = 15
+        return try await perform(request)
+    }
+
+    /// POST /remote-enrollment/{id}/opened
+    func markEnrollmentOpened(enrollmentId: String) async throws {
+        var request = URLRequest(url: buildURL(path: "/remote-enrollment/\(enrollmentId)/opened"))
+        request.httpMethod = "POST"
+        applyHeaders(&request)
+        request.timeoutInterval = 10
+        let _: EmptyResponse = try await perform(request)
+    }
+
+    /// POST /remote-enrollment/{id}/init-session
+    func initEnrollmentSession(enrollmentId: String) async throws -> HostedInitSessionResponse {
+        var request = URLRequest(url: buildURL(path: "/remote-enrollment/\(enrollmentId)/init-session"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyHeaders(&request)
+        request.timeoutInterval = 15
+        let response: HostedInitSessionResponse = try await perform(request)
+        sessionToken = response.sessionToken
+        nonce = response.nonce
+        return response
+    }
+
+    /// POST /remote-enrollment/{id}/complete
+    func completeRemoteEnrollment(enrollmentId: String) async throws -> RemoteCompleteResponse {
+        var request = URLRequest(url: buildURL(path: "/remote-enrollment/\(enrollmentId)/complete"))
+        request.httpMethod = "POST"
+        applyHeaders(&request, includeSession: true)
+        request.timeoutInterval = 30
+        return try await performWithRetry(request)
+    }
+
+    /// GET /remote-session/{id}/data
+    func getRemoteSessionData(sessionId: String) async throws -> RemoteSessionData {
+        var request = URLRequest(url: buildURL(path: "/remote-session/\(sessionId)/data"))
+        request.httpMethod = "GET"
+        applyHeaders(&request)
+        request.timeoutInterval = 15
+        return try await perform(request)
+    }
+
+    /// POST /remote-session/{id}/opened
+    func markSessionOpened(sessionId: String) async throws {
+        var request = URLRequest(url: buildURL(path: "/remote-session/\(sessionId)/opened"))
+        request.httpMethod = "POST"
+        applyHeaders(&request)
+        request.timeoutInterval = 10
+        let _: EmptyResponse = try await perform(request)
+    }
+
+    /// POST /remote-session/{id}/init-session
+    func initRemoteSession(sessionId: String) async throws -> HostedInitSessionResponse {
+        var request = URLRequest(url: buildURL(path: "/remote-session/\(sessionId)/init-session"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyHeaders(&request)
+        request.timeoutInterval = 15
+        let response: HostedInitSessionResponse = try await perform(request)
+        sessionToken = response.sessionToken
+        nonce = response.nonce
+        return response
+    }
+
+    /// POST /remote-session/{id}/complete
+    func completeRemoteSession(sessionId: String) async throws -> RemoteCompleteResponse {
+        var request = URLRequest(url: buildURL(path: "/remote-session/\(sessionId)/complete"))
+        request.httpMethod = "POST"
+        applyHeaders(&request, includeSession: true)
+        request.timeoutInterval = 30
+        return try await performWithRetry(request)
+    }
+
+    /// POST /remote-session/{id}/dispute
+    func disputeRemoteSession(sessionId: String) async throws -> DisputeResponse {
+        var request = URLRequest(url: buildURL(path: "/remote-session/\(sessionId)/dispute"))
+        request.httpMethod = "POST"
+        applyHeaders(&request)
+        request.timeoutInterval = 15
+        return try await perform(request)
+    }
+
     // MARK: - Get Session Status
 
     func getSessionStatus(sessionId: String, sessionToken: String) async throws -> SessionStatusResponse {
@@ -247,3 +338,6 @@ struct SessionStatusResponse: Decodable {
         case decision
     }
 }
+
+/// Used for endpoints that return minimal/empty JSON bodies (e.g. /opened).
+struct EmptyResponse: Decodable {}

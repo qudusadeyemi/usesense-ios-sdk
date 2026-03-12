@@ -34,10 +34,10 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
         captureSession.beginConfiguration()
         defer { captureSession.commitConfiguration() }
 
-        captureSession.sessionPreset = .hd1280x720
+        captureSession.sessionPreset = .vga640x480
 
         guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
-            throw UseSenseError(code: .cameraPermissionDenied, message: "No front camera available.")
+            throw UseSenseError(code: .cameraUnavailable, message: "No camera found on this device.")
         }
 
         let input = try AVCaptureDeviceInput(device: camera)

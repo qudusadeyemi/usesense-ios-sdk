@@ -28,7 +28,7 @@ extension Color {
         public static let warningBannerText = Color(red: 0.49, green: 0.23, blue: 0.93)
 
         // Challenge-specific
-        public static let challengeDot = Color(red: 0.39, green: 0.40, blue: 0.95)
+        public static let challengeDot = Color(red: 0.937, green: 0.267, blue: 0.267) // #EF4444
         public static let instructionIconBg = Color(red: 0.88, green: 0.91, blue: 1.0)
         public static let instructionTitle = Color(red: 0.12, green: 0.16, blue: 0.23)
         public static let instructionBody = Color(red: 0.39, green: 0.44, blue: 0.53)

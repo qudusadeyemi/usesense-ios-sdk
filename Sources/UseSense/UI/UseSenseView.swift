@@ -35,6 +35,9 @@ public struct UseSenseView: View {
             case .permissionsRequired:
                 permissionsView
 
+            case .cameraError(let message):
+                cameraErrorView(message: message)
+
             case .instructions(let challenge):
                 InstructionsView(challenge: challenge) {
                     viewModel.continueFromInstructions()
@@ -51,7 +54,7 @@ public struct UseSenseView: View {
                     cameraLayer
                     BaselineOvalView()
                     CountdownOverlay(number: number)
-                    captureOverlayChrome(phase: "BASELINE")
+                    captureOverlayChrome(phase: "VERIFYING")
                 }
 
             case .challenge(let spec):
@@ -59,21 +62,27 @@ public struct UseSenseView: View {
                     cameraLayer
                     BaselineOvalView()
                     challengeOverlay(spec)
-                    captureOverlayChrome(phase: "CHALLENGE")
+                    captureOverlayChrome(phase: "VERIFYING")
                 }
 
-            case .uploading(let progress):
-                ProcessingView(
-                    title: "Uploading",
-                    subtitle: "Sending verification data...",
-                    progress: progress
-                )
+            case .uploading:
+                // Spec: dark bg (95% opacity), spinner, specific text
+                ZStack {
+                    Color.black.opacity(0.95).ignoresSafeArea()
+                    ProcessingView(
+                        title: "Verifying your presence",
+                        subtitle: "Please wait while we securely process your session..."
+                    )
+                }
 
             case .completing:
-                ProcessingView(
-                    title: "Verifying",
-                    subtitle: "Analyzing your identity..."
-                )
+                ZStack {
+                    Color.black.opacity(0.95).ignoresSafeArea()
+                    ProcessingView(
+                        title: "Almost done",
+                        subtitle: "Finishing up - this will only take a moment."
+                    )
+                }
 
             case .done(let decision):
                 ResultView(decision: decision, onDismiss: {
@@ -142,10 +151,10 @@ public struct UseSenseView: View {
             cameraLayer
             BaselineOvalView()
 
-            // Phase badge + close button
+            // Spec: red pulsing dot + "Verifying" text badge
             VStack {
                 HStack {
-                    PhaseBadge(phase: "BASELINE")
+                    VerifyingBadge()
                         .padding(.leading, 16)
                     Spacer()
                     closeButton
@@ -154,9 +163,14 @@ public struct UseSenseView: View {
             }
             .padding(.top, 8)
 
-            // Quality warning at bottom
+            // Instruction text per spec
             VStack {
                 Spacer()
+                Text("Hold still - looking at the camera")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.bottom, 8)
+
                 if let guidance = viewModel.qualityGuidance.first {
                     QualityWarningBanner(guidance: guidance, qualityLevel: viewModel.qualityLevel)
                         .padding(.horizontal, 16)
@@ -166,11 +180,11 @@ public struct UseSenseView: View {
         }
     }
 
-    /// Chrome overlay for countdown and challenge phases: phase badge, close button, progress, quality.
+    /// Chrome overlay for countdown and challenge phases.
     private func captureOverlayChrome(phase: String) -> some View {
         VStack {
             HStack {
-                PhaseBadge(phase: phase)
+                VerifyingBadge()
                     .padding(.leading, 16)
                 Spacer()
                 closeButton
@@ -192,12 +206,51 @@ public struct UseSenseView: View {
         }
     }
 
+    // MARK: - Camera Error View (retry UI, NOT onError)
+
+    private func cameraErrorView(message: String) -> some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            VStack(spacing: 20) {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(Color.UseSense.error)
+
+                Text("Camera Error")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(Color.UseSense.textPrimary)
+
+                Text(message)
+                    .font(.system(size: 16))
+                    .foregroundColor(Color.UseSense.textSecondary)
+                    .multilineTextAlignment(.center)
+
+                Button(action: { viewModel.retry() }) {
+                    Text("Try Again")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background(Color.UseSense.primary)
+                        .cornerRadius(12)
+                }
+            }
+            .padding(32)
+            .background(Color.UseSense.surface)
+            .cornerRadius(24)
+            .shadow(color: .black.opacity(0.1), radius: 16, y: 4)
+            .padding(.horizontal, 24)
+
+            Spacer()
+        }
+        .background(Color.UseSense.background.ignoresSafeArea())
+    }
+
     // MARK: - Challenge Overlay
 
     @ViewBuilder
     private func challengeOverlay(_ spec: ChallengeSpecWrapper) -> some View {
-        // Use the challenge seed as a stable identity so SwiftUI does not
-        // recreate (and reset @State in) the challenge view on parent re-renders.
         switch spec {
         case .followDot(let challenge):
             FollowDotChallengeView(
@@ -280,6 +333,31 @@ public struct UseSenseView: View {
                 .clipShape(Circle())
         }
         .padding(.trailing, 16)
+    }
+}
+
+// MARK: - Verifying Badge (red pulsing dot + "Verifying" per spec)
+
+struct VerifyingBadge: View {
+    @State private var isPulsing = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Color.red)
+                .frame(width: 8, height: 8)
+                .scaleEffect(isPulsing ? 1.3 : 1.0)
+                .opacity(isPulsing ? 0.7 : 1.0)
+                .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isPulsing)
+            Text("Verifying")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Color.black.opacity(0.5))
+        .cornerRadius(12)
+        .onAppear { isPulsing = true }
     }
 }
 

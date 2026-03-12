@@ -15,19 +15,19 @@ struct FollowDotChallengeView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // The moving dot
+                // Spec: 24pt red dot with shadow, 300ms spring animation
                 Circle()
                     .fill(Color.UseSense.challengeDot)
-                    .frame(width: CGFloat(challenge.dotSizePx), height: CGFloat(challenge.dotSizePx))
-                    .shadow(color: Color.UseSense.challengeDot.opacity(0.5), radius: 8)
+                    .frame(width: 24, height: 24)
+                    .shadow(color: Color.black.opacity(0.3), radius: 4, y: 2)
                     .position(dotPosition)
-                    .animation(.easeInOut(duration: currentStepDuration), value: dotPosition)
+                    .animation(.easeInOut(duration: 0.3), value: dotPosition)
 
                 // Instruction text at bottom (above chrome area)
                 VStack {
                     Spacer()
 
-                    Text("Follow the dot with your eyes")
+                    Text("Follow the dot")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(.white)
                         .padding(.bottom, 80)

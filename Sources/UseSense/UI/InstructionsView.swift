@@ -45,7 +45,7 @@ struct InstructionsView: View {
 
                 // Continue button
                 Button(action: onContinue) {
-                    Text("Continue")
+                    Text("Got it - Start")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -76,9 +76,9 @@ struct InstructionsView: View {
 
     private var title: String {
         switch challenge.challengeType {
-        case .followDot: return "Follow the Dot"
-        case .headTurn: return "Turn Your Head"
-        case .speakPhrase: return "Speak the Phrase"
+        case .followDot: return "Follow the Dot Challenge"
+        case .headTurn: return "Head Turn Challenge"
+        case .speakPhrase: return "Speak a Phrase Challenge"
         }
     }
 
@@ -86,25 +86,26 @@ struct InstructionsView: View {
         switch challenge.challengeType {
         case .followDot:
             return [
-                "A dot will appear on screen",
-                "Follow it with your eyes while keeping your head still",
-                "Stay centered in the frame"
+                "A dot will appear on screen. Follow it with your eyes while keeping your head relatively still.",
+                "Make sure you are in a well-lit area with your face clearly visible."
             ]
         case .headTurn:
             return [
-                "Turn your head in the direction shown",
-                "Move slowly and deliberately",
-                "Return to center when prompted"
+                "You will be asked to turn your head in different directions. Follow the on-screen arrows.",
+                "Make sure you are in a well-lit area with your face clearly visible."
             ]
         case .speakPhrase:
             if case .speakPhrase(let c) = challenge {
                 return [
-                    "Say the following phrase clearly:",
-                    "\"\(c.phrase)\"",
-                    "Speak at a normal pace"
+                    "You will be asked to speak a short phrase out loud. Make sure your environment is quiet.",
+                    "Phrase: \"\(c.phrase)\"",
+                    "Make sure you are in a well-lit area with your face clearly visible."
                 ]
             }
-            return ["Say the phrase shown on screen clearly"]
+            return [
+                "You will be asked to speak a short phrase out loud.",
+                "Make sure you are in a well-lit area with your face clearly visible."
+            ]
         }
     }
 }
