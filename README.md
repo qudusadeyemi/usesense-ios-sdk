@@ -4,7 +4,7 @@ Native iOS SDK for human presence verification. Verify real humans, detect deepf
 
 ## Requirements
 
-- iOS 14.0+
+- iOS 15.0+
 - Xcode 15.0+
 - Swift 5.9+
 - Device with front-facing camera (required)
