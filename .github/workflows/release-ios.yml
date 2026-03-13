@@ -11,25 +11,19 @@ permissions:
 jobs:
   validate:
     name: Validate Podspec
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
       - name: Lint podspec
         run: pod lib lint UseSenseSDK.podspec --allow-warnings
 
   build-xcframework:
     name: Build XCFramework
-    runs-on: macos-14
+    runs-on: macos-15
     needs: validate
     steps:
       - uses: actions/checkout@v4
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
       - name: Archive for iOS device
         run: |
@@ -73,13 +67,10 @@ jobs:
 
   publish-cocoapods:
     name: Publish to CocoaPods
-    runs-on: macos-14
+    runs-on: macos-15
     needs: validate
     steps:
       - uses: actions/checkout@v4
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
       # Requires COCOAPODS_TRUNK_TOKEN secret configured in repository settings.
       # Generate a token with: pod trunk register <email> '<name>'
@@ -90,7 +81,7 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    runs-on: macos-14
+    runs-on: macos-15
     needs: build-xcframework
     steps:
       - uses: actions/checkout@v4
