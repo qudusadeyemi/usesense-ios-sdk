@@ -585,6 +585,6 @@ Proprietary. See [LICENSE](LICENSE) file.
 
 ## Support
 
-- **Documentation**: [https://docs.usesense.ai](https://docs.usesense.ai)
-- **Dashboard**: [https://app.usesense.ai](https://app.usesense.ai)
+- **Documentation**: [https://watchtower.usesense.ai/developer-docs](https://watchsense.usesense.ai/developer-docs)
+- **Dashboard**: [https://watchtower.usesense.ai](https://watchtower.usesense.ai)
 - **Email**: [support@usesense.ai](mailto:support@usesense.ai)
