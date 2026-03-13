@@ -115,7 +115,7 @@ present(viewController, animated: true)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `apiKey` | `String` | Required | Your API key from the [UseSense dashboard](https://app.usesense.ai). Keys prefixed with `sk_` or `dk_` target sandbox; `pk_` targets production. |
+| `apiKey` | `String` | Required | Your API key from the [UseSense dashboard](https://watchtower.usesense.ai). Keys prefixed with `sk_` or `dk_` target sandbox; `pk_` targets production. |
 | `apiEndpoint` | `String` | UseSense API | API endpoint URL. Override only for on-premise deployments. |
 | `environment` | `Environment?` | Auto-detected | `.sandbox`, `.production`, or `.auto`. Auto-detection uses the API key prefix. |
 | `branding` | `BrandingConfig?` | `nil` | Customize the verification UI appearance. |
@@ -541,7 +541,7 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 ## Sandbox vs Production
 
 - **Sandbox is free and unlimited.** Use it for all development and testing.
-- Sandbox and production use **separate API keys**. Generate both in the [UseSense dashboard](https://app.usesense.ai).
+- Sandbox and production use **separate API keys**. Generate both in the [UseSense dashboard](https://watchtower.usesense.ai).
 - Sandbox keys are prefixed with `sk_` or `dk_`. Production keys are prefixed with `pk_`.
 - Sandbox sessions are never billed. Production sessions consume one credit each.
 - All features work identically in both environments.
@@ -573,7 +573,7 @@ Ensure the SDK's `PrivacyInfo.xcprivacy` is included in your build. If using Coc
 
 ## API Reference
 
-Full API documentation is generated via Swift DocC. See the [API Reference](https://docs.usesense.ai/ios/api).
+Full API documentation is generated via Swift DocC. See the [API Reference](https://watchtower.usesense.ai/developer-docs).
 
 ## Changelog
 
