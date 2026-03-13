@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "UseSenseSDK",
     platforms: [
-        .iOS(.v16)
+        .iOS(.v15)
     ],
     products: [
         .library(
@@ -17,7 +17,11 @@ let package = Package(
         .target(
             name: "UseSenseSDK",
             dependencies: [],
-            path: "Sources/UseSense"
+            path: "Sources/UseSense",
+            exclude: [],
+            resources: [
+                .process("Resources"),
+            ]
         ),
         .testTarget(
             name: "UseSenseSDKTests",

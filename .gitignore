@@ -1,5 +1,40 @@
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager
 .build/
 .swiftpm/
-*.xcodeproj/xcuserdata/
-DerivedData/
+Package.resolved
+
+# CocoaPods
+Pods/
+*.xcworkspace
+
+# Build artifacts
+*.xcframework.zip
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
 .DS_Store
+._*
+
+# Signing and credentials
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+
+# IDE
+*.swp
+*~
+.idea/
+.vscode/
+
+# Archives
+*.xcarchive

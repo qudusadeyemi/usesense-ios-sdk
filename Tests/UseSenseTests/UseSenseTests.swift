@@ -443,7 +443,7 @@ final class UseSenseEntryPointTests: XCTestCase {
     }
 
     func testSDKVersionMatchesServer() {
-        XCTAssertEqual(UseSense.version, "1.17.25")
+        XCTAssertEqual(UseSense.version, "1.17.57")
     }
 
     func testVerificationRequest() {

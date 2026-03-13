@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate Podspec
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint podspec
+        run: pod lib lint UseSenseSDK.podspec --allow-warnings
+
+  build-xcframework:
+    name: Build XCFramework
+    runs-on: macos-15
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Archive for iOS device
+        run: |
+          xcodebuild archive \
+            -scheme UseSenseSDK \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/UseSenseSDK-ios.xcarchive \
+            -skipPackagePluginValidation \
+            SKIP_INSTALL=NO \
+            BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Archive for iOS Simulator
+        run: |
+          xcodebuild archive \
+            -scheme UseSenseSDK \
+            -destination 'generic/platform=iOS Simulator' \
+            -archivePath build/UseSenseSDK-ios-simulator.xcarchive \
+            -skipPackagePluginValidation \
+            SKIP_INSTALL=NO \
+            BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Create XCFramework
+        run: |
+          xcodebuild -create-xcframework \
+            -framework build/UseSenseSDK-ios.xcarchive/Products/Library/Frameworks/UseSenseSDK.framework \
+            -framework build/UseSenseSDK-ios-simulator.xcarchive/Products/Library/Frameworks/UseSenseSDK.framework \
+            -output build/UseSenseSDK.xcframework
+
+      - name: Zip XCFramework
+        run: |
+          cd build
+          zip -r UseSenseSDK.xcframework.zip UseSenseSDK.xcframework
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UseSenseSDK-xcframework
+          path: build/UseSenseSDK.xcframework.zip
+
+  publish-cocoapods:
+    name: Publish to CocoaPods
+    runs-on: macos-15
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      # Requires COCOAPODS_TRUNK_TOKEN secret configured in repository settings.
+      # Generate a token with: pod trunk register <email> '<name>'
+      - name: Push to CocoaPods Trunk
+        env:
+          COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
+        run: pod trunk push UseSenseSDK.podspec --allow-warnings
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: macos-15
+    needs: build-xcframework
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download XCFramework
+        uses: actions/download-artifact@v4
+        with:
+          name: UseSenseSDK-xcframework
+          path: build/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: build/UseSenseSDK.xcframework.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

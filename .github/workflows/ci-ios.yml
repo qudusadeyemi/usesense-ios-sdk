@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Pod Lint
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint podspec
+        run: pod lib lint UseSenseSDK.podspec --allow-warnings --no-clean
+
+  build:
+    name: Build SDK (${{ matrix.destination }})
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        destination:
+          - 'generic/platform=iOS'
+          - 'generic/platform=iOS Simulator'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -scheme UseSenseSDK \
+            -destination '${{ matrix.destination }}' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO
+
+  test:
+    name: Unit Tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: |
+          xcodebuild test \
+            -scheme UseSenseSDK \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO
+
+  build-example:
+    name: Build Example App
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CocoaPods
+        run: |
+          cd Example
+          pod install
+
+      - name: Build example
+        run: |
+          xcodebuild build \
+            -workspace Example/UseSenseExample.xcworkspace \
+            -scheme UseSenseExample \
+            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            CODE_SIGNING_ALLOWED=NO

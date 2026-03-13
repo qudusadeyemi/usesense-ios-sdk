@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSCameraUsageDescription</key>
+	<string>UseSense needs camera access to verify your identity.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>UseSense needs microphone access for voice verification.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>UseSense uses motion data to improve verification accuracy.</string>
+</dict>
+</plist>
