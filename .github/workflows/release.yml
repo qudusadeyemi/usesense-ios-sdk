@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog
+        id: changelog
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          VERSION_NUM="${VERSION#v}"
+          # Extract the section for this version from CHANGELOG.md
+          NOTES=$(awk "/^## \[${VERSION_NUM}\]/{found=1; next} /^## \[/{if(found) exit} found{print}" CHANGELOG.md)
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: ${{ github.event.inputs.version }}
+          body: |
+            # UseSense iOS SDK ${{ github.event.inputs.version }}
+
+            ${{ steps.changelog.outputs.notes }}
+
+            ## Installation
+
+            ### CocoaPods
+
+            ```ruby
+            pod 'UseSenseSDK', '~> 1.0'
+            ```
+
+            ### Swift Package Manager
+
+            ```swift
+            .package(url: "https://github.com/usesense/usesense-ios-sdk.git", from: "1.0.0")
+            ```
+
+            ## Requirements
+
+            - iOS 15.0+
+            - Xcode 15.0+
+            - Swift 5.9+
+
+            See the [README](https://github.com/qudusadeyemi/usesense-ios-sdk/blob/main/README.md) for the full integration guide.
+          draft: false
+          prerelease: false
+          generate_release_notes: false
