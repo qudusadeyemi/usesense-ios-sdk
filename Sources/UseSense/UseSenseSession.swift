@@ -20,6 +20,7 @@ public final class UseSenseSession: @unchecked Sendable {
     private let identityId: String?
     private let externalUserId: String?
     private let metadata: [String: AnyCodableValue]?
+    private let clientToken: String?
 
     private let apiClient: UseSenseAPIClient
     private let eventEmitter: EventEmitter
@@ -30,15 +31,22 @@ public final class UseSenseSession: @unchecked Sendable {
     private let metadataBuilder = MetadataBuilder()
     private let challengeResponseBuilder = ChallengeResponseBuilder()
     private let deviceSignalCollector = DeviceSignalCollector()
+    private let screenDetectionCollector = ScreenDetectionCollector()
+
+    // v4.1: Face mesh, geometric coherence, suspicion engine
+    private let faceMeshManager = FaceMeshManager()
+    private let threeDMMFitter = OnDevice3DMMFitter()
+    private let verificationPackageBuilder = VerificationPackageBuilder()
+    private var suspicionEngine: SuspicionEngine?
 
     #if canImport(DeviceCheck) && canImport(CryptoKit)
     private let appAttestManager = AppAttestManager()
     #endif
 
-    /// App Attest fields fetched concurrently during session creation (like Android's integrityJob)
     private var appAttestTask: Task<[String: Any], Never>?
 
     private var sessionData: SessionData?
+    private var sessionStartTime: Date?
     private var currentState: SessionState = .idle {
         didSet { onStateChange?(currentState) }
     }
@@ -49,9 +57,7 @@ public final class UseSenseSession: @unchecked Sendable {
     private var framesDropped: Int = 0
     private var baselineDuration: TimeInterval = 2.0
     private var latestQualityReport: ImageQualityReport?
-    /// Gates frame storage so we only capture during baseline/countdown/challenge.
     private var isCapturingFrames = false
-    /// Server-provided frame limit; used as a hard cap at upload time.
     private var serverMaxFrames: Int?
 
     // MARK: - Init
@@ -79,6 +85,7 @@ public final class UseSenseSession: @unchecked Sendable {
         identityId: String? = nil,
         externalUserId: String? = nil,
         metadata: [String: AnyCodableValue]? = nil,
+        clientToken: String? = nil,
         eventEmitter: EventEmitter
     ) {
         self.config = config
@@ -86,11 +93,12 @@ public final class UseSenseSession: @unchecked Sendable {
         self.identityId = identityId
         self.externalUserId = externalUserId
         self.metadata = metadata
+        self.clientToken = clientToken
         self.apiClient = UseSenseAPIClient(config: config)
         self.eventEmitter = eventEmitter
 
-        let maxFrames = config.options?.maxFrames ?? 40
-        let targetFps = config.options?.targetFps ?? 15
+        let maxFrames = config.options?.maxFrames ?? 30
+        let targetFps = config.options?.targetFps ?? 3
         self.frameBuffer = FrameBuffer(maxFrames: maxFrames, targetFps: targetFps)
 
         frameCaptureManager.delegate = self
@@ -104,17 +112,14 @@ public final class UseSenseSession: @unchecked Sendable {
 
     // MARK: - Hosted Page Injection
 
-    /// Inject session credentials from a hosted page init-session response.
-    /// This bypasses the normal createSession call and jumps directly into the capture pipeline.
     func injectHostedSessionData(_ response: CreateSessionResponse) {
         let data = SessionData(from: response)
         self.sessionData = data
         self.apiClient.sessionToken = data.sessionToken
         self.apiClient.nonce = data.nonce
-
-        // Reconfigure frame buffer with server limits
         frameBuffer.reconfigure(maxFrames: data.upload.maxFrames, targetFps: data.upload.targetFps)
         serverMaxFrames = data.upload.maxFrames
+        initSuspicionEngine(policy: data.policy)
     }
 
     // MARK: - Session Lifecycle
@@ -122,22 +127,30 @@ public final class UseSenseSession: @unchecked Sendable {
     func start() async {
         guard !isStarted else { return }
         isStarted = true
+        sessionStartTime = Date()
 
         do {
-            // Start sensor collection
             deviceSignalCollector.startSensorCollection()
+            faceMeshManager.setup()
 
-            // If session data was injected by a hosted page flow, skip createSession
             if sessionData == nil {
-                let request = CreateSessionRequest(
-                    sessionType: sessionType.rawValue,
-                    identityId: identityId,
-                    externalUserId: externalUserId,
-                    metadata: metadata
-                )
-                let response = try await apiClient.createSession(request: request)
-                let data = SessionData(from: response)
-                self.sessionData = data
+                if let clientToken = clientToken {
+                    // Server-Side Init: exchange token for session credentials
+                    let response = try await apiClient.exchangeToken(clientToken: clientToken)
+                    let data = SessionData(from: response)
+                    self.sessionData = data
+                } else {
+                    // Standard Init: create session directly
+                    let request = CreateSessionRequest(
+                        sessionType: sessionType.rawValue,
+                        identityId: identityId,
+                        externalUserId: externalUserId,
+                        metadata: metadata
+                    )
+                    let response = try await apiClient.createSession(request: request)
+                    let data = SessionData(from: response)
+                    self.sessionData = data
+                }
             }
 
             guard let data = sessionData else {
@@ -145,7 +158,10 @@ public final class UseSenseSession: @unchecked Sendable {
                 return
             }
 
-            // Start App Attest fields fetch concurrently (bound to session nonce)
+            // Initialize suspicion engine from policy
+            initSuspicionEngine(policy: data.policy)
+
+            // Start App Attest concurrently
             #if canImport(DeviceCheck) && canImport(CryptoKit)
             appAttestTask = Task {
                 await appAttestManager.getAttestFields(sessionNonce: data.nonce)
@@ -154,8 +170,6 @@ public final class UseSenseSession: @unchecked Sendable {
 
             eventEmitter.emit(.sessionCreated, data: ["session_id": data.sessionId])
             currentState = .created(session: data)
-
-            // Check permissions
             await checkPermissions()
         } catch let error as UseSenseError {
             handleError(error)
@@ -205,7 +219,6 @@ public final class UseSenseSession: @unchecked Sendable {
         await startFaceGuide()
     }
 
-    /// Called by the face guide "My face is ready" button
     func faceReady() async {
         await startBaseline()
     }
@@ -214,12 +227,17 @@ public final class UseSenseSession: @unchecked Sendable {
         isCapturingFrames = false
         challengeResponseBuilder.markCompleted()
         eventEmitter.emit(.challengeCompleted)
+
+        // Check suspicion engine for inline step-up BEFORE stopping camera
+        if let engine = suspicionEngine, engine.shouldTriggerStepUp() {
+            await runInlineStepUp(engine: engine)
+        }
+
         frameCaptureManager.stop()
         captureEndTime = Date()
         deviceSignalCollector.stopSensorCollection()
         await stopAudioIfNeeded()
 
-        // Safety net wraps upload + complete
         do {
             try await uploadAndCompleteWithSafetyNet()
         } catch {
@@ -239,6 +257,8 @@ public final class UseSenseSession: @unchecked Sendable {
         isCapturingFrames = false
         frameBuffer.reset()
         challengeResponseBuilder.reset()
+        faceMeshManager.reset()
+        suspicionEngine?.reset()
         deviceSignalCollector.release()
         apiClient.clearSession()
         isStarted = false
@@ -251,12 +271,22 @@ public final class UseSenseSession: @unchecked Sendable {
         frameCaptureManager.stop()
         audioCaptureManager.cleanup()
         frameBuffer.reset()
+        faceMeshManager.teardown()
         deviceSignalCollector.release()
         appAttestTask?.cancel()
         currentState = .error(UseSenseError(code: .userCancelled))
     }
 
     // MARK: - Private Flow
+
+    private func initSuspicionEngine(policy: SessionPolicy) {
+        let config = policy.inlineStepUp ?? InlineStepUpConfig(
+            enabled: true,
+            suspicionThreshold: 55,
+            preferredChallenge: "auto"
+        )
+        suspicionEngine = SuspicionEngine(config: config)
+    }
 
     private func checkPermissions() async {
         let cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
@@ -280,7 +310,6 @@ public final class UseSenseSession: @unchecked Sendable {
         do {
             try frameCaptureManager.configure()
         } catch {
-            // Spec: camera errors show retry UI, NOT onError
             let message: String
             if let senseError = error as? UseSenseError {
                 message = senseError.message
@@ -291,17 +320,12 @@ public final class UseSenseSession: @unchecked Sendable {
             return
         }
 
-        // Reconfigure frame buffer with server-provided limits so we never
-        // exceed the server's allowed budget.
         if let upload = sessionData?.upload {
             reconfigureFrameBuffer(maxFrames: upload.maxFrames, targetFps: upload.targetFps)
         }
 
-        // Start camera immediately so the preview layer has frames by the
-        // time the face guide screen renders (avoids initial black flash).
         frameCaptureManager.start()
 
-        // Show instructions if there's a challenge
         if let challenge = sessionData?.policy.challenge {
             currentState = .instructions(challenge: challenge)
         } else {
@@ -311,33 +335,29 @@ public final class UseSenseSession: @unchecked Sendable {
 
     private func startFaceGuide() async {
         currentState = .faceGuide
-        // The view will show a "My face is ready" button which calls faceReady()
     }
 
-    /// Re-create the frame buffer with server-provided limits.
     private func reconfigureFrameBuffer(maxFrames: Int, targetFps: Int) {
         serverMaxFrames = maxFrames
         frameBuffer.reconfigure(maxFrames: maxFrames, targetFps: targetFps)
     }
 
     private func startBaseline() async {
-        // Spec Section 13.1: Global safety net wraps entire post-camera pipeline
         do {
             eventEmitter.emit(.captureStarted)
             captureStartTime = Date()
             frameBuffer.reset()
+            faceMeshManager.reset()
+            suspicionEngine?.reset()
             isCapturingFrames = true
             currentState = .baseline(remaining: baselineDuration)
 
-            // Start audio if needed
             if needsAudio {
                 startAudioRecording()
             }
 
-            // Wait for baseline duration (2 seconds per spec)
             try await Task.sleep(nanoseconds: UInt64(baselineDuration * 1_000_000_000))
 
-            // Countdown (3 seconds: 3, 2, 1 per spec) with continued frame capture
             if sessionData?.policy.challenge != nil {
                 for i in stride(from: 3, through: 1, by: -1) {
                     currentState = .countdown(number: i)
@@ -345,17 +365,20 @@ public final class UseSenseSession: @unchecked Sendable {
                 }
             }
 
-            // Start challenge phase
             challengeResponseBuilder.markStarted()
             if let challenge = sessionData?.policy.challenge {
                 eventEmitter.emit(.challengeStarted, data: ["type": challenge.challengeType.rawValue])
                 currentState = .challenge(spec: challenge)
-                // Challenge completion is handled by challengeCompleted() callback
             } else {
-                // No challenge, just capture for the configured duration
-                let captureDurationMs = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 2500
+                let captureDurationMs = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 8000
                 try await Task.sleep(nanoseconds: UInt64(captureDurationMs) * 1_000_000)
                 isCapturingFrames = false
+
+                // Check suspicion engine before stopping camera
+                if let engine = suspicionEngine, engine.shouldTriggerStepUp() {
+                    await runInlineStepUp(engine: engine)
+                }
+
                 frameCaptureManager.stop()
                 captureEndTime = Date()
                 deviceSignalCollector.stopSensorCollection()
@@ -363,12 +386,40 @@ public final class UseSenseSession: @unchecked Sendable {
                 try await uploadAndCompleteWithSafetyNet()
             }
         } catch is CancellationError {
-            // Task was cancelled (e.g. user navigated away)
             return
         } catch {
-            // Safety net: catch any unexpected error
             handleError(UseSenseError(code: .unknownError, message: "Unexpected error: \(error.localizedDescription)"))
         }
+    }
+
+    // MARK: - Inline Step-Up
+
+    private func runInlineStepUp(engine: SuspicionEngine) async {
+        guard let config = sessionData?.policy.inlineStepUp, config.enabled else { return }
+
+        currentState = .inlineStepUp(phase: "preparing")
+        eventEmitter.emit(.stepUpTriggered, data: ["score": String(format: "%.1f", engine.snapshot().score)])
+
+        // Camera stays active throughout
+        let orchestrator = StepUpOrchestrator()
+        let _ = await orchestrator.run(
+            suspicionScore: engine.snapshot().score,
+            config: config,
+            captureFrame: { [weak self] in
+                // In production, capture current frame from preview
+                return nil
+            },
+            getCurrentPose: { [weak self] in
+                self?.faceMeshManager.getResults().last?.headPose
+            },
+            getCurrentEAR: { [weak self] in
+                guard let result = self?.faceMeshManager.getResults().last else { return nil }
+                return (left: result.leftEAR, right: result.rightEAR)
+            }
+        )
+
+        // Capture 500ms additional frames post-step-up
+        try? await Task.sleep(nanoseconds: 500_000_000)
     }
 
     private func startAudioRecording() {
@@ -387,6 +438,8 @@ public final class UseSenseSession: @unchecked Sendable {
         }
     }
 
+    // MARK: - Upload & Complete
+
     private func uploadAndCompleteWithSafetyNet() async throws {
         guard let session = sessionData else {
             handleError(UseSenseError(code: .unknownError, message: "No session data available."))
@@ -398,8 +451,7 @@ public final class UseSenseSession: @unchecked Sendable {
             return
         }
 
-        // Build signals – hard-cap to server's maxFrames so we never exceed
-        // the allowed budget, regardless of how many the buffer collected.
+        // Hard-cap frames to server maxFrames
         var frames = frameBuffer.getFrames()
         if let cap = serverMaxFrames ?? sessionData?.upload.maxFrames, frames.count > cap {
             frames = Array(frames.prefix(cap))
@@ -409,9 +461,12 @@ public final class UseSenseSession: @unchecked Sendable {
             return
         }
 
+        let frameHashes = Array(frameBuffer.getFrameHashes().prefix(frames.count))
+        let frameLuminances = frameBuffer.getFrameLuminances()
+
         eventEmitter.emit(.captureCompleted, data: ["frame_count": "\(frames.count)"])
 
-        // Wait for App Attest fields (started concurrently during session creation)
+        // Wait for App Attest
         var attestFields: [String: Any] = [:]
         #if canImport(DeviceCheck) && canImport(CryptoKit)
         attestFields = await appAttestTask?.value ?? [:]
@@ -421,17 +476,95 @@ public final class UseSenseSession: @unchecked Sendable {
         let channelIntegrity = deviceSignalCollector.collectChannelIntegrity(attestFields: attestFields)
         let deviceTelemetry = deviceSignalCollector.collectDeviceTelemetry()
 
-        // Build challenge response if applicable
+        // Screen detection signals
+        let screenSignals = screenDetectionCollector.collect(frames: frames, luminances: frameLuminances)
+        let screenDetection: [String: Any] = [
+            "luminance_histogram_spread": screenSignals.luminanceHistogramSpread,
+            "edge_energy_ratio": screenSignals.edgeEnergyRatio,
+            "frame_luminance_cv": screenSignals.frameLuminanceCv,
+            "color_channel_uniformity": screenSignals.colorChannelUniformity
+        ]
+
+        // Challenge response
         var challengeResponse: [String: Any]?
         if let challenge = session.policy.challenge {
             challengeResponse = challengeResponseBuilder.build(challenge: challenge)
         }
 
-        // Build metadata (channel_integrity + device_telemetry structure)
-        let metadataData: Data
+        // Face mesh signals
+        let meshResults = faceMeshManager.getResults()
+        var faceMeshSignals: [String: Any]?
+        if !meshResults.isEmpty {
+            faceMeshSignals = [
+                "model": "mediapipe_face_landmarker_v2",
+                "frame_count": meshResults.count,
+                "frames": meshResults.map { result -> [String: Any] in
+                    [
+                        "frame_index": result.frameIndex,
+                        "timestamp_ms": result.timestampMs,
+                        "headPose": ["yaw": result.headPose.yaw, "pitch": result.headPose.pitch, "roll": result.headPose.roll],
+                        "leftEAR": result.leftEAR,
+                        "rightEAR": result.rightEAR,
+                        "bbox": ["x": result.bbox.x, "y": result.bbox.y, "w": result.bbox.w, "h": result.bbox.h]
+                    ]
+                }
+            ]
+        }
+
+        // Verification package (Geometric Coherence)
+        var verificationPackage: [String: Any]?
+        if session.geometricCoherence?.dualPathEnabled == true, !meshResults.isEmpty {
+            let fittingResults = meshResults.compactMap { mesh in
+                threeDMMFitter.fit(landmarks: mesh.landmarks, pose: mesh.headPose)
+            }
+            verificationPackage = verificationPackageBuilder.build(
+                meshResults: meshResults,
+                fittingResults: fittingResults,
+                frameHashes: frameHashes,
+                meshBindingChallenge: session.geometricCoherence?.meshBindingChallenge,
+                attestFields: attestFields
+            )
+        }
+
+        // Suspicion engine data (ALWAYS included per spec)
+        var suspicionData: [String: Any]?
+        if let engine = suspicionEngine {
+            let snapshot = engine.snapshot()
+            suspicionData = [
+                "final_score": snapshot.score,
+                "triggered": engine.triggered,
+                "snapshot": [
+                    "score": snapshot.score,
+                    "signals": snapshot.signals.map { signal -> [String: Any] in
+                        ["name": signal.name, "score": signal.score, "weight": signal.weight, "detail": signal.detail]
+                    },
+                    "framesAnalyzed": snapshot.framesAnalyzed,
+                    "reliable": snapshot.reliable,
+                    "timestamp": snapshot.timestamp
+                ] as [String: Any]
+            ]
+        }
+
+        // Build capture config
+        let captureConfig: [String: Any] = [
+            "captureDurationMs": session.upload.captureDurationMs,
+            "targetFps": session.upload.targetFps,
+            "maxFrames": session.upload.maxFrames
+        ]
+
+        // Build frames manifest
+        let timestamps = frameBuffer.getTimestamps()
+        let framesManifest: [[String: Any]] = (0..<frames.count).map { i in
+            [
+                "frame_index": i,
+                "capture_timestamp_ms": i < timestamps.count ? Int(timestamps[i] * 1000) : 0,
+                "resolution_w": 1280,
+                "resolution_h": 720
+            ]
+        }
+
         let startTime = captureStartTime ?? Date()
         let endTime = captureEndTime ?? Date()
-        let timestamps = frameBuffer.getTimestamps()
         let avgInterval: Int
         if timestamps.count > 1 {
             let totalInterval = timestamps.last! - timestamps.first!
@@ -440,24 +573,34 @@ public final class UseSenseSession: @unchecked Sendable {
             avgInterval = 0
         }
 
+        // Build metadata
+        let metadataData: Data
         do {
             metadataData = try metadataBuilder.build(
                 sessionId: session.sessionId,
+                captureConfig: captureConfig,
+                captureStartTime: startTime,
+                captureEndTime: endTime,
+                sessionStartTime: sessionStartTime,
+                framesManifest: framesManifest,
+                frameHashes: frameHashes,
+                framesCaptured: frames.count,
+                framesDropped: framesDropped,
+                avgFrameIntervalMs: avgInterval,
                 challengeResponse: challengeResponse,
                 channelIntegrity: channelIntegrity,
                 deviceTelemetry: deviceTelemetry,
-                captureStartTime: startTime,
-                captureEndTime: endTime,
-                framesCaptured: frames.count,
-                framesDropped: framesDropped,
-                avgFrameIntervalMs: avgInterval
+                screenDetection: screenDetection,
+                faceMeshSignals: faceMeshSignals,
+                verificationPackage: verificationPackage,
+                suspicion: suspicionData
             )
         } catch {
             handleError(UseSenseError(code: .unknownError, message: "Failed to build metadata."))
             return
         }
 
-        // Get audio data
+        // Audio data
         let audioData: Data?
         if let url = audioRecordingURL {
             audioData = try? Data(contentsOf: url)
@@ -530,6 +673,7 @@ public final class UseSenseSession: @unchecked Sendable {
 
     private func handleError(_ error: UseSenseError) {
         deviceSignalCollector.release()
+        faceMeshManager.teardown()
         eventEmitter.emit(.error, data: ["code": error.code.rawValue, "message": error.message])
         currentState = .error(error)
     }
@@ -539,7 +683,7 @@ public final class UseSenseSession: @unchecked Sendable {
 
 extension UseSenseSession: FrameCaptureDelegate {
     func frameCaptureManager(_ manager: FrameCaptureManager, didCapture pixelBuffer: CVPixelBuffer, timestamp: CMTime) {
-        // Quality analysis at 4Hz (always runs, even during face guide)
+        // Quality analysis at 4Hz
         if qualityAnalyzer.shouldAnalyze() {
             let report = qualityAnalyzer.analyze(pixelBuffer)
             latestQualityReport = report
@@ -553,19 +697,22 @@ extension UseSenseSession: FrameCaptureDelegate {
             ])
         }
 
-        // Only store frames during active capture phases (baseline / countdown / challenge).
-        // During face guide, the camera runs for preview + quality analysis only.
+        // Run face mesh analysis on every frame for suspicion engine
+        let timestampMs = Int64(CMTimeGetSeconds(timestamp) * 1000)
+        if let meshResult = faceMeshManager.processFrame(pixelBuffer, timestampMs: timestampMs) {
+            // Feed suspicion engine (runs on every 2nd frame internally)
+            let luminance = latestQualityReport.map { Double($0.meanBrightness) } ?? 128.0
+            let sharpness = latestQualityReport.map { Double($0.laplacianVariance) } ?? 50.0
+            suspicionEngine?.analyzeFrame(pose: meshResult.headPose, luminance: luminance, sharpness: sharpness)
+        }
+
+        // Only store frames during active capture phases
         guard isCapturingFrames else { return }
 
-        // Frame capture at target FPS
         if frameBuffer.shouldCapture() && !frameBuffer.isFull {
             let frameIndex = frameBuffer.count
-            let timestampMs = Int64(CMTimeGetSeconds(timestamp) * 1000)
             frameBuffer.addFrame(pixelBuffer, timestamp: CMTimeGetSeconds(timestamp))
-
-            // Record frame for challenge response
             challengeResponseBuilder.recordFrame(frameIndex: frameIndex, timestampMs: timestampMs)
-
             eventEmitter.emit(.frameCaptured, data: ["count": "\(frameBuffer.count)"])
         } else if frameBuffer.isFull {
             framesDropped += 1

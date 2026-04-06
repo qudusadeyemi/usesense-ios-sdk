@@ -65,6 +65,31 @@ public struct UseSenseView: View {
                     captureOverlayChrome(phase: "VERIFYING")
                 }
 
+            case .inlineStepUp(let phase):
+                ZStack {
+                    cameraLayer
+                    BaselineOvalView()
+
+                    // Step-up overlay: shield icon, "Additional Verification"
+                    VStack(spacing: 16) {
+                        Spacer()
+
+                        Image(systemName: "shield.checkered")
+                            .font(.system(size: 36))
+                            .foregroundColor(Color.UseSense.primary)
+
+                        Text("Additional Verification")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.white)
+
+                        Text(phase == "preparing" ? "Preparing..." : "Hold still -- verifying...")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.7))
+
+                        Spacer()
+                    }
+                }
+
             case .uploading:
                 // Spec: dark bg (95% opacity), spinner, specific text
                 ZStack {
@@ -378,7 +403,7 @@ final class UseSenseViewModel: ObservableObject {
 
     var isCameraActive: Bool {
         switch state {
-        case .faceGuide, .baseline, .countdown, .challenge: return true
+        case .faceGuide, .baseline, .countdown, .challenge, .inlineStepUp: return true
         default: return false
         }
     }

@@ -1,12 +1,13 @@
 import Foundation
 
 public struct UseSenseConfig: Sendable {
-    public static let defaultEndpoint = "https://api.usesense.ai/functions/v1/make-server-fc4cf30d"
-    public static let defaultGatewayKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR6ZnNycXNqZ3hjcHN4eXB4am9mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzEyMDQ5MjgsImV4cCI6MjA4Njc4MDkyOH0._PM_8RU9a6-l10mchYv5eipIhwWwt4gh8G1vdJgWcXw"
+    /// Production base URL (Cloudflare Worker proxy). SDKs MUST NOT use Supabase URLs directly.
+    public static let defaultEndpoint = "https://api.usesense.ai/v1"
+    /// Staging base URL for development/testing.
+    public static let stagingEndpoint = "https://staging.api.usesense.ai/v1"
 
     public let apiEndpoint: String
     public let apiKey: String
-    public let gatewayKey: String
     public var environment: Environment?
     public var branding: BrandingConfig?
     public var options: SDKOptions?
@@ -14,7 +15,6 @@ public struct UseSenseConfig: Sendable {
     public init(
         apiEndpoint: String = UseSenseConfig.defaultEndpoint,
         apiKey: String,
-        gatewayKey: String = UseSenseConfig.defaultGatewayKey,
         environment: Environment? = nil,
         branding: BrandingConfig? = nil,
         options: SDKOptions? = nil
@@ -24,7 +24,6 @@ public struct UseSenseConfig: Sendable {
             ? Self.defaultEndpoint
             : trimmedUrl
         self.apiKey = apiKey
-        self.gatewayKey = gatewayKey.isEmpty ? Self.defaultGatewayKey : gatewayKey
         self.environment = environment ?? Environment.detect(from: apiKey)
         self.branding = branding
         self.options = options
@@ -37,11 +36,12 @@ public enum Environment: String, Codable, Sendable {
     case auto
 
     public static func detect(from apiKey: String) -> Environment {
-        switch true {
-        case apiKey.hasPrefix("pk_"): return .production
-        case apiKey.hasPrefix("sk_"), apiKey.hasPrefix("dk_"): return .sandbox
-        default: return .production
+        if apiKey.hasPrefix("sk_prod_") || apiKey.hasPrefix("pk_prod_") || apiKey.hasPrefix("dk_prod_") {
+            return .production
+        } else if apiKey.hasPrefix("sk_sandbox_") || apiKey.hasPrefix("pk_sandbox_") || apiKey.hasPrefix("dk_sandbox_") {
+            return .sandbox
         }
+        return .production
     }
 
     /// Resolve AUTO to a concrete environment based on the API key.
@@ -79,7 +79,7 @@ public struct BrandingConfig: Sendable {
     public var buttonRadius: CGFloat
     public var fontFamily: String?
 
-    public init(logoUrl: String? = nil, primaryColor: String = "#4F63F5", buttonRadius: CGFloat = 12, fontFamily: String? = nil) {
+    public init(logoUrl: String? = nil, primaryColor: String = "#4F7CFF", buttonRadius: CGFloat = 10, fontFamily: String? = nil) {
         self.logoUrl = logoUrl
         self.primaryColor = primaryColor
         self.buttonRadius = buttonRadius
@@ -97,7 +97,7 @@ public struct SDKOptions: Sendable {
 
     public init(
         audioEnabled: AudioMode = .riskBased, stepUpPolicy: StepUpPolicy = .riskBased,
-        captureDurationMs: Int = 2500, targetFps: Int = 15, maxFrames: Int = 40, maxUploadSizeMb: Int = 10
+        captureDurationMs: Int = 8000, targetFps: Int = 3, maxFrames: Int = 30, maxUploadSizeMb: Int = 10
     ) {
         self.audioEnabled = audioEnabled
         self.stepUpPolicy = stepUpPolicy

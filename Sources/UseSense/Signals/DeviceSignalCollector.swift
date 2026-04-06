@@ -23,7 +23,7 @@ final class DeviceSignalCollector: @unchecked Sendable {
     private let sampleInterval: TimeInterval = 0.5 // ~2Hz
 
     private var cameraFacing: String = "front"
-    private var cameraResolution: String = "1280x720"
+    private var cameraResolution: String = "1920x1080"
 
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.usesense.network-monitor")

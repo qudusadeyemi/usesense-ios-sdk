@@ -34,7 +34,8 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
         captureSession.beginConfiguration()
         defer { captureSession.commitConfiguration() }
 
-        captureSession.sessionPreset = .vga640x480
+        // Spec: use native camera resolution, do NOT downscale. Server handles analysis.
+        captureSession.sessionPreset = .high
 
         guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
             throw UseSenseError(code: .cameraUnavailable, message: "No camera found on this device.")

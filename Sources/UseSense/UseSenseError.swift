@@ -23,6 +23,10 @@ public enum UseSenseErrorCode: String, CaseIterable, Sendable {
     case timeout = "TIMEOUT"
     case serverError = "SERVER_ERROR"
     case serviceUnavailable = "SERVICE_UNAVAILABLE"
+    case tokenExpired = "TOKEN_EXPIRED"
+    case tokenAlreadyUsed = "TOKEN_ALREADY_USED"
+    case insufficientCredits = "INSUFFICIENT_CREDITS"
+    case nonceMismatch = "NONCE_MISMATCH"
     case unknownError = "UNKNOWN_ERROR"
 
     public var userMessage: String {
@@ -49,6 +53,10 @@ public enum UseSenseErrorCode: String, CaseIterable, Sendable {
         case .timeout: return "Verification took too long. Please try again."
         case .serverError: return "Server error. Please try again or contact support."
         case .serviceUnavailable: return "Service unavailable. Try again later."
+        case .tokenExpired: return "Verification token has expired. Please start over."
+        case .tokenAlreadyUsed: return "This verification token has already been used."
+        case .insufficientCredits: return "Service temporarily unavailable. Please try again later."
+        case .nonceMismatch: return "Session verification failed. Please start a new session."
         case .unknownError: return "Something went wrong. Please try again."
         }
     }
@@ -128,11 +136,21 @@ public struct UseSenseError: Error, LocalizedError, Sendable {
             switch serverCode {
             case "session_expired": code = .sessionExpired
             case "invalid_token": code = .invalidToken
+            case "nonce_mismatch": code = .nonceMismatch
             default: code = .unauthorized
             }
             retryable = false
+        case 402:
+            code = .insufficientCredits
+            retryable = false
         case 404:
             code = serverCode == "identity_not_found" ? .identityNotFound : .sessionNotFound
+            retryable = false
+        case 409:
+            code = .tokenAlreadyUsed
+            retryable = false
+        case 410:
+            code = serverCode == "token_expired" ? .tokenExpired : .sessionExpired
             retryable = false
         case 429:
             code = .quotaExceeded
