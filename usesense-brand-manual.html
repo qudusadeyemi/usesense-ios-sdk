@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UseSense Brand Manual v3.0</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --b5:#4F7CFF;--b6:#3D63DB;--b7:#2C4AB7;--b8:#1E3493;--b1:#D6E0FF;--b0:#EBF0FF;
+  --p5:#7C5CFC;--p6:#6347D6;--p7:#4C35B0;--p1:#E5DFFD;--p0:#F2EFFE;
+  --g5:#00D4AA;--g6:#00AA88;--g7:#008066;--g1:#CCF7EB;--g0:#E6FBF5;
+  --r5:#FF6B4A;--r6:#DB4E33;--r7:#B73520;--r0:#FFF0EC;
+  --w5:#FFB84D;--w6:#DB973A;--w7:#B77829;--w0:#FFF7E8;
+  --n0:#FFF;--n50:#FDFCFA;--n1:#F5F3EF;--n2:#E8E5DE;--n3:#D0CCBF;--n4:#9E9A92;--n5:#6B6760;--n6:#3D3A35;--n7:#2A2723;--n8:#1C1A17;--n9:#0C0B09;
+  --ease:cubic-bezier(.16,1,.3,1);--fast:150ms;--norm:250ms;--slow:400ms;
+  --r-sm:6px;--r-md:10px;--r-lg:14px;--r-xl:20px;--r-full:9999px;
+  --sh-sm:0 1px 3px rgba(0,0,0,.06);--sh-md:0 4px 12px rgba(0,0,0,.07);--sh-lg:0 8px 32px rgba(0,0,0,.08);
+  --sh-focus:0 0 0 3px rgba(79,124,255,.15);
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{font-size:16px;scroll-behavior:smooth;-webkit-font-smoothing:antialiased}
+body{font-family:'DM Sans',sans-serif;background:var(--n50);color:var(--n8);line-height:1.6;overflow-x:hidden}
+::selection{background:var(--b1);color:var(--b8)}
+
+/* ═══ NAV ═══ */
+.nav{position:fixed;top:0;left:0;right:0;height:64px;background:rgba(253,252,250,.88);backdrop-filter:blur(24px) saturate(1.8);border-bottom:1px solid var(--n2);display:flex;align-items:center;justify-content:space-between;padding:0 48px;z-index:1000}
+.nav-brand{font-family:'Outfit',sans-serif;font-weight:700;font-size:1.15rem;letter-spacing:-.03em;display:flex;align-items:center;gap:10px;white-space:nowrap}
+.nav-brand em{font-style:normal;color:var(--b5)}
+.nav-links{display:flex;gap:4px;list-style:none}
+.nav-links a{font-size:.78rem;font-weight:500;color:var(--n5);text-decoration:none;padding:6px 10px;border-radius:8px;transition:all 200ms}
+.nav-links a:hover{color:var(--n8);background:var(--n1)}
+.nav-tag{font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--n4);background:var(--n1);padding:4px 10px;border-radius:100px}
+
+/* ═══ LAYOUT ═══ */
+.ps{max-width:1200px;margin:0 auto;padding:120px 48px 80px}
+.ps+.ps{padding-top:40px}
+.hr{height:1px;background:var(--n2);max-width:1200px;margin:0 auto}
+
+/* ═══ COVER ═══ */
+.cover{min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:120px 48px;position:relative;overflow:hidden;background:var(--n8);color:var(--n0)}
+.cover::before{content:'';position:absolute;top:-30%;left:-20%;width:140%;height:160%;background:radial-gradient(ellipse 600px 600px at 20% 30%,rgba(79,124,255,.15),transparent),radial-gradient(ellipse 500px 500px at 75% 60%,rgba(124,92,252,.1),transparent),radial-gradient(ellipse 400px 400px at 55% 80%,rgba(0,212,170,.06),transparent);pointer-events:none;animation:drift 20s ease-in-out infinite alternate}
+@keyframes drift{0%{transform:translate(0,0) scale(1)}100%{transform:translate(-3%,2%) scale(1.05)}}
+.cover-ey{font-family:'JetBrains Mono',monospace;font-size:.7rem;text-transform:uppercase;letter-spacing:.2em;color:var(--b5);margin-bottom:32px;position:relative;z-index:1}
+.cover h1{font-family:'Outfit',sans-serif;font-size:clamp(3rem,6vw,5.5rem);font-weight:800;letter-spacing:-.05em;line-height:1;position:relative;z-index:1;margin-bottom:24px}
+.cover h1 em{font-style:normal;background:linear-gradient(135deg,var(--b5),var(--p5));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.cover-sub{font-size:1.15rem;color:rgba(255,255,255,.5);max-width:520px;line-height:1.7;position:relative;z-index:1;font-weight:300}
+.cover-meta{position:absolute;bottom:48px;left:48px;right:48px;display:flex;justify-content:space-between;z-index:1}
+.cover-meta span{font-family:'JetBrains Mono',monospace;font-size:.65rem;color:rgba(255,255,255,.25)}
+
+/* ═══ HEADINGS ═══ */
+.sn{font-family:'JetBrains Mono',monospace;font-size:.65rem;color:var(--n4);text-transform:uppercase;letter-spacing:.2em;margin-bottom:12px;display:block}
+.st{font-family:'Outfit',sans-serif;font-size:clamp(2rem,4vw,3rem);font-weight:800;letter-spacing:-.04em;line-height:1.05;margin-bottom:16px}
+.sd{font-size:1.05rem;color:var(--n5);max-width:640px;line-height:1.7;margin-bottom:56px}
+.sst{font-family:'Outfit',sans-serif;font-size:1.35rem;font-weight:700;letter-spacing:-.02em;margin-bottom:12px;margin-top:56px}
+.ssd{font-size:.92rem;color:var(--n5);max-width:560px;line-height:1.65;margin-bottom:32px}
+
+/* ═══ GRIDS ═══ */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+.g3{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:24px}
+.card{background:var(--n0);border:1px solid var(--n2);border-radius:var(--r-lg);padding:32px}
+.card h4{font-family:'Outfit',sans-serif;font-size:1.05rem;font-weight:700;letter-spacing:-.02em;margin-bottom:8px}
+.card p{font-size:.85rem;color:var(--n5);line-height:1.6}
+.card-icon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;margin-bottom:20px}
+.card-icon svg{width:22px;height:22px}
+
+/* ═══ LOGO ═══ */
+.lc{border-radius:20px;padding:64px;display:flex;align-items:center;justify-content:center;min-height:300px;position:relative;overflow:hidden}
+.lc.light{background:var(--n0);border:1px solid var(--n2)}
+.lc.dark{background:var(--n8)}
+.lc.brand{background:var(--b5)}
+.lc.grad{background:linear-gradient(135deg,var(--b5),var(--p5))}
+.lc-label{position:absolute;bottom:20px;left:24px;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.12em;opacity:.5}
+.lc.dark .lc-label,.lc.brand .lc-label,.lc.grad .lc-label{color:var(--n0)}
+.lockup{display:flex;align-items:center;gap:14px}
+.lockup svg{width:52px;height:52px;flex-shrink:0}
+.lockup-text{font-family:'Outfit',sans-serif;font-size:1.7rem;font-weight:700;letter-spacing:-.03em;white-space:nowrap}
+.lockup-text em{font-style:normal}
+.ic{border-radius:16px;padding:40px;display:flex;align-items:center;justify-content:center;min-height:140px;position:relative}
+.ic-label{position:absolute;bottom:14px;font-size:.62rem;color:var(--n4);font-weight:600;text-transform:uppercase;letter-spacing:.1em}
+.construct{background:var(--n0);border:1px solid var(--n2);border-radius:16px;padding:40px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.construct svg{margin-bottom:20px}
+.construct h4{font-family:'Outfit',sans-serif;font-size:.92rem;font-weight:700;margin-bottom:6px}
+.construct p{font-size:.78rem;color:var(--n5);line-height:1.55}
+.concept-grid{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;margin-bottom:64px}
+.concept-layer{display:flex;align-items:flex-start;gap:16px;padding:20px 24px;border-radius:14px;border:1px solid var(--n2);background:var(--n0);margin-bottom:16px}
+.cl-n{font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:600;color:var(--n0);background:var(--b5);width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+.cl-c h4{font-family:'Outfit',sans-serif;font-size:.95rem;font-weight:700;margin-bottom:4px}
+.cl-c p{font-size:.78rem;color:var(--n5);line-height:1.55}
+.cs{background:var(--n0);border:1px solid var(--n2);border-radius:20px;padding:64px;display:flex;align-items:center;justify-content:center;margin-bottom:16px}
+.cs-box{border:2px dashed var(--b1);padding:36px 52px;border-radius:12px;position:relative}
+.cs-l{position:absolute;font-family:'JetBrains Mono',monospace;font-size:.6rem;color:var(--b5);background:var(--b0);padding:2px 8px;border-radius:4px}
+.cs-l.t{top:-10px;left:50%;transform:translateX(-50%)}
+.cs-l.r{right:-10px;top:50%;transform:translateY(-50%) rotate(90deg)}
+.cs-l.b{bottom:-10px;left:50%;transform:translateX(-50%)}
+.cs-l.l{left:-10px;top:50%;transform:translateY(-50%) rotate(-90deg)}
+.dd{border-radius:16px;overflow:hidden}
+.dd-prev{padding:40px;display:flex;align-items:center;justify-content:center;min-height:160px;background:var(--n1)}
+.dd-info{padding:16px 20px;font-size:.82rem;font-weight:500}
+.dd-info.dont{color:var(--r6);background:var(--r0);border-top:3px solid var(--r5)}
+
+/* ═══ COLORS ═══ */
+.ch{border-radius:20px;padding:40px 32px 32px;min-height:260px;display:flex;flex-direction:column;justify-content:flex-end;position:relative;overflow:hidden}
+.ch::before{content:'';position:absolute;inset:0;opacity:.08;background:radial-gradient(circle at 70% 20%,rgba(255,255,255,.5),transparent 60%)}
+.ch-name{font-family:'Outfit',sans-serif;font-size:1.5rem;font-weight:700;margin-bottom:4px;position:relative;z-index:1}
+.ch-hex{font-family:'JetBrains Mono',monospace;font-size:.75rem;opacity:.7;position:relative;z-index:1;margin-bottom:4px}
+.ch-use{font-size:.78rem;opacity:.6;position:relative;z-index:1;line-height:1.5}
+.ss{display:flex;border-radius:14px;overflow:hidden;height:72px;margin-bottom:16px}
+.sc{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:10px;font-family:'JetBrains Mono',monospace;font-size:.55rem;position:relative}
+.sc span{opacity:0;transition:opacity 200ms}
+.ss:hover .sc span{opacity:.8}
+.sg{margin-bottom:8px}
+.sg-t{font-family:'Outfit',sans-serif;font-size:.85rem;font-weight:700;margin-bottom:12px}
+
+/* ═══ TYPE ═══ */
+.ts{background:var(--n0);border:1px solid var(--n2);border-radius:20px;padding:48px;margin-bottom:24px}
+.tm{display:flex;gap:24px;flex-wrap:wrap}
+.tm span{font-size:.72rem;color:var(--n4)}
+.tm b{color:var(--n8);font-weight:600}
+
+/* ═══ ICONOGRAPHY (inline SVGs) ═══ */
+.ico-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:12px;margin-bottom:32px}
+.ico{background:var(--n0);border:1px solid var(--n2);border-radius:12px;padding:18px 10px;display:flex;flex-direction:column;align-items:center;gap:8px;transition:all 200ms;cursor:default}
+.ico:hover{border-color:var(--b5);box-shadow:0 4px 16px rgba(79,124,255,.08);transform:translateY(-2px)}
+.ico svg{width:24px;height:24px;flex-shrink:0}
+.ico-name{font-family:'JetBrains Mono',monospace;font-size:.55rem;color:var(--n4);text-align:center;line-height:1.3}
+.ico-ctx{font-family:'JetBrains Mono',monospace;font-size:.5rem;color:var(--n3);text-align:center}
+.ico-locked{border-left:3px solid}
+.ico-group{font-family:'Outfit',sans-serif;font-size:1rem;font-weight:700;margin-bottom:8px;margin-top:40px}
+.ico-gdesc{font-size:.82rem;color:var(--n5);margin-bottom:16px;max-width:560px}
+.ico-usage{background:var(--n0);border:1px solid var(--n2);border-radius:16px;padding:28px 32px;margin-bottom:24px}
+.ico-usage code{font-family:'JetBrains Mono',monospace;font-size:.78rem;background:var(--n1);padding:3px 8px;border-radius:6px;color:var(--b5)}
+.ico-usage p{font-size:.85rem;color:var(--n5);line-height:1.65;margin-bottom:8px}
+.ico-rule{display:flex;gap:16px;align-items:flex-start;margin-bottom:12px;padding:14px 20px;border-radius:12px;background:var(--n0);border:1px solid var(--n2)}
+.ico-rule .rn{font-family:'JetBrains Mono',monospace;font-size:.6rem;font-weight:600;color:var(--n0);background:var(--n6);width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.ico-rule p{font-size:.82rem;color:var(--n5);line-height:1.55}
+.ico-rule strong{color:var(--n8)}
+
+/* ═══ COMPONENTS SECTION ═══ */
+.showcase{background:var(--n0);border:1px solid var(--n2);border-radius:var(--r-xl);padding:40px;margin-bottom:24px}
+.showcase-label{font-family:'JetBrains Mono',monospace;font-size:.6rem;text-transform:uppercase;letter-spacing:.12em;color:var(--n4);margin-bottom:16px}
+.flex{display:flex;flex-wrap:wrap}
+
+/* Buttons */
+.us-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:44px;padding:0 24px;border-radius:var(--r-md);font-family:'DM Sans',sans-serif;font-size:.88rem;font-weight:600;border:none;cursor:pointer;transition:all var(--fast) var(--ease);text-decoration:none;white-space:nowrap}
+.us-btn:hover{transform:scale(1.03)}
+.us-btn:active{transform:scale(.97)}
+.us-btn:focus-visible{outline:none;box-shadow:var(--sh-focus)}
+.us-btn svg{width:16px;height:16px}
+.us-btn-brand{background:var(--b5);color:var(--n0)}
+.us-btn-brand:hover{background:var(--b6)}
+.us-btn-secondary{background:var(--n0);color:var(--n8);border:1px solid var(--n2)}
+.us-btn-secondary:hover{background:var(--n1);border-color:var(--n3)}
+.us-btn-ghost{background:transparent;color:var(--n5);border:1px solid var(--n3)}
+.us-btn-ghost:hover{color:var(--n8);border-color:var(--n4)}
+.us-btn-critical{background:var(--r5);color:var(--n0)}
+.us-btn-critical:hover{background:var(--r6)}
+.us-btn[disabled]{opacity:.4;cursor:not-allowed;transform:none!important}
+.us-btn-sm{height:36px;padding:0 16px;font-size:.78rem;border-radius:var(--r-sm)}
+.us-btn-lg{height:52px;padding:0 32px;font-size:1rem;border-radius:var(--r-lg)}
+
+/* Tags / Badges */
+.us-tag{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:var(--r-sm);font-size:.72rem;font-weight:600;line-height:1}
+.us-tag svg{width:12px;height:12px}
+.us-tag-brand{background:rgba(79,124,255,.08);color:var(--b5);border:1px solid rgba(79,124,255,.2)}
+.us-tag-magic{background:rgba(124,92,252,.08);color:var(--p5);border:1px solid rgba(124,92,252,.2)}
+.us-tag-success{background:rgba(0,212,170,.08);color:var(--g6);border:1px solid rgba(0,212,170,.2)}
+.us-tag-critical{background:rgba(255,107,74,.08);color:var(--r6);border:1px solid rgba(255,107,74,.2)}
+.us-tag-warning{background:rgba(255,184,77,.08);color:var(--w6);border:1px solid rgba(255,184,77,.2)}
+.us-tag-default{background:var(--n1);color:var(--n5);border:1px solid var(--n2)}
+
+/* Inputs */
+.us-input{height:44px;padding:0 16px;border-radius:var(--r-md);border:1px solid var(--n2);background:var(--n0);font-family:'DM Sans',sans-serif;font-size:.88rem;color:var(--n8);width:100%;transition:all var(--fast) var(--ease);outline:none}
+.us-input:focus{border-color:var(--b5);box-shadow:var(--sh-focus)}
+.us-input::placeholder{color:var(--n4)}
+.us-input-label{display:block;font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--n5);margin-bottom:6px}
+.us-input-group{margin-bottom:16px}
+
+/* Data table */
+.us-table-wrap{overflow-x:auto;border:1px solid var(--n2);border-radius:var(--r-lg)}
+.us-table{width:100%;border-collapse:collapse;font-size:.82rem}
+.us-table thead{background:var(--n1)}
+.us-table th{text-align:left;padding:10px 16px;font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--n4);border-bottom:1px solid var(--n2);white-space:nowrap}
+.us-table td{padding:13px 16px;border-bottom:1px solid var(--n2);color:var(--n5);vertical-align:middle}
+.us-table tbody tr{transition:background var(--fast)}
+.us-table tbody tr:hover{background:rgba(79,124,255,.02)}
+.us-table tbody tr:last-child td{border-bottom:none}
+
+/* Metric card */
+.us-metric{background:var(--n0);border:1px solid var(--n2);border-radius:var(--r-lg);padding:24px}
+.us-metric-label{font-size:.72rem;color:var(--n4);font-weight:500;margin-bottom:4px}
+.us-metric-value{font-family:'Outfit',sans-serif;font-size:1.8rem;font-weight:700;letter-spacing:-.03em;line-height:1}
+.us-metric-trend{display:inline-flex;align-items:center;gap:3px;font-size:.65rem;font-weight:600;padding:2px 8px;border-radius:var(--r-full);margin-top:8px}
+.us-metric-trend.up{background:rgba(0,212,170,.08);color:var(--g7)}
+.us-metric-trend.down{background:rgba(255,107,74,.08);color:var(--r7)}
+
+/* Callout */
+.us-callout{border-radius:var(--r-lg);padding:20px 24px;font-size:.85rem;line-height:1.6;margin-bottom:12px}
+.us-callout strong{color:var(--n8)}
+.us-callout-info{background:rgba(79,124,255,.06);border:1px solid rgba(79,124,255,.2);color:var(--n5)}
+.us-callout-success{background:rgba(0,212,170,.06);border:1px solid rgba(0,212,170,.2);color:var(--n5)}
+.us-callout-critical{background:rgba(255,107,74,.06);border:1px solid rgba(255,107,74,.2);color:var(--n5)}
+.us-callout-warning{background:rgba(255,184,77,.06);border:1px solid rgba(255,184,77,.2);color:var(--n5)}
+
+/* Status dot */
+.us-status{display:inline-flex;align-items:center;gap:6px;font-size:.78rem;font-weight:500}
+.us-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+
+/* Code block */
+.us-code{background:var(--n8);border-radius:var(--r-lg);padding:24px 28px;color:var(--n3);font-family:'JetBrains Mono',monospace;font-size:.78rem;line-height:1.8;overflow-x:auto;margin-bottom:24px}
+.us-code .cm{color:var(--n5)}
+.us-code .kw{color:var(--b5)}
+.us-code .str{color:var(--g5)}
+.us-code .fn{color:var(--p5)}
+
+/* ═══ PATTERNS / MOCKUPS / SOCIAL ═══ */
+.pat{border-radius:20px;min-height:360px;overflow:hidden;position:relative;display:flex;align-items:flex-end;padding:32px;color:var(--n0)}
+.pat.dk{background:var(--n8)}
+.pat.pp{background:linear-gradient(160deg,var(--n8),#1a1825)}
+.pat.lt{background:var(--n50);color:var(--n8);border:1px solid var(--n2)}
+.pat.tri{background:var(--n0);color:var(--n8);border:1px solid var(--n2)}
+.pat h4{font-family:'Outfit',sans-serif;font-size:1.1rem;font-weight:700;position:relative;z-index:2}
+.pat p{font-size:.78rem;opacity:.7;position:relative;z-index:2;margin-top:4px}
+.pat svg.bg{position:absolute;inset:0;width:100%;height:100%}
+.mock-grid{display:grid;grid-template-columns:2fr 1fr;gap:24px;margin-bottom:24px}
+.mock-browser{background:var(--n8);color:var(--n0);border-radius:20px;overflow:hidden;display:flex;flex-direction:column}
+.mock-bar{display:flex;align-items:center;gap:8px;padding:16px 20px;background:rgba(255,255,255,.05)}
+.mock-dot{width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.1)}
+.mock-url{font-family:'JetBrains Mono',monospace;font-size:.62rem;color:rgba(255,255,255,.3);margin-left:8px}
+.mock-body{flex:1;padding:40px;display:flex;flex-direction:column;justify-content:center}
+.mock-mobile{background:var(--n8);border-radius:32px;padding:12px;color:var(--n0)}
+.mock-screen{background:var(--n9);border-radius:24px;height:100%;min-height:336px;padding:32px 24px;display:flex;flex-direction:column;justify-content:center}
+.mock-h{font-family:'Outfit',sans-serif;font-size:1.8rem;font-weight:800;letter-spacing:-.04em;line-height:1.1;margin-bottom:12px}
+.mock-h em{font-style:normal;color:var(--b5)}
+.biz{border-radius:16px;padding:40px;min-height:220px;display:flex;flex-direction:column;justify-content:space-between}
+.biz.front{background:var(--n8);color:var(--n0)}
+.biz.back{background:var(--n0);border:1px solid var(--n2)}
+.biz-logo{display:flex;align-items:center;gap:10px;font-family:'Outfit',sans-serif;font-weight:700;font-size:1.1rem;letter-spacing:-.02em;white-space:nowrap}
+.biz-logo em{font-style:normal;color:var(--b5)}
+.soc{border-radius:16px;overflow:hidden;min-height:280px;display:flex;flex-direction:column;justify-content:flex-end;padding:28px;position:relative;color:var(--n0)}
+.soc::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,transparent 30%,rgba(0,0,0,.7));z-index:1}
+.soc>*{position:relative;z-index:2}
+.soc h4{font-family:'Outfit',sans-serif;font-size:1.2rem;font-weight:700;margin-bottom:4px}
+.soc p{font-size:.75rem;opacity:.7}
+.foot{background:var(--n8);color:var(--n0);padding:80px 48px;text-align:center}
+.foot h2{font-family:'Outfit',sans-serif;font-size:2.5rem;font-weight:800;letter-spacing:-.04em;margin-bottom:12px}
+.foot p{color:rgba(255,255,255,.4);font-size:.85rem}
+.foot-meta{margin-top:48px;font-family:'JetBrains Mono',monospace;font-size:.6rem;color:rgba(255,255,255,.2);letter-spacing:.1em}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+.fi{opacity:0;animation:fadeUp .8s var(--ease) forwards}
+.fi.d1{animation-delay:.1s}.fi.d2{animation-delay:.2s}.fi.d3{animation-delay:.3s}
+
+@media(max-width:900px){.g2,.g3,.g4,.mock-grid,.concept-grid{grid-template-columns:1fr}.ps{padding:80px 24px 40px}.nav{padding:0 24px}.nav-links{display:none}.cover{padding:100px 24px}.ico-grid{grid-template-columns:repeat(auto-fill,minmax(90px,1fr))}}
+</style>
+</head>
+<body>
+
+<!-- ═══ SVG DEFS ═══ -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+<defs>
+  <symbol id="m" viewBox="0 0 64 64"><rect x="4" y="4" width="56" height="56" rx="13" fill="none" stroke="#4F7CFF" stroke-width="2.4"/><path d="M15 22 A13 13 0 0 1 15 42" fill="none" stroke="#4F7CFF" stroke-width="1.8" stroke-linecap="round" opacity=".35"/><path d="M49 22 A13 13 0 0 0 49 42" fill="none" stroke="#4F7CFF" stroke-width="1.8" stroke-linecap="round" opacity=".35"/><circle cx="32" cy="23" r="7.5" fill="none" stroke="#4F7CFF" stroke-width="2.2"/><path d="M19 50 C19 41 24 36.5 32 36.5 C40 36.5 45 41 45 50" fill="none" stroke="#4F7CFF" stroke-width="2.2" stroke-linecap="round"/><circle cx="32" cy="23" r="2.8" fill="#4F7CFF"/></symbol>
+  <symbol id="mw" viewBox="0 0 64 64"><rect x="4" y="4" width="56" height="56" rx="13" fill="none" stroke="#fff" stroke-width="2.4"/><path d="M15 22 A13 13 0 0 1 15 42" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" opacity=".35"/><path d="M49 22 A13 13 0 0 0 49 42" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" opacity=".35"/><circle cx="32" cy="23" r="7.5" fill="none" stroke="#fff" stroke-width="2.2"/><path d="M19 50 C19 41 24 36.5 32 36.5 C40 36.5 45 41 45 50" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/><circle cx="32" cy="23" r="2.8" fill="#fff"/></symbol>
+  <symbol id="mc" viewBox="0 0 120 120"><defs><linearGradient id="cg" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse"><stop stop-color="#4F7CFF"/><stop offset="1" stop-color="#7C5CFC"/></linearGradient></defs><rect x="8" y="8" width="104" height="104" rx="24" fill="none" stroke="url(#cg)" stroke-width="3.5"/><path d="M28 41 A24 24 0 0 1 28 79" fill="none" stroke="url(#cg)" stroke-width="2.8" stroke-linecap="round" opacity=".4"/><path d="M92 41 A24 24 0 0 0 92 79" fill="none" stroke="url(#cg)" stroke-width="2.8" stroke-linecap="round" opacity=".4"/><circle cx="60" cy="43" r="14" fill="none" stroke="#fff" stroke-width="3"/><path d="M36 93 C36 76 46 68 60 68 C74 68 84 76 84 93" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/><circle cx="60" cy="43" r="5" fill="#fff"/></symbol>
+  <!-- INLINE ICON SYMBOLS -->
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><polyline points="9 12 12 15 16 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" fill="none" stroke="currentColor" stroke-width="2"/><polyline points="22 4 12 14.01 9 11.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><line x1="15" y1="9" x2="9" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="9" y1="9" x2="15" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" fill="none" stroke="currentColor" stroke-width="2"/><line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><polyline points="12 6 12 12 16 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="14" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="20" x2="12" y2="4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="6" y1="20" x2="6" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" stroke-width="2"/><line x1="21" y1="21" x2="16.65" y2="16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M13.73 21a2 2 0 0 1-3.46 0" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-fp" viewBox="0 0 24 24"><path d="M2 12C2 6.5 6.5 2 12 2a10 10 0 0 1 8 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5 19.5C5.5 18 6 15 6 12c0-3.3 2.7-6 6-6 3.3 0 6 2.7 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 12v10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 18c4.5 0 6-2 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><line x1="12" y1="18" x2="12.01" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-brain" viewBox="0 0 24 24"><path d="M12 2a4 4 0 0 1 4 4v1a3 3 0 0 1 3 3 3 3 0 0 1-1 5.2V17a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4v-1.8A3 3 0 0 1 5 10a3 3 0 0 1 3-3V6a4 4 0 0 1 4-4z" fill="none" stroke="currentColor" stroke-width="2"/><line x1="12" y1="2" x2="12" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".3"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 2l2.09 6.26L20 10l-5.91 1.74L12 18l-2.09-6.26L4 10l5.91-1.74L12 2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-graph" viewBox="0 0 24 24"><circle cx="5" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="18" r="2" fill="none" stroke="currentColor" stroke-width="2"/><line x1="7" y1="7" x2="11" y2="16" stroke="currentColor" stroke-width="2"/><line x1="17" y1="7" x2="13" y2="16" stroke="currentColor" stroke-width="2"/><line x1="7" y1="6" x2="17" y2="6" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-skull" viewBox="0 0 24 24"><circle cx="12" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="9" cy="10" r="1.5" fill="currentColor"/><circle cx="15" cy="10" r="1.5" fill="currentColor"/><path d="M8 18v4h2v-2h4v2h2v-4" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" fill="none" stroke="currentColor" stroke-width="2"/><polyline points="7 10 12 15 17 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-arrow-r" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polyline points="12 5 19 12 12 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</defs>
+</svg>
+
+<!-- ═══ NAV ═══ -->
+<nav class="nav">
+  <div class="nav-brand"><svg width="32" height="32"><use href="#m"/></svg><span>Use<em>Sense</em></span></div>
+  <ul class="nav-links">
+    <li><a href="#purpose">Purpose</a></li>
+    <li><a href="#logo">Logo</a></li>
+    <li><a href="#color">Color</a></li>
+    <li><a href="#type">Type</a></li>
+    <li><a href="#icons">Icons</a></li>
+    <li><a href="#components">Components</a></li>
+    <li><a href="#motion">Motion</a></li>
+    <li><a href="#voice">Voice</a></li>
+    <li><a href="#patterns">Patterns</a></li>
+    <li><a href="#usage">In Use</a></li>
+  </ul>
+  <span class="nav-tag">v3.0 / 2026</span>
+</nav>
+
+<!-- ═══ 00 COVER ═══ -->
+<section class="cover">
+  <div class="cover-ey fi">Brand Guidelines</div>
+  <div class="fi d1" style="position:relative;z-index:1;margin-bottom:32px"><svg width="120" height="120"><use href="#mc"/></svg></div>
+  <h1 class="fi d2">Brand <em>Manual</em></h1>
+  <p class="cover-sub fi d3">The definitive guide to representing UseSense. Human presence infrastructure for the AI era.</p>
+  <div class="cover-meta"><span>UseSense Technologies</span><span>Confidential / April 2026</span></div>
+</section>
+
+<!-- ═══ 01 PURPOSE ═══ -->
+<section class="ps" id="purpose">
+  <span class="sn">01 / Brand Foundation</span>
+  <h2 class="st">Why We Exist</h2>
+  <p class="sd">In a world where AI fabricates faces and simulates interaction, the question has shifted to: "Is a living human actually here, on a real device, in a real environment?" UseSense answers that.</p>
+  <div class="g3" style="margin-bottom:48px">
+    <div class="card"><div class="card-icon" style="background:var(--b0);color:var(--b5)"><svg><use href="#i-shield"/></svg></div><h4>Purpose</h4><p>Give digital systems perceptual ability to determine a living human is physically present through a trustworthy channel.</p></div>
+    <div class="card"><div class="card-icon" style="background:var(--p0);color:var(--p5)"><svg><use href="#i-scan"/></svg></div><h4>Position</h4><p>Human presence infrastructure. Not KYC. We prove a real, unique human is behind every session.</p></div>
+    <div class="card"><div class="card-icon" style="background:var(--g0);color:var(--g6)"><svg><use href="#i-check"/></svg></div><h4>Mission</h4><p>Build perceptual intelligence for the AI era. Device + liveness + deduplication in one session.</p></div>
+  </div>
+  <div style="background:var(--n8);border-radius:20px;padding:56px 48px;margin-bottom:48px;text-align:center">
+    <p style="font-family:'Outfit',sans-serif;font-size:clamp(1.5rem,3vw,2.2rem);font-weight:700;color:var(--n0);letter-spacing:-.03em;line-height:1.3">"Human presence infrastructure<br>for the AI era."</p>
+  </div>
+</section>
+<div class="hr"></div>
+
+<!-- ═══ 02 LOGO ═══ -->
+<section class="ps" id="logo">
+  <span class="sn">02 / Identity</span>
+  <h2 class="st">Logo System</h2>
+  <p class="sd">Three nested layers encode the product architecture: human presence at center, environmental sensor arcs flanking, device boundary containing.</p>
+  <div class="concept-grid">
+    <div style="display:flex;align-items:center;justify-content:center">
+      <svg width="260" height="260" viewBox="0 0 280 280" fill="none"><rect x="20" y="20" width="240" height="240" rx="52" stroke="#4F7CFF" stroke-width="2.5" stroke-dasharray="7 3" opacity=".35"/><text x="140" y="268" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="8" fill="#4F7CFF" opacity=".5" letter-spacing=".1em">DEVICE BOUNDARY</text><path d="M66 96 A57 57 0 0 1 66 184" stroke="#4F7CFF" stroke-width="2.2" stroke-linecap="round" opacity=".4"/><path d="M214 96 A57 57 0 0 0 214 184" stroke="#4F7CFF" stroke-width="2.2" stroke-linecap="round" opacity=".4"/><circle cx="140" cy="110" r="30" stroke="#4F7CFF" stroke-width="2.5"/><path d="M88 210 C88 176 110 162 140 162 C170 162 192 176 192 210" stroke="#4F7CFF" stroke-width="2.5" stroke-linecap="round"/><circle cx="140" cy="110" r="4.5" fill="#4F7CFF"/></svg>
+    </div>
+    <div>
+      <div class="concept-layer"><div class="cl-n">1</div><div class="cl-c"><h4>Human Presence</h4><p>Head-and-shoulders with verification "iris." The living human whose presence is confirmed.</p></div></div>
+      <div class="concept-layer"><div class="cl-n">2</div><div class="cl-c"><h4>Environmental Awareness</h4><p>Flanking sensor arcs. Depth, lighting, acoustic context. The environment corroborates the human.</p></div></div>
+      <div class="concept-layer"><div class="cl-n">3</div><div class="cl-c"><h4>Device Boundary</h4><p>Outermost rounded rectangle. The attested device. Without a trusted channel, nothing matters.</p></div></div>
+    </div>
+  </div>
+  <h3 class="sst">Construction</h3>
+  <div class="g3" style="margin-bottom:48px">
+    <div class="construct"><svg width="80" height="80" viewBox="0 0 64 64" fill="none"><rect x="4" y="4" width="56" height="56" rx="13" stroke="#4F7CFF" stroke-width="2.4"/></svg><h4>Device Frame</h4><p>rx=13, 2.4 stroke. Mobile device form.</p></div>
+    <div class="construct"><svg width="80" height="80" viewBox="0 0 64 64" fill="none"><path d="M15 22 A13 13 0 0 1 15 42" stroke="#4F7CFF" stroke-width="1.8" stroke-linecap="round" opacity=".35"/><path d="M49 22 A13 13 0 0 0 49 42" stroke="#4F7CFF" stroke-width="1.8" stroke-linecap="round" opacity=".35"/></svg><h4>Sensor Arcs</h4><p>One per side. 1.8 stroke, 35% opacity.</p></div>
+    <div class="construct"><svg width="80" height="80" viewBox="0 0 64 64" fill="none"><circle cx="32" cy="23" r="7.5" stroke="#4F7CFF" stroke-width="2.2"/><path d="M19 50 C19 41 24 36.5 32 36.5 C40 36.5 45 41 45 50" stroke="#4F7CFF" stroke-width="2.2" stroke-linecap="round"/><circle cx="32" cy="23" r="2.8" fill="#4F7CFF"/></svg><h4>Human + Iris</h4><p>Head r=7.5, iris r=2.8 solid fill.</p></div>
+  </div>
+  <h3 class="sst">Lockup Variants</h3>
+  <div class="g2" style="margin-bottom:48px">
+    <div class="lc light"><div class="lockup"><svg><use href="#m"/></svg><span class="lockup-text" style="color:var(--n8)">Use<em style="color:var(--b5)">Sense</em></span></div><span class="lc-label">Light</span></div>
+    <div class="lc dark"><div class="lockup"><svg><use href="#mw"/></svg><span class="lockup-text" style="color:var(--n0)">Use<em style="color:var(--b5)">Sense</em></span></div><span class="lc-label">Dark</span></div>
+    <div class="lc brand"><div class="lockup"><svg><use href="#mw"/></svg><span class="lockup-text" style="color:var(--n0)">Use<em style="color:rgba(255,255,255,.7)">Sense</em></span></div><span class="lc-label">Brand</span></div>
+    <div class="lc grad"><div class="lockup"><svg><use href="#mw"/></svg><span class="lockup-text" style="color:var(--n0)">UseSense</span></div><span class="lc-label">Gradient</span></div>
+  </div>
+  <h3 class="sst">Symbol</h3>
+  <div class="g4" style="margin-bottom:48px">
+    <div class="ic" style="background:var(--n0);border:1px solid var(--n2)"><svg width="56" height="56"><use href="#m"/></svg><span class="ic-label" style="color:var(--n5)">Default</span></div>
+    <div class="ic" style="background:var(--n8)"><svg width="56" height="56"><use href="#mw"/></svg><span class="ic-label" style="color:rgba(255,255,255,.4)">Inverted</span></div>
+    <div class="ic" style="background:var(--b5)"><svg width="56" height="56"><use href="#mw"/></svg><span class="ic-label" style="color:rgba(255,255,255,.5)">On Blue</span></div>
+    <div class="ic" style="background:linear-gradient(135deg,var(--b5),var(--p5))"><svg width="56" height="56"><use href="#mw"/></svg><span class="ic-label" style="color:rgba(255,255,255,.5)">Gradient</span></div>
+  </div>
+
+  <h3 class="sst">Naming Rule</h3>
+  <p class="ssd">The brand name is always written as one word: <strong style="color:var(--n8)">UseSense</strong>. Capital U, capital S, no space, no hyphen. It must never break across lines. In HTML, apply <code style="font-family:'JetBrains Mono',monospace;font-size:.78rem;background:var(--n1);padding:3px 8px;border-radius:6px;color:var(--b5)">white-space: nowrap</code> to any element containing the wordmark.</p>
+  <div class="g3" style="margin-bottom:48px">
+    <div class="dd"><div class="dd-prev" style="font-family:'Outfit',sans-serif;font-size:1.3rem;font-weight:700;color:var(--n8)">UseSense</div><div class="dd-info" style="color:var(--g7);background:var(--g0);border-top:3px solid var(--g5)">Correct: one word, camelCase</div></div>
+    <div class="dd"><div class="dd-prev" style="font-family:'Outfit',sans-serif;font-size:1.3rem;font-weight:700;color:var(--n8)">Use Sense</div><div class="dd-info dont">No space between Use and Sense</div></div>
+    <div class="dd"><div class="dd-prev" style="font-family:'Outfit',sans-serif;font-size:1.3rem;font-weight:700;color:var(--n8)">use-sense</div><div class="dd-info dont">No hyphens, no lowercase</div></div>
+  </div>
+</section>
+<div class="hr"></div>
+<section class="ps" id="color">
+  <span class="sn">03 / Color</span>
+  <h2 class="st">Color System</h2>
+  <p class="sd">Three pillar colors, warm neutrals, and supporting semantic hues.</p>
+  <div class="g3" style="margin-bottom:56px">
+    <div class="ch" style="background:var(--b5);color:var(--n0)"><div class="ch-name">DeepSense Blue</div><div class="ch-hex">#4F7CFF</div><div class="ch-use">Channel integrity. Brand primary. CTAs.</div></div>
+    <div class="ch" style="background:var(--p5);color:var(--n0)"><div class="ch-name">LiveSense Purple</div><div class="ch-hex">#7C5CFC</div><div class="ch-use">Multimodal liveness. AI features.</div></div>
+    <div class="ch" style="background:var(--g5);color:var(--n8)"><div class="ch-name">MatchSense Green</div><div class="ch-hex">#00D4AA</div><div class="ch-use">Identity collision. Verified states.</div></div>
+  </div>
+  <div class="sg"><div class="sg-t">Blue</div><div class="ss"><div class="sc" style="background:#EBF0FF;color:#1E3493"><span>#EBF0FF</span></div><div class="sc" style="background:#D6E0FF;color:#1E3493"><span>#D6E0FF</span></div><div class="sc" style="background:#ADC1FF;color:#1E3493"><span>#ADC1FF</span></div><div class="sc" style="background:#85A3FF;color:#fff"><span>#85A3FF</span></div><div class="sc" style="background:#4F7CFF;color:#fff"><span>#4F7CFF</span></div><div class="sc" style="background:#3D63DB;color:#fff"><span>#3D63DB</span></div><div class="sc" style="background:#2C4AB7;color:#fff"><span>#2C4AB7</span></div><div class="sc" style="background:#1E3493;color:#fff"><span>#1E3493</span></div><div class="sc" style="background:#12206F;color:#fff"><span>#12206F</span></div></div></div>
+  <div class="sg"><div class="sg-t">Purple</div><div class="ss"><div class="sc" style="background:#F2EFFE;color:#37258A"><span>#F2EFFE</span></div><div class="sc" style="background:#E5DFFD;color:#37258A"><span>#E5DFFD</span></div><div class="sc" style="background:#CBBFFB;color:#37258A"><span>#CBBFFB</span></div><div class="sc" style="background:#967FF7;color:#fff"><span>#967FF7</span></div><div class="sc" style="background:#7C5CFC;color:#fff"><span>#7C5CFC</span></div><div class="sc" style="background:#6347D6;color:#fff"><span>#6347D6</span></div><div class="sc" style="background:#4C35B0;color:#fff"><span>#4C35B0</span></div><div class="sc" style="background:#37258A;color:#fff"><span>#37258A</span></div><div class="sc" style="background:#241864;color:#fff"><span>#241864</span></div></div></div>
+  <div class="sg"><div class="sg-t">Green</div><div class="ss"><div class="sc" style="background:#E6FBF5;color:#005544"><span>#E6FBF5</span></div><div class="sc" style="background:#CCF7EB;color:#005544"><span>#CCF7EB</span></div><div class="sc" style="background:#99EFD7;color:#005544"><span>#99EFD7</span></div><div class="sc" style="background:#33DFAF;color:#002B22"><span>#33DFAF</span></div><div class="sc" style="background:#00D4AA;color:#002B22"><span>#00D4AA</span></div><div class="sc" style="background:#00AA88;color:#fff"><span>#00AA88</span></div><div class="sc" style="background:#008066;color:#fff"><span>#008066</span></div><div class="sc" style="background:#005544;color:#fff"><span>#005544</span></div><div class="sc" style="background:#002B22;color:#fff"><span>#002B22</span></div></div></div>
+  <div class="sg"><div class="sg-t">Warm Neutrals</div><div class="ss"><div class="sc" style="background:#fff;color:#1C1A17;border:1px solid #E8E5DE"><span>#FFF</span></div><div class="sc" style="background:#FDFCFA;color:#1C1A17"><span>#FDFCFA</span></div><div class="sc" style="background:#F5F3EF;color:#1C1A17"><span>#F5F3EF</span></div><div class="sc" style="background:#E8E5DE;color:#1C1A17"><span>#E8E5DE</span></div><div class="sc" style="background:#D0CCBF;color:#1C1A17"><span>#D0CCBF</span></div><div class="sc" style="background:#9E9A92;color:#fff"><span>#9E9A92</span></div><div class="sc" style="background:#6B6760;color:#fff"><span>#6B6760</span></div><div class="sc" style="background:#3D3A35;color:#fff"><span>#3D3A35</span></div><div class="sc" style="background:#1C1A17;color:#fff"><span>#1C1A17</span></div></div></div>
+</section>
+<div class="hr"></div>
+
+<!-- ═══ 04 TYPOGRAPHY ═══ -->
+<section class="ps" id="type">
+  <span class="sn">04 / Typography</span>
+  <h2 class="st">Type System</h2>
+  <p class="sd">Outfit (display), DM Sans (body), JetBrains Mono (code).</p>
+  <div class="ts"><div style="font-family:'Outfit',sans-serif;font-size:3rem;font-weight:800;letter-spacing:-.05em;line-height:1.05;margin-bottom:24px">Prove a Human<br>Is Really There.</div><div class="tm"><span>Family: <b>Outfit</b></span><span>Weight: <b>800</b></span><span>Use: <b>Hero headlines</b></span></div></div>
+  <div class="ts"><div style="font-size:1rem;line-height:1.7;color:var(--n5);margin-bottom:24px;max-width:600px">UseSense verifies real human presence across devices using multimodal AI and sensor fusion.</div><div class="tm"><span>Family: <b>DM Sans</b></span><span>Weight: <b>400</b></span><span>Use: <b>Body text</b></span></div></div>
+  <div class="ts"><div style="font-family:'JetBrains Mono',monospace;font-size:.88rem;color:var(--b5);line-height:1.6;margin-bottom:24px">channelTrustScore: 0.94<br>livenessScore: 0.97</div><div class="tm"><span>Family: <b>JetBrains Mono</b></span><span>Use: <b>Code, scores, IDs</b></span></div></div>
+</section>
+<div class="hr"></div>
+
+<!-- ═══ 05 ICONOGRAPHY ═══ -->
+<section class="ps" id="icons">
+  <span class="sn">05 / Iconography</span>
+  <h2 class="st">Icon System</h2>
+  <p class="sd">Inline SVG icons using a consistent 24px viewBox, 2px stroke, round linecaps. Pillar icons are immutably locked to their colors. All icons render as actual SVG, no external font dependency.</p>
+
+  <h3 class="sst" style="margin-top:0">Icon Rules</h3>
+  <div style="margin-bottom:32px">
+    <div class="ico-rule"><div class="rn">1</div><p><strong>24px viewBox, 2px stroke, round caps.</strong> All icons share this construction for visual consistency.</p></div>
+    <div class="ico-rule"><div class="rn">2</div><p><strong>Default size 20px.</strong> 16px inline, 24px navigation, 32px feature cards.</p></div>
+    <div class="ico-rule"><div class="rn">3</div><p><strong>Color follows semantic role.</strong> Use CSS <code style="font-family:'JetBrains Mono',monospace;font-size:.75rem;background:var(--n1);padding:2px 6px;border-radius:4px;color:var(--b5)">currentColor</code> and set color on the parent element.</p></div>
+    <div class="ico-rule"><div class="rn">4</div><p><strong>Pillar icons are locked.</strong> DeepSense = shield-check (blue). LiveSense = scan (purple). MatchSense = users (green).</p></div>
+  </div>
+
+  <div class="ico-group">Pillar Icons (Locked)</div>
+  <div class="ico-grid" style="grid-template-columns:repeat(3,1fr);max-width:400px">
+    <div class="ico ico-locked" style="border-left-color:var(--b5);color:var(--b5)"><svg><use href="#i-shield"/></svg><div class="ico-name">shield-check</div><div class="ico-ctx">DeepSense</div></div>
+    <div class="ico ico-locked" style="border-left-color:var(--p5);color:var(--p5)"><svg><use href="#i-scan"/></svg><div class="ico-name">scan</div><div class="ico-ctx">LiveSense</div></div>
+    <div class="ico ico-locked" style="border-left-color:var(--g5);color:var(--g5)"><svg><use href="#i-users"/></svg><div class="ico-name">users</div><div class="ico-ctx">MatchSense</div></div>
+  </div>
+
+  <div class="ico-group">Navigation</div>
+  <div class="ico-grid">
+    <div class="ico" style="color:var(--n5)"><svg><use href="#i-grid"/></svg><div class="ico-name">grid</div><div class="ico-ctx">Dashboard</div></div>
+    <div class="ico" style="color:var(--n5)"><svg><use href="#i-pulse"/></svg><div class="ico-name">pulse</div><div class="ico-ctx">Live</div></div>
+    <div class="ico" style="color:var(--n5)"><svg><use href="#i-chart"/></svg><div class="ico-name">chart</div><div class="ico-ctx">Analytics</div></div>
+    <div class="ico" style="color:var(--n5)"><svg><use href="#i-gear"/></svg><div class="ico-name">gear</div><div class="ico-ctx">Settings</div></div>
+    <div class="ico" style="color:var(--n5)"><svg><use href="#i-search"/></svg><div class="ico-name">search</div><div class="ico-ctx">Search</div></div>
+    <div class="ico" style="color:var(--n5)"><svg><use href="#i-bell"/></svg><div class="ico-name">bell</div><div class="ico-ctx">Alerts</div></div>
+  </div>
+
+  <div class="ico-group">Status and Verdict</div>
+  <div class="ico-grid">
+    <div class="ico" style="color:var(--g6)"><svg><use href="#i-check"/></svg><div class="ico-name">check</div><div class="ico-ctx">Approved</div></div>
+    <div class="ico" style="color:var(--r5)"><svg><use href="#i-x"/></svg><div class="ico-name">x-circle</div><div class="ico-ctx">Rejected</div></div>
+    <div class="ico" style="color:var(--w5)"><svg><use href="#i-warn"/></svg><div class="ico-name">warning</div><div class="ico-ctx">Review</div></div>
+    <div class="ico" style="color:var(--n5)"><svg><use href="#i-clock"/></svg><div class="ico-name">clock</div><div class="ico-ctx">Pending</div></div>
+    <div class="ico" style="color:var(--w6)"><svg><use href="#i-eye"/></svg><div class="ico-name">eye</div><div class="ico-ctx">Manual review</div></div>
+  </div>
+
+  <div class="ico-group">Security and Verification</div>
+  <div class="ico-grid">
+    <div class="ico" style="color:var(--b5)"><svg><use href="#i-lock"/></svg><div class="ico-name">lock</div><div class="ico-ctx">Encrypted</div></div>
+    <div class="ico" style="color:var(--b5)"><svg><use href="#i-fp"/></svg><div class="ico-name">fingerprint</div><div class="ico-ctx">Biometric</div></div>
+    <div class="ico" style="color:var(--b5)"><svg><use href="#i-phone"/></svg><div class="ico-name">phone</div><div class="ico-ctx">Device</div></div>
+    <div class="ico" style="color:var(--b5)"><svg><use href="#i-key"/></svg><div class="ico-name">key</div><div class="ico-ctx">API key</div></div>
+    <div class="ico" style="color:var(--p5)"><svg><use href="#i-brain"/></svg><div class="ico-name">brain</div><div class="ico-ctx">AI/ML</div></div>
+    <div class="ico" style="color:var(--p5)"><svg><use href="#i-sparkle"/></svg><div class="ico-name">sparkle</div><div class="ico-ctx">SenSei</div></div>
+  </div>
+
+  <div class="ico-group">Fraud and Risk</div>
+  <div class="ico-grid">
+    <div class="ico" style="color:var(--r5)"><svg><use href="#i-skull"/></svg><div class="ico-name">skull</div><div class="ico-ctx">Fraud</div></div>
+    <div class="ico" style="color:var(--n5)"><svg><use href="#i-graph"/></svg><div class="ico-name">graph</div><div class="ico-ctx">Fraud rings</div></div>
+    <div class="ico" style="color:var(--r5)"><svg><use href="#i-warn"/></svg><div class="ico-name">alert</div><div class="ico-ctx">High risk</div></div>
+  </div>
+
+  <div class="ico-group">Actions</div>
+  <div class="ico-grid">
+    <div class="ico" style="color:var(--n5)"><svg><use href="#i-plus"/></svg><div class="ico-name">plus</div><div class="ico-ctx">Create</div></div>
+    <div class="ico" style="color:var(--n5)"><svg><use href="#i-download"/></svg><div class="ico-name">download</div><div class="ico-ctx">Export</div></div>
+    <div class="ico" style="color:var(--n5)"><svg><use href="#i-arrow-r"/></svg><div class="ico-name">arrow-right</div><div class="ico-ctx">Navigate</div></div>
+  </div>
+</section>
+<div class="hr"></div>
+
+<!-- ═══ 06 COMPONENTS ═══ -->
+<section class="ps" id="components">
+  <span class="sn">06 / Components</span>
+  <h2 class="st">Component Library</h2>
+  <p class="sd">Production-ready UI components built on the UseSense design tokens. Five button variants, semantic tags, form controls, data tables, metric cards, and callouts.</p>
+
+  <!-- BUTTONS -->
+  <h3 class="sst" style="margin-top:0">Buttons</h3>
+  <p class="ssd">Five variants tied to semantic roles. Height: 44px default, 36px small, 52px large. Border radius: 10px. Hover: scale(1.03). Active: scale(0.97).</p>
+  <div class="showcase">
+    <div class="showcase-label">Variants</div>
+    <div class="flex" style="gap:12px;align-items:center;margin-bottom:24px">
+      <button class="us-btn us-btn-brand"><svg width="16" height="16"><use href="#i-shield"/></svg> Brand</button>
+      <button class="us-btn us-btn-secondary">Secondary</button>
+      <button class="us-btn us-btn-ghost">Ghost</button>
+      <button class="us-btn us-btn-critical">Critical</button>
+      <button class="us-btn us-btn-brand" disabled>Disabled</button>
+    </div>
+    <div class="showcase-label">Sizes</div>
+    <div class="flex" style="gap:12px;align-items:center">
+      <button class="us-btn us-btn-brand us-btn-sm">Small</button>
+      <button class="us-btn us-btn-brand">Default</button>
+      <button class="us-btn us-btn-brand us-btn-lg">Large</button>
+    </div>
+  </div>
+  <div class="us-code"><span class="cm">/* CSS */</span><br>.us-btn { height: 44px; padding: 0 24px; border-radius: 10px; }<br>.us-btn:hover { transform: scale(1.03); }<br>.us-btn:active { transform: scale(0.97); }<br>.us-btn:focus-visible { box-shadow: <span class="str">0 0 0 3px rgba(79,124,255,.15)</span>; }<br><br><span class="cm">/* Variants */</span><br>.us-btn-brand { background: <span class="kw">#4F7CFF</span>; color: <span class="kw">#FFF</span>; }<br>.us-btn-secondary { background: <span class="kw">#FFF</span>; border: 1px solid <span class="kw">#E8E5DE</span>; }<br>.us-btn-critical { background: <span class="kw">#FF6B4A</span>; color: <span class="kw">#FFF</span>; }</div>
+
+  <!-- TAGS -->
+  <h3 class="sst">Tags and Badges</h3>
+  <p class="ssd">Each tag maps to one semantic color role. 8% opacity background, 20% border, full-color text and icon.</p>
+  <div class="showcase">
+    <div class="flex" style="gap:8px;flex-wrap:wrap">
+      <span class="us-tag us-tag-brand"><svg width="12" height="12"><use href="#i-shield"/></svg> DeepSense</span>
+      <span class="us-tag us-tag-magic"><svg width="12" height="12"><use href="#i-scan"/></svg> LiveSense</span>
+      <span class="us-tag us-tag-success"><svg width="12" height="12"><use href="#i-check"/></svg> Approved</span>
+      <span class="us-tag us-tag-critical"><svg width="12" height="12"><use href="#i-x"/></svg> Rejected</span>
+      <span class="us-tag us-tag-warning"><svg width="12" height="12"><use href="#i-warn"/></svg> Review</span>
+      <span class="us-tag us-tag-default"><svg width="12" height="12"><use href="#i-clock"/></svg> Pending</span>
+    </div>
+  </div>
+
+  <!-- FORMS -->
+  <h3 class="sst">Form Controls</h3>
+  <p class="ssd">Labels always above. Focus ring uses blue at 15% opacity. Monospace for API keys and session IDs.</p>
+  <div class="showcase" style="max-width:480px">
+    <div class="us-input-group"><label class="us-input-label">API Key</label><input class="us-input" type="text" placeholder="sk_live_..." style="font-family:'JetBrains Mono',monospace"></div>
+    <div class="us-input-group"><label class="us-input-label">Company Name</label><input class="us-input" type="text" placeholder="Enter company name"></div>
+    <div class="us-input-group"><label class="us-input-label">Session Volume</label><select class="us-input" style="appearance:none"><option>0 - 10,000</option><option>10,000 - 100,000</option><option>100,000 - 1M</option></select></div>
+  </div>
+
+  <!-- METRICS -->
+  <h3 class="sst">Metric Cards</h3>
+  <p class="ssd">For dashboards and overview screens. Value in Outfit 700, trend badge shows direction.</p>
+  <div class="g4" style="margin-bottom:24px">
+    <div class="us-metric"><div class="us-metric-label">Sessions Today</div><div class="us-metric-value">12,847</div><div class="us-metric-trend up">+18.3%</div></div>
+    <div class="us-metric"><div class="us-metric-label">Approval Rate</div><div class="us-metric-value">94.2%</div><div class="us-metric-trend up">+2.1%</div></div>
+    <div class="us-metric"><div class="us-metric-label">Avg Latency</div><div class="us-metric-value">1.2s</div><div class="us-metric-trend down">+0.3s</div></div>
+    <div class="us-metric"><div class="us-metric-label">Fraud Blocked</div><div class="us-metric-value">342</div><div class="us-metric-trend up">+41%</div></div>
+  </div>
+
+  <!-- DATA TABLE -->
+  <h3 class="sst">Data Tables</h3>
+  <p class="ssd">Session IDs in monospace. Pillar scores in their respective colors. Status dot + text for verdicts.</p>
+  <div class="us-table-wrap" style="margin-bottom:24px">
+    <table class="us-table"><thead><tr><th>Session ID</th><th>Tenant</th><th>Deep</th><th>Live</th><th>Match</th><th>Verdict</th><th>Time</th></tr></thead><tbody>
+      <tr><td style="font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--n8)">sess_4f7c_a92b</td><td>Kuda Bank</td><td><b style="color:var(--b5)">92</b></td><td><b style="color:var(--p5)">88</b></td><td><b style="color:var(--g6)">95</b></td><td><span class="us-status"><span class="us-dot" style="background:var(--g5)"></span>Approved</span></td><td style="color:var(--n4)">2m ago</td></tr>
+      <tr><td style="font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--n8)">sess_8b2d_f103</td><td>FairMoney</td><td><b style="color:var(--b5)">45</b></td><td><b style="color:var(--p5)">22</b></td><td><b style="color:var(--g6)">78</b></td><td><span class="us-status"><span class="us-dot" style="background:var(--r5)"></span>Rejected</span></td><td style="color:var(--n4)">5m ago</td></tr>
+      <tr><td style="font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--n8)">sess_c91e_2d47</td><td>Busha</td><td><b style="color:var(--b5)">87</b></td><td><b style="color:var(--p5)">71</b></td><td><b style="color:var(--g6)">64</b></td><td><span class="us-status"><span class="us-dot" style="background:var(--w5)"></span>Review</span></td><td style="color:var(--n4)">8m ago</td></tr>
+    </tbody></table>
+  </div>
+
+  <!-- CALLOUTS -->
+  <h3 class="sst">Callouts</h3>
+  <div class="us-callout us-callout-info"><strong>Info:</strong> Sessions where VPN was detected will be flagged for manual review.</div>
+  <div class="us-callout us-callout-success"><strong>Success:</strong> iBeta PAD Level 1 certification passed. All 150 attack species defeated.</div>
+  <div class="us-callout us-callout-critical"><strong>Critical:</strong> Channel trust score below threshold. Device attestation failed.</div>
+  <div class="us-callout us-callout-warning"><strong>Warning:</strong> Credit balance below 10%. New sessions will return 402 when exhausted.</div>
+</section>
+<div class="hr"></div>
+
+<!-- ═══ 07 MOTION ═══ -->
+<section class="ps" id="motion">
+  <span class="sn">07 / Motion</span>
+  <h2 class="st">Motion System</h2>
+  <p class="sd">Fast start, gentle deceleration. One easing function everywhere: <code style="font-family:'JetBrains Mono',monospace;font-size:.85rem;background:var(--n1);padding:3px 8px;border-radius:6px;color:var(--b5)">cubic-bezier(0.16, 1, 0.3, 1)</code></p>
+  <div class="g3" style="margin-bottom:32px">
+    <div class="card"><h4>Fast</h4><p style="font-family:'JetBrains Mono',monospace;font-size:.72rem;margin-top:4px;color:var(--b5)">150ms</p><p style="margin-top:8px">Hover, focus, toggle, color transitions.</p></div>
+    <div class="card"><h4>Normal</h4><p style="font-family:'JetBrains Mono',monospace;font-size:.72rem;margin-top:4px;color:var(--b5)">250ms</p><p style="margin-top:8px">Expand, collapse, modals, panels.</p></div>
+    <div class="card"><h4>Slow</h4><p style="font-family:'JetBrains Mono',monospace;font-size:.72rem;margin-top:4px;color:var(--b5)">400ms</p><p style="margin-top:8px">Page transitions, large movements.</p></div>
+  </div>
+  <div class="us-code"><span class="cm">/* CSS custom properties */</span><br>--us-ease: <span class="fn">cubic-bezier(0.16, 1, 0.3, 1)</span>;<br>--us-fast: <span class="str">150ms</span>;<br>--us-norm: <span class="str">250ms</span>;<br>--us-slow: <span class="str">400ms</span>;<br><br><span class="cm">/* Hover scale */</span><br>transition: transform <span class="str">var(--us-fast)</span> <span class="fn">var(--us-ease)</span>;<br>transform: scale(1.03);<br><br><span class="cm">/* Fade in */</span><br>@keyframes fadeIn {<br>  from { opacity: 0; transform: translateY(12px); }<br>  to { opacity: 1; transform: translateY(0); }<br>}<br>animation: fadeIn <span class="str">var(--us-norm)</span> <span class="fn">var(--us-ease)</span> forwards;</div>
+</section>
+<div class="hr"></div>
+
+<!-- ═══ 08 VOICE ═══ -->
+<section class="ps" id="voice">
+  <span class="sn">08 / Voice and Tone</span>
+  <h2 class="st">Brand Voice</h2>
+  <p class="sd">Precision of an engineer, clarity of a teacher. Never fear as a sales tool.</p>
+  <div class="g3" style="margin-bottom:48px">
+    <div class="card"><div class="card-icon" style="background:var(--b0);color:var(--b5)"><svg><use href="#i-shield"/></svg></div><h4>Honest Security</h4><p>Acknowledge limitations. Credible communication over empty guarantees.</p></div>
+    <div class="card"><div class="card-icon" style="background:var(--p0);color:var(--p5)"><svg><use href="#i-lock"/></svg></div><h4>Privacy First</h4><p>On-device preprocessing. Encrypted embeddings. Privacy is architecture, not policy.</p></div>
+    <div class="card"><div class="card-icon" style="background:var(--g0);color:var(--g6)"><svg><use href="#i-pulse"/></svg></div><h4>Infrastructure Mindset</h4><p>Simple pricing. No feature gating. The layer beneath the product.</p></div>
+  </div>
+</section>
+<div class="hr"></div>
+
+<!-- ═══ 09 PATTERNS ═══ -->
+<section class="ps" id="patterns">
+  <span class="sn">09 / Visual Language</span>
+  <h2 class="st">Visual Devices</h2>
+  <p class="sd">Restrained patterns derived from the verification architecture.</p>
+  <div class="g2" style="margin-bottom:48px">
+    <div class="pat dk"><svg class="bg" viewBox="0 0 500 360" fill="none" opacity=".4"><line x1="0" y1="40" x2="500" y2="40" stroke="rgba(79,124,255,.08)" stroke-width=".5"/><line x1="0" y1="80" x2="500" y2="80" stroke="rgba(79,124,255,.08)" stroke-width=".5"/><line x1="0" y1="120" x2="500" y2="120" stroke="rgba(79,124,255,.08)" stroke-width=".5"/><line x1="0" y1="160" x2="500" y2="160" stroke="rgba(79,124,255,.08)" stroke-width=".5"/><line x1="0" y1="200" x2="500" y2="200" stroke="rgba(79,124,255,.08)" stroke-width=".5"/><circle cx="250" cy="180" r="60" stroke="rgba(79,124,255,.12)" stroke-width="1"/><circle cx="250" cy="180" r="3" fill="#4F7CFF"/></svg><div><h4>Sentinel Grid</h4><p>Dark hero, security contexts.</p></div></div>
+    <div class="pat pp"><svg class="bg" viewBox="0 0 500 360" fill="none" opacity=".6"><circle cx="250" cy="180" r="40" stroke="#4F7CFF" stroke-width="1.5" opacity=".6"/><circle cx="250" cy="180" r="70" stroke="#7C5CFC" stroke-width="1" opacity=".4"/><circle cx="250" cy="180" r="100" stroke="#00D4AA" stroke-width=".8" opacity=".3"/><circle cx="250" cy="180" r="2" fill="white"/></svg><div><h4>Coherence Rings</h4><p>Three-pillar architecture.</p></div></div>
+    <div class="pat lt"><svg class="bg" viewBox="0 0 500 360" fill="none" opacity=".5"><circle cx="120" cy="100" r="3" fill="#4F7CFF" opacity=".3"/><circle cx="350" cy="120" r="4" fill="#00D4AA" opacity=".2"/><line x1="120" y1="100" x2="350" y2="120" stroke="#4F7CFF" stroke-width=".5" opacity=".1"/></svg><div><h4>Warm Canvas</h4><p>Light marketing, docs.</p></div></div>
+    <div class="pat tri"><div style="position:absolute;top:0;left:0;width:33%;height:100%;background:rgba(79,124,255,.04);border-right:1px solid rgba(79,124,255,.08)"></div><div style="position:absolute;top:0;left:33%;width:34%;height:100%;background:rgba(124,92,252,.03);border-right:1px solid rgba(124,92,252,.06)"></div><div style="position:absolute;top:0;left:67%;width:33%;height:100%;background:rgba(0,212,170,.03)"></div><div><h4>Tri-Pillar</h4><p>Product slides.</p></div></div>
+  </div>
+</section>
+<div class="hr"></div>
+
+<!-- ═══ 10 BRAND IN USE ═══ -->
+<section class="ps" id="usage">
+  <span class="sn">10 / Applications</span>
+  <h2 class="st">Brand in Use</h2>
+  <p class="sd">Real-world applications across digital and physical touchpoints.</p>
+  <div class="mock-grid">
+    <div class="mock-browser"><div class="mock-bar"><div class="mock-dot"></div><div class="mock-dot"></div><div class="mock-dot"></div><span class="mock-url">usesense.ai</span></div><div class="mock-body"><div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;text-transform:uppercase;letter-spacing:.15em;color:var(--b5);margin-bottom:16px">Human Presence Infrastructure</div><div class="mock-h">Prove a Human<br>Is <em>Really</em> There.</div><div style="font-size:.85rem;color:rgba(255,255,255,.4);line-height:1.6;margin-bottom:24px">Multimodal AI and sensor fusion.</div><div style="display:flex;gap:12px"><button class="us-btn us-btn-brand">Request a Demo</button><button class="us-btn" style="background:rgba(255,255,255,.08);color:var(--n0)">Learn More</button></div></div></div>
+    <div class="mock-mobile"><div class="mock-screen"><div style="font-family:'JetBrains Mono',monospace;font-size:.5rem;text-transform:uppercase;letter-spacing:.15em;color:var(--b5);margin-bottom:12px">Verification</div><div style="font-family:'Outfit',sans-serif;font-size:1.4rem;font-weight:800;letter-spacing:-.03em;line-height:1.1;margin-bottom:8px;color:var(--n0)">Session<br><span style="color:var(--g5)">Verified</span></div><div style="display:flex;gap:8px;margin-top:20px"><div style="flex:1;background:rgba(79,124,255,.15);border-radius:8px;padding:12px 10px;text-align:center"><div style="font-family:'JetBrains Mono',monospace;font-size:.5rem;color:var(--b5);margin-bottom:4px">DEEP</div><div style="font-family:'Outfit',sans-serif;font-size:.9rem;font-weight:700;color:var(--n0)">0.94</div></div><div style="flex:1;background:rgba(124,92,252,.15);border-radius:8px;padding:12px 10px;text-align:center"><div style="font-family:'JetBrains Mono',monospace;font-size:.5rem;color:var(--p5);margin-bottom:4px">LIVE</div><div style="font-family:'Outfit',sans-serif;font-size:.9rem;font-weight:700;color:var(--n0)">0.97</div></div><div style="flex:1;background:rgba(0,212,170,.15);border-radius:8px;padding:12px 10px;text-align:center"><div style="font-family:'JetBrains Mono',monospace;font-size:.5rem;color:var(--g5);margin-bottom:4px">MATCH</div><div style="font-family:'Outfit',sans-serif;font-size:.9rem;font-weight:700;color:var(--n0)">0.02</div></div></div></div></div>
+  </div>
+  <h3 class="sst">Business Cards</h3>
+  <div class="g2" style="margin-bottom:48px">
+    <div class="biz front"><div><div class="biz-logo"><svg width="24" height="24"><use href="#mw"/></svg><span>Use<em>Sense</em></span></div></div><div style="font-size:.72rem;opacity:.4">Human presence infrastructure for the AI era.</div></div>
+    <div class="biz back"><div><div style="font-family:'Outfit',sans-serif;font-weight:700;font-size:1rem;margin-bottom:2px">Ope Adeoye</div><div style="font-size:.78rem;color:var(--n4);margin-bottom:16px">Founder and CEO</div></div><div style="font-size:.72rem;color:var(--n5);line-height:1.8"><a href="#" style="color:var(--b5);text-decoration:none">usesense.ai</a><br>Lagos, Nigeria</div></div>
+  </div>
+  <h3 class="sst">Social Media</h3>
+  <div class="g3">
+    <div class="soc" style="background:linear-gradient(160deg,var(--b7),var(--b5))"><h4>The internet can't tell<br>humans from AI.</h4><p>usesense.ai</p></div>
+    <div class="soc" style="background:linear-gradient(160deg,var(--p7),var(--p5))"><h4>Three pillars.<br>One verdict.</h4><p>Human presence verification</p></div>
+    <div class="soc" style="background:linear-gradient(160deg,var(--n8),var(--n6))"><h4>Prove a human<br>is really there.</h4><p>usesense.ai</p></div>
+  </div>
+</section>
+
+<!-- ═══ FOOTER ═══ -->
+<footer class="foot">
+  <div style="margin-bottom:32px"><svg width="56" height="56"><use href="#mc"/></svg></div>
+  <h2 style="white-space:nowrap">Use<span style="color:var(--b5)">Sense</span></h2>
+  <p>Human presence infrastructure for the AI era.</p>
+  <div class="foot-meta">&copy; 2026 UseSense Technologies. All rights reserved. Confidential.</div>
+</footer>
+
+</body>
+</html>
