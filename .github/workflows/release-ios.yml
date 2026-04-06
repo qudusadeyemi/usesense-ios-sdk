@@ -29,29 +29,53 @@ jobs:
         run: |
           xcodebuild build \
             -scheme UseSenseSDK \
+            -configuration Release \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath build/device \
+            -derivedDataPath build/DerivedData \
             -skipPackagePluginValidation \
             BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO
 
       - name: Build for iOS Simulator
         run: |
           xcodebuild build \
             -scheme UseSenseSDK \
+            -configuration Release \
             -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build/simulator \
+            -derivedDataPath build/DerivedData \
             -skipPackagePluginValidation \
             BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO
 
-      - name: Create XCFramework
+      - name: Locate frameworks and create XCFramework
         run: |
-          DEVICE_FW=$(find build/device -name 'UseSenseSDK.framework' -path '*/Release-iphoneos/*' | head -1)
-          SIM_FW=$(find build/simulator -name 'UseSenseSDK.framework' -path '*/Release-iphonesimulator/*' | head -1)
+          DEVICE_FW="build/DerivedData/Build/Products/Release-iphoneos/UseSenseSDK.framework"
+          SIM_FW="build/DerivedData/Build/Products/Release-iphonesimulator/UseSenseSDK.framework"
 
-          echo "Device framework: $DEVICE_FW"
-          echo "Simulator framework: $SIM_FW"
+          echo "Looking for frameworks..."
+          echo "Device: $DEVICE_FW (exists: $(test -d "$DEVICE_FW" && echo yes || echo no))"
+          echo "Simulator: $SIM_FW (exists: $(test -d "$SIM_FW" && echo yes || echo no))"
+
+          # Fallback: search if not at expected path
+          if [ ! -d "$DEVICE_FW" ]; then
+            echo "Searching for device framework..."
+            DEVICE_FW=$(find build -name 'UseSenseSDK.framework' -path '*Release-iphoneos*' -type d | head -1)
+            echo "Found: $DEVICE_FW"
+          fi
+          if [ ! -d "$SIM_FW" ]; then
+            echo "Searching for simulator framework..."
+            SIM_FW=$(find build -name 'UseSenseSDK.framework' -path '*Release-iphonesimulator*' -type d | head -1)
+            echo "Found: $SIM_FW"
+          fi
+
+          if [ -z "$DEVICE_FW" ] || [ -z "$SIM_FW" ]; then
+            echo "ERROR: Could not find frameworks. Directory listing:"
+            find build -name '*.framework' -type d 2>/dev/null || echo "No frameworks found"
+            find build/DerivedData/Build/Products -type d -maxdepth 3 2>/dev/null || echo "No products found"
+            exit 1
+          fi
 
           xcodebuild -create-xcframework \
             -framework "$DEVICE_FW" \
