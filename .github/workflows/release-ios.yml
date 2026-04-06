@@ -25,33 +25,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Archive for iOS device
+      - name: Build for iOS device
         run: |
-          xcodebuild archive \
+          xcodebuild build \
             -scheme UseSenseSDK \
             -destination 'generic/platform=iOS' \
-            -archivePath build/UseSenseSDK-ios.xcarchive \
+            -derivedDataPath build/device \
             -skipPackagePluginValidation \
-            SKIP_INSTALL=NO \
             BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Archive for iOS Simulator
+      - name: Build for iOS Simulator
         run: |
-          xcodebuild archive \
+          xcodebuild build \
             -scheme UseSenseSDK \
             -destination 'generic/platform=iOS Simulator' \
-            -archivePath build/UseSenseSDK-ios-simulator.xcarchive \
+            -derivedDataPath build/simulator \
             -skipPackagePluginValidation \
-            SKIP_INSTALL=NO \
             BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
             CODE_SIGNING_ALLOWED=NO
 
       - name: Create XCFramework
         run: |
+          DEVICE_FW=$(find build/device -name 'UseSenseSDK.framework' -path '*/Release-iphoneos/*' | head -1)
+          SIM_FW=$(find build/simulator -name 'UseSenseSDK.framework' -path '*/Release-iphonesimulator/*' | head -1)
+
+          echo "Device framework: $DEVICE_FW"
+          echo "Simulator framework: $SIM_FW"
+
           xcodebuild -create-xcframework \
-            -framework build/UseSenseSDK-ios.xcarchive/Products/Library/Frameworks/UseSenseSDK.framework \
-            -framework build/UseSenseSDK-ios-simulator.xcarchive/Products/Library/Frameworks/UseSenseSDK.framework \
+            -framework "$DEVICE_FW" \
+            -framework "$SIM_FW" \
             -output build/UseSenseSDK.xcframework
 
       - name: Zip XCFramework
