@@ -1,7 +1,6 @@
-#if canImport(UIKit) && canImport(Accelerate)
+#if canImport(AVFoundation) && canImport(UIKit)
 import UIKit
 import Foundation
-import Accelerate
 
 /// Collects screen detection signals for the channel_integrity.screen_detection metadata.
 /// These signals help detect screen replay attacks by analyzing image characteristics
