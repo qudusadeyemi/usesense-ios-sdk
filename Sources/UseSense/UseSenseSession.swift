@@ -59,6 +59,7 @@ public final class UseSenseSession: @unchecked Sendable {
     private var latestQualityReport: ImageQualityReport?
     private var isCapturingFrames = false
     private var serverMaxFrames: Int?
+    private var stepUpResult: StepUpResult?
 
     // MARK: - Init
 
@@ -67,7 +68,8 @@ public final class UseSenseSession: @unchecked Sendable {
         sessionType: SessionType,
         identityId: String? = nil,
         externalUserId: String? = nil,
-        metadata: [String: AnyCodableValue]? = nil
+        metadata: [String: AnyCodableValue]? = nil,
+        clientToken: String? = nil
     ) {
         self.init(
             config: config,
@@ -75,6 +77,7 @@ public final class UseSenseSession: @unchecked Sendable {
             identityId: identityId,
             externalUserId: externalUserId,
             metadata: metadata,
+            clientToken: clientToken,
             eventEmitter: EventEmitter()
         )
     }
@@ -402,7 +405,7 @@ public final class UseSenseSession: @unchecked Sendable {
 
         // Camera stays active throughout
         let orchestrator = StepUpOrchestrator()
-        let _ = await orchestrator.run(
+        stepUpResult = await orchestrator.run(
             suspicionScore: engine.snapshot().score,
             config: config,
             captureFrame: { [weak self] in
@@ -417,6 +420,8 @@ public final class UseSenseSession: @unchecked Sendable {
                 return (left: result.leftEAR, right: result.rightEAR)
             }
         )
+
+        eventEmitter.emit(.stepUpCompleted, data: ["passed": String(stepUpResult?.passed ?? false)])
 
         // Capture 500ms additional frames post-step-up
         try? await Task.sleep(nanoseconds: 500_000_000)
@@ -545,6 +550,56 @@ public final class UseSenseSession: @unchecked Sendable {
             ]
         }
 
+        // Inline step-up data (only when triggered, per spec)
+        var inlineStepUpData: [String: Any]?
+        if let result = stepUpResult {
+            var isuData: [String: Any] = [
+                "challengesRun": result.challengesRun,
+                "triggerSuspicionScore": result.triggerSuspicionScore,
+                "passed": result.passed,
+                "hardReject": result.hardReject,
+                "timestamp": result.timestamp
+            ]
+            if let flash = result.flashReflection {
+                isuData["flashReflection"] = [
+                    "type": "flash_reflection",
+                    "flashes": flash.flashes.map { f -> [String: Any] in
+                        [
+                            "color": f.color,
+                            "durationMs": f.durationMs,
+                            "baselineRgb": [f.baselineRgb.r, f.baselineRgb.g, f.baselineRgb.b],
+                            "flashRgb": [f.flashRgb.r, f.flashRgb.g, f.flashRgb.b],
+                            "colorDelta": f.colorDelta,
+                            "reflectionDetected": f.reflectionDetected
+                        ]
+                    },
+                    "passed": flash.passed,
+                    "confidence": flash.confidence,
+                    "overallColorDelta": flash.overallColorDelta
+                ] as [String: Any]
+            }
+            if let rmas = result.rmas {
+                isuData["rmas"] = [
+                    "type": "rmas",
+                    "actions": rmas.actions.map { a -> [String: Any] in
+                        var action: [String: Any] = [
+                            "actionType": a.actionType,
+                            "label": a.label,
+                            "windowMs": a.windowMs,
+                            "completed": a.completed
+                        ]
+                        if let rt = a.reactionTimeMs { action["reactionTimeMs"] = rt }
+                        return action
+                    },
+                    "passed": rmas.passed,
+                    "confidence": rmas.confidence,
+                    "actionsCompleted": rmas.actionsCompleted,
+                    "actionsTotal": rmas.actionsTotal
+                ] as [String: Any]
+            }
+            inlineStepUpData = isuData
+        }
+
         // Build capture config
         let captureConfig: [String: Any] = [
             "captureDurationMs": session.upload.captureDurationMs,
@@ -566,8 +621,10 @@ public final class UseSenseSession: @unchecked Sendable {
         let startTime = captureStartTime ?? Date()
         let endTime = captureEndTime ?? Date()
         let avgInterval: Int
-        if timestamps.count > 1 {
-            let totalInterval = timestamps.last! - timestamps.first!
+        if timestamps.count > 1,
+           let lastTime = timestamps.last,
+           let firstTime = timestamps.first {
+            let totalInterval = lastTime - firstTime
             avgInterval = Int((totalInterval / Double(timestamps.count - 1)) * 1000)
         } else {
             avgInterval = 0
@@ -593,7 +650,8 @@ public final class UseSenseSession: @unchecked Sendable {
                 screenDetection: screenDetection,
                 faceMeshSignals: faceMeshSignals,
                 verificationPackage: verificationPackage,
-                suspicion: suspicionData
+                suspicion: suspicionData,
+                inlineStepUp: inlineStepUpData
             )
         } catch {
             handleError(UseSenseError(code: .unknownError, message: "Failed to build metadata."))

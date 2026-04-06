@@ -1,3 +1,4 @@
+#if canImport(AVFoundation) && canImport(UIKit)
 import Foundation
 
 /// Per-frame 3D Morphable Model fit result.
@@ -175,3 +176,5 @@ final class OnDevice3DMMFitter: @unchecked Sendable {
         return sqrt(dx * dx + dy * dy)
     }
 }
+
+#endif

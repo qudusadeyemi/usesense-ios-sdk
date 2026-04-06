@@ -361,7 +361,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
     }
 }
 
-struct SessionStatusResponse: Decodable {
+struct SessionStatusResponse: Decodable, Sendable {
     let sessionId: String
     let status: String
     let createdAt: String?
@@ -378,4 +378,4 @@ struct SessionStatusResponse: Decodable {
 }
 
 /// Used for endpoints that return minimal/empty JSON bodies (e.g. /opened).
-struct EmptyResponse: Decodable {}
+struct EmptyResponse: Decodable, Sendable {}

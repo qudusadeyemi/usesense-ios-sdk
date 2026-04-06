@@ -122,20 +122,30 @@ final class RMASChallenge {
             return ear.left < 0.2 || ear.right < 0.2
 
         case "smile":
-            // Mouth width increases > 15% from baseline
-            // Approximated via pose change (in production, use mouth landmarks)
-            return false
+            // Mouth width increases > 15% from baseline.
+            // Approximated: smiling narrows the eyes — detect EAR drop from baseline.
+            guard let ear = currentEAR, let baseEar = baselineEAR else { return false }
+            let avgCurrent = (ear.left + ear.right) / 2.0
+            let avgBaseline = (baseEar.left + baseEar.right) / 2.0
+            guard avgBaseline > 0.1 else { return false }
+            let earDrop = (avgBaseline - avgCurrent) / avgBaseline
+            return earDrop > 0.15
 
         case "raise_eyebrows":
-            // Brow landmarks move up > 0.008 normalized units
-            // Approximated via pitch change
-            guard let current = currentPose, let baseline = baselinePose else { return false }
-            return abs(current.pitch - baseline.pitch) > 3.0
+            // Brow landmarks move up > 0.008 normalized units.
+            // Approximated: raising eyebrows slightly changes pitch and widens eyes (EAR increases).
+            guard let ear = currentEAR, let baseEar = baselineEAR else { return false }
+            let avgCurrent = (ear.left + ear.right) / 2.0
+            let avgBaseline = (baseEar.left + baseEar.right) / 2.0
+            guard avgBaseline > 0.1 else { return false }
+            let earIncrease = (avgCurrent - avgBaseline) / avgBaseline
+            return earIncrease > 0.10
 
         case "open_mouth":
-            // Upper-to-lower lip distance > 0.025 normalized units
-            // Approximated via pose change (in production, use lip landmarks)
-            return false
+            // Upper-to-lower lip distance > 0.025 normalized units.
+            // Approximated: opening mouth causes slight downward pitch shift.
+            guard let current = currentPose, let baseline = baselinePose else { return false }
+            return (current.pitch - baseline.pitch) > 4.0
 
         case "turn_left":
             // Head yaw exceeds 12 degrees in left direction

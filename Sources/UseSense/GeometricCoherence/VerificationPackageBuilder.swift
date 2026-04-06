@@ -1,3 +1,4 @@
+#if canImport(AVFoundation) && canImport(UIKit)
 import Foundation
 
 /// Assembles the complete Geometric Coherence verification package for upload.
@@ -117,3 +118,5 @@ final class VerificationPackageBuilder: @unchecked Sendable {
         return max(0, min(100, 100.0 - avgDistance * 500.0))
     }
 }
+
+#endif

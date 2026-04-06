@@ -145,11 +145,14 @@ final class StepUpOrchestrator: @unchecked Sendable {
                 try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
                 return nil
             }
-            // Return first completed result
-            for await result in group {
-                group.cancelAll()
-                return result
+            // Return first non-nil completed result, or nil on timeout
+            while let result = await group.next() {
+                if result != nil {
+                    group.cancelAll()
+                    return result
+                }
             }
+            group.cancelAll()
             return nil
         }
     }

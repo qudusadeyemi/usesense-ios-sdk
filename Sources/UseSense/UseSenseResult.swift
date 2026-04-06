@@ -41,7 +41,7 @@ public struct RedactedDecisionObject: Codable, Sendable {
 }
 
 /// Internal full decision from server. NEVER exposed to host app.
-struct FinalDecisionObject: Decodable {
+struct FinalDecisionObject: Decodable, Sendable {
     let sessionId: String
     let organizationId: String?
     let sessionType: String?
@@ -100,7 +100,7 @@ struct VerdictMetadata: Codable, Sendable { let source: String; let logic: Strin
 
 // MARK: - v4.1 Decision Sub-Objects
 
-struct GCDecisionResult: Decodable {
+struct GCDecisionResult: Decodable, Sendable {
     let score: Int?
     let subSignals: GCSubSignals?
     let flags: GCFlags?
@@ -112,7 +112,7 @@ struct GCDecisionResult: Decodable {
     }
 }
 
-struct GCSubSignals: Decodable {
+struct GCSubSignals: Decodable, Sendable {
     let depthPlausibility: Double?
     let crossFrameConsistency: Double?
     let dualPathComparison: Double?
@@ -126,7 +126,7 @@ struct GCSubSignals: Decodable {
     }
 }
 
-struct GCFlags: Decodable {
+struct GCFlags: Decodable, Sendable {
     let hardRejection: Bool?
     let hardRejectionReason: String?
     let frameIntegrityFailure: Bool?
@@ -140,7 +140,7 @@ struct GCFlags: Decodable {
     }
 }
 
-struct SenSeiStepUpResult: Decodable {
+struct SenSeiStepUpResult: Decodable, Sendable {
     let stepUpTriggered: Bool?
     let passiveConfidence: String?
     let hardReject: Bool?
@@ -156,7 +156,7 @@ struct SenSeiStepUpResult: Decodable {
     }
 }
 
-struct InlineStepUpResult: Decodable {
+struct InlineStepUpResult: Decodable, Sendable {
     let triggered: Bool?
     let suspicionScore: Double?
     let passed: Bool?
@@ -174,7 +174,7 @@ struct InlineStepUpResult: Decodable {
     }
 }
 
-struct ChallengeValidationResult: Decodable {
+struct ChallengeValidationResult: Decodable, Sendable {
     let challengeType: String?
     let verdict: String?
     let overallScore: Double?
@@ -182,7 +182,7 @@ struct ChallengeValidationResult: Decodable {
     let stepsTotal: Int?
 }
 
-struct DedupeAnalysisResult: Decodable {
+struct DedupeAnalysisResult: Decodable, Sendable {
     let duplicateSearchPerformed: Bool?
     let highestDuplicateSimilarity: Double?
     let crossIdentityRisk: Double?
@@ -198,7 +198,7 @@ struct DedupeAnalysisResult: Decodable {
     }
 }
 
-struct ReferenceMatchResult: Decodable {
+struct ReferenceMatchResult: Decodable, Sendable {
     let similarity: Double?
     let threshold: Int?
     let matched: Bool?
