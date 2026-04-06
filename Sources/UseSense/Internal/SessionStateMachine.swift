@@ -12,6 +12,7 @@ public enum CapturePhase: String, CaseIterable, Sendable {
     case baseline        = "baseline"
     case countdown       = "countdown"
     case challenge       = "challenge"
+    case inlineStepUp    = "inline-step-up"
     case uploading       = "uploading"
     case completing      = "completing"
     case done            = "done"
@@ -27,6 +28,7 @@ enum SessionState: Sendable {
     case baseline(remaining: TimeInterval)
     case countdown(number: Int)
     case challenge(spec: ChallengeSpecWrapper)
+    case inlineStepUp(phase: String)
     case uploading(progress: Double)
     case completing
     case done(decision: RedactedDecisionObject)
@@ -40,6 +42,7 @@ struct SessionData: Sendable {
     let expiresAt: Date
     let policy: SessionPolicy
     let upload: UploadConfig
+    let geometricCoherence: GeometricCoherenceConfig?
 
     var isExpired: Bool { Date() >= expiresAt }
 }
@@ -56,5 +59,6 @@ extension SessionData {
 
         self.policy = response.policy
         self.upload = response.upload
+        self.geometricCoherence = response.geometricCoherence
     }
 }

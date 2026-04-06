@@ -18,6 +18,8 @@ public enum UseSenseEventType: String, CaseIterable, Sendable {
     case completeStarted = "complete_started"
     case decisionReceived = "decision_received"
     case imageQualityCheck = "image_quality_check"
+    case stepUpTriggered = "step_up_triggered"
+    case stepUpCompleted = "step_up_completed"
     case error = "error"
 }
 

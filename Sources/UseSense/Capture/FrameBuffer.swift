@@ -1,17 +1,18 @@
-#if canImport(AVFoundation) && canImport(UIKit)
+#if canImport(AVFoundation) && canImport(UIKit) && canImport(CryptoKit)
 import AVFoundation
 import UIKit
 import Foundation
+import CryptoKit
 
 final class FrameBuffer: @unchecked Sendable {
-    private var frames: [(data: Data, timestamp: TimeInterval)] = []
+    private var frames: [(data: Data, timestamp: TimeInterval, hash: String, luminance: Double)] = []
     private let lock = NSLock()
     private var maxFrames: Int
     private var targetFps: Int
     private var lastCaptureTime: CFAbsoluteTime = 0
     private var captureInterval: TimeInterval
 
-    init(maxFrames: Int = 40, targetFps: Int = 15) {
+    init(maxFrames: Int = 30, targetFps: Int = 3) {
         self.maxFrames = maxFrames
         self.targetFps = targetFps
         self.captureInterval = 1.0 / Double(targetFps)
@@ -46,11 +47,18 @@ final class FrameBuffer: @unchecked Sendable {
     }
 
     func addFrame(_ pixelBuffer: CVPixelBuffer, timestamp: TimeInterval) {
+        // Compute luminance BEFORE JPEG encoding (lightweight ~0.1ms)
+        let luminance = computeLuminance(pixelBuffer)
+
         guard let jpegData = jpegEncode(pixelBuffer) else { return }
+
+        // SHA-256 hash of raw JPEG bytes (REQUIRED per spec)
+        let hash = SHA256.hash(data: jpegData).map { String(format: "%02x", $0) }.joined()
+
         lock.lock()
         defer { lock.unlock() }
         guard frames.count < maxFrames else { return }
-        frames.append((data: jpegData, timestamp: timestamp))
+        frames.append((data: jpegData, timestamp: timestamp, hash: hash, luminance: luminance))
     }
 
     func getFrames() -> [Data] {
@@ -65,6 +73,20 @@ final class FrameBuffer: @unchecked Sendable {
         return frames.map { $0.timestamp }
     }
 
+    /// Get SHA-256 hex hashes of all captured frames.
+    func getFrameHashes() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return frames.map { $0.hash }
+    }
+
+    /// Get per-frame luminance values for Suspicion Engine input.
+    func getFrameLuminances() -> [Double] {
+        lock.lock()
+        defer { lock.unlock() }
+        return frames.map { $0.luminance }
+    }
+
     func reset() {
         lock.lock()
         defer { lock.unlock() }
@@ -72,12 +94,54 @@ final class FrameBuffer: @unchecked Sendable {
         lastCaptureTime = 0
     }
 
+    // MARK: - JPEG Encoding
+
     private func jpegEncode(_ pixelBuffer: CVPixelBuffer, quality: CGFloat = 0.80) -> Data? {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let context = CIContext()
         guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return nil }
         let uiImage = UIImage(cgImage: cgImage)
         return uiImage.jpegData(compressionQuality: quality)
+    }
+
+    // MARK: - Luminance Computation
+
+    /// Compute average luminance for a frame.
+    /// Downscale to 64x48, compute: avg(0.299*R + 0.587*G + 0.114*B)
+    /// Used by Suspicion Engine for screen replay detection.
+    private func computeLuminance(_ pixelBuffer: CVPixelBuffer) -> Double {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return 128.0 }
+
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
+
+        // Downsample to 64x48 for fast computation
+        let targetW = 64
+        let targetH = 48
+        let scaleX = Double(width) / Double(targetW)
+        let scaleY = Double(height) / Double(targetH)
+
+        var totalLuminance: Double = 0
+        let totalPixels = targetW * targetH
+
+        for y in 0..<targetH {
+            let srcY = min(Int(Double(y) * scaleY), height - 1)
+            for x in 0..<targetW {
+                let srcX = min(Int(Double(x) * scaleX), width - 1)
+                let offset = srcY * bytesPerRow + srcX * 4
+                let b = Double(ptr[offset])
+                let g = Double(ptr[offset + 1])
+                let r = Double(ptr[offset + 2])
+                totalLuminance += 0.299 * r + 0.587 * g + 0.114 * b
+            }
+        }
+
+        return totalLuminance / Double(totalPixels)
     }
 }
 #endif

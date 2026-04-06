@@ -3,43 +3,85 @@ import XCTest
 
 final class UseSenseConfigTests: XCTestCase {
     func testDefaultConfig() {
-        let config = UseSenseConfig(apiKey: "sk_test_123")
+        let config = UseSenseConfig(apiKey: "sk_sandbox_123")
         XCTAssertEqual(config.apiEndpoint, UseSenseConfig.defaultEndpoint)
-        XCTAssertEqual(config.apiKey, "sk_test_123")
-        XCTAssertEqual(config.gatewayKey, UseSenseConfig.defaultGatewayKey)
+        XCTAssertEqual(config.apiEndpoint, "https://api.usesense.ai/v1")
+        XCTAssertEqual(config.apiKey, "sk_sandbox_123")
         XCTAssertEqual(config.environment, .sandbox)
     }
 
     func testProductionDetection() {
-        let config = UseSenseConfig(apiKey: "pk_live_abc")
+        let config = UseSenseConfig(apiKey: "pk_prod_abc")
         XCTAssertEqual(config.environment, .production)
     }
 
-    func testDkPrefixSandbox() {
-        let config = UseSenseConfig(apiKey: "dk_test_key")
+    func testSecretKeyProductionDetection() {
+        let config = UseSenseConfig(apiKey: "sk_prod_abc")
+        XCTAssertEqual(config.environment, .production)
+    }
+
+    func testSandboxDetection() {
+        let config = UseSenseConfig(apiKey: "sk_sandbox_key")
         XCTAssertEqual(config.environment, .sandbox)
+    }
+
+    func testPublishableSandboxDetection() {
+        let config = UseSenseConfig(apiKey: "pk_sandbox_key")
+        XCTAssertEqual(config.environment, .sandbox)
+    }
+
+    func testDkPrefixProductionDetection() {
+        let config = UseSenseConfig(apiKey: "dk_prod_key")
+        XCTAssertEqual(config.environment, .production)
+    }
+
+    func testDkPrefixSandboxDetection() {
+        let config = UseSenseConfig(apiKey: "dk_sandbox_key")
+        XCTAssertEqual(config.environment, .sandbox)
+    }
+
+    func testUnknownKeyDefaultsToProduction() {
+        let config = UseSenseConfig(apiKey: "unknown_key")
+        XCTAssertEqual(config.environment, .production)
     }
 
     func testAutoEnvironmentResolution() {
         let auto = Environment.auto
-        XCTAssertEqual(auto.resolved(apiKey: "pk_live"), "production")
-        XCTAssertEqual(auto.resolved(apiKey: "sk_test"), "sandbox")
-        XCTAssertEqual(auto.resolved(apiKey: "dk_dev"), "sandbox")
+        XCTAssertEqual(auto.resolved(apiKey: "pk_prod_live"), "production")
+        XCTAssertEqual(auto.resolved(apiKey: "sk_sandbox_test"), "sandbox")
+        XCTAssertEqual(auto.resolved(apiKey: "dk_prod_dev"), "production")
     }
 
     func testCustomConfig() {
         let config = UseSenseConfig(
             apiEndpoint: "https://custom.api.com",
-            apiKey: "key",
-            gatewayKey: "gw_key",
+            apiKey: "sk_prod_key",
             environment: .production,
-            options: SDKOptions(audioEnabled: .always, targetFps: 10, maxFrames: 20)
+            options: SDKOptions(audioEnabled: .always, targetFps: 5, maxFrames: 25)
         )
         XCTAssertEqual(config.apiEndpoint, "https://custom.api.com")
-        XCTAssertEqual(config.gatewayKey, "gw_key")
         XCTAssertEqual(config.environment, .production)
-        XCTAssertEqual(config.options?.targetFps, 10)
-        XCTAssertEqual(config.options?.maxFrames, 20)
+        XCTAssertEqual(config.options?.targetFps, 5)
+        XCTAssertEqual(config.options?.maxFrames, 25)
+    }
+
+    func testDefaultSDKOptions() {
+        let options = SDKOptions()
+        XCTAssertEqual(options.captureDurationMs, 8000)
+        XCTAssertEqual(options.targetFps, 3)
+        XCTAssertEqual(options.maxFrames, 30)
+        XCTAssertEqual(options.maxUploadSizeMb, 10)
+        XCTAssertEqual(options.audioEnabled, .riskBased)
+    }
+
+    func testDefaultBrandingConfig() {
+        let branding = BrandingConfig()
+        XCTAssertEqual(branding.primaryColor, "#4F7CFF")
+        XCTAssertEqual(branding.buttonRadius, 10)
+    }
+
+    func testStagingEndpoint() {
+        XCTAssertEqual(UseSenseConfig.stagingEndpoint, "https://staging.api.usesense.ai/v1")
     }
 }
 
@@ -66,11 +108,26 @@ final class UseSenseErrorTests: XCTestCase {
         let e401Token = UseSenseError.fromHTTP(statusCode: 401, serverCode: "invalid_token", serverMessage: nil)
         XCTAssertEqual(e401Token.code, .invalidToken)
 
+        let e401Nonce = UseSenseError.fromHTTP(statusCode: 401, serverCode: "nonce_mismatch", serverMessage: nil)
+        XCTAssertEqual(e401Nonce.code, .nonceMismatch)
+
         let e401Default = UseSenseError.fromHTTP(statusCode: 401, serverCode: nil, serverMessage: nil)
         XCTAssertEqual(e401Default.code, .unauthorized)
 
+        let e402 = UseSenseError.fromHTTP(statusCode: 402, serverCode: nil, serverMessage: nil)
+        XCTAssertEqual(e402.code, .insufficientCredits)
+
         let e404 = UseSenseError.fromHTTP(statusCode: 404, serverCode: "identity_not_found", serverMessage: nil)
         XCTAssertEqual(e404.code, .identityNotFound)
+
+        let e409 = UseSenseError.fromHTTP(statusCode: 409, serverCode: nil, serverMessage: nil)
+        XCTAssertEqual(e409.code, .tokenAlreadyUsed)
+
+        let e410 = UseSenseError.fromHTTP(statusCode: 410, serverCode: "token_expired", serverMessage: nil)
+        XCTAssertEqual(e410.code, .tokenExpired)
+
+        let e410Session = UseSenseError.fromHTTP(statusCode: 410, serverCode: "session_expired", serverMessage: nil)
+        XCTAssertEqual(e410Session.code, .sessionExpired)
 
         let e429 = UseSenseError.fromHTTP(statusCode: 429, serverCode: nil, serverMessage: nil)
         XCTAssertEqual(e429.code, .quotaExceeded)
@@ -96,6 +153,20 @@ final class UseSenseErrorTests: XCTestCase {
         XCTAssertTrue(uploadFailed.isRetryable)
     }
 
+    func testNewErrorCodeMessages() {
+        let tokenExpired = UseSenseError(code: .tokenExpired)
+        XCTAssertFalse(tokenExpired.message.isEmpty)
+
+        let tokenUsed = UseSenseError(code: .tokenAlreadyUsed)
+        XCTAssertFalse(tokenUsed.message.isEmpty)
+
+        let credits = UseSenseError(code: .insufficientCredits)
+        XCTAssertFalse(credits.message.isEmpty)
+
+        let nonce = UseSenseError(code: .nonceMismatch)
+        XCTAssertFalse(nonce.message.isEmpty)
+    }
+
     func testFactoryMethods() {
         XCTAssertEqual(UseSenseError.cameraUnavailable().code, .cameraUnavailable)
         XCTAssertEqual(UseSenseError.networkTimeout().code, .networkTimeout)
@@ -114,7 +185,7 @@ final class UseSenseResultTests: XCTestCase {
             sessionType: "enrollment",
             identityId: "id_456",
             decision: "APPROVE",
-            timestamp: "2024-01-01T00:00:00Z"
+            timestamp: "2026-04-06T00:00:00Z"
         )
         XCTAssertEqual(redacted.sessionId, "sess_123")
         XCTAssertEqual(redacted.decision, "APPROVE")
@@ -270,13 +341,96 @@ final class EventSystemTests: XCTestCase {
         XCTAssertEqual(event.data?["progress"], "0.5")
         XCTAssertNotNil(event.timestamp)
     }
+
+    func testNewEventTypes() {
+        // Verify new v4.1 event types exist
+        XCTAssertEqual(UseSenseEventType.stepUpTriggered.rawValue, "step_up_triggered")
+        XCTAssertEqual(UseSenseEventType.stepUpCompleted.rawValue, "step_up_completed")
+    }
 }
 
 final class SessionStateMachineTests: XCTestCase {
     func testCapturePhases() {
-        XCTAssertEqual(CapturePhase.allCases.count, 11)
+        // v4.1 added inlineStepUp phase
+        XCTAssertEqual(CapturePhase.allCases.count, 12)
         XCTAssertEqual(CapturePhase.instructions.rawValue, "instructions")
+        XCTAssertEqual(CapturePhase.inlineStepUp.rawValue, "inline-step-up")
         XCTAssertEqual(CapturePhase.done.rawValue, "done")
+    }
+}
+
+final class CreateSessionResponseTests: XCTestCase {
+    func testDecoding() throws {
+        let json = """
+        {
+            "session_id": "sess_123",
+            "session_token": "token_abc",
+            "expires_at": "2026-12-31T23:59:59.000Z",
+            "nonce": "nonce_xyz",
+            "policy": {
+                "requires_audio": false,
+                "requires_stepup": false,
+                "challenge_type": "head_turn"
+            },
+            "upload": {
+                "max_frames": 30,
+                "target_fps": 3,
+                "capture_duration_ms": 8000
+            }
+        }
+        """
+        let response = try JSONDecoder().decode(CreateSessionResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(response.sessionId, "sess_123")
+        XCTAssertEqual(response.sessionToken, "token_abc")
+        XCTAssertEqual(response.nonce, "nonce_xyz")
+        XCTAssertFalse(response.policy.requiresAudio)
+        XCTAssertEqual(response.upload.maxFrames, 30)
+        XCTAssertEqual(response.upload.targetFps, 3)
+        XCTAssertEqual(response.upload.captureDurationMs, 8000)
+        XCTAssertNil(response.geometricCoherence)
+    }
+
+    func testDecodingWithGeometricCoherence() throws {
+        let json = """
+        {
+            "session_id": "sess_456",
+            "session_token": "token_def",
+            "expires_at": "2026-12-31T23:59:59.000Z",
+            "nonce": "nonce_abc",
+            "policy": {
+                "requires_audio": false,
+                "requires_stepup": true,
+                "challenge_type": "follow_dot",
+                "inline_step_up": {
+                    "enabled": true,
+                    "suspicion_threshold": 55,
+                    "preferred_challenge": "auto"
+                }
+            },
+            "upload": {
+                "max_frames": 30,
+                "target_fps": 3,
+                "capture_duration_ms": 8000
+            },
+            "geometric_coherence": {
+                "dual_path_enabled": true,
+                "screen_illumination_enabled": true,
+                "on_device_3dmm_required": false,
+                "mesh_binding_challenge": "a1b2c3d4e5f6"
+            }
+        }
+        """
+        let response = try JSONDecoder().decode(CreateSessionResponse.self, from: Data(json.utf8))
+        XCTAssertNotNil(response.geometricCoherence)
+        XCTAssertTrue(response.geometricCoherence!.dualPathEnabled)
+        XCTAssertTrue(response.geometricCoherence!.screenIlluminationEnabled)
+        XCTAssertFalse(response.geometricCoherence!.onDevice3dmmRequired)
+        XCTAssertEqual(response.geometricCoherence!.meshBindingChallenge, "a1b2c3d4e5f6")
+
+        XCTAssertNotNil(response.policy.inlineStepUp)
+        XCTAssertTrue(response.policy.inlineStepUp!.enabled)
+        XCTAssertEqual(response.policy.inlineStepUp!.suspicionThreshold, 55)
+        XCTAssertEqual(response.policy.inlineStepUp!.preferredChallenge, "auto")
     }
 }
 
@@ -401,49 +555,23 @@ final class CreateSessionRequestTests: XCTestCase {
     }
 }
 
-final class CreateSessionResponseTests: XCTestCase {
-    func testDecoding() throws {
-        let json = """
-        {
-            "session_id": "sess_123",
-            "session_token": "token_abc",
-            "expires_at": "2024-12-31T23:59:59.000Z",
-            "nonce": "nonce_xyz",
-            "policy": {
-                "requires_audio": false,
-                "requires_stepup": false,
-                "challenge_type": "head_turn"
-            },
-            "upload": {
-                "max_frames": 40,
-                "target_fps": 15,
-                "capture_duration_ms": 2500
-            }
-        }
-        """
-        let response = try JSONDecoder().decode(CreateSessionResponse.self, from: Data(json.utf8))
-        XCTAssertEqual(response.sessionId, "sess_123")
-        XCTAssertEqual(response.sessionToken, "token_abc")
-        XCTAssertEqual(response.nonce, "nonce_xyz")
-        XCTAssertFalse(response.policy.requiresAudio)
-        XCTAssertEqual(response.upload.maxFrames, 40)
-        XCTAssertEqual(response.upload.targetFps, 15)
-    }
-}
-
 final class UseSenseEntryPointTests: XCTestCase {
     func testSDKVersion() {
         XCTAssertFalse(UseSense.version.isEmpty)
     }
 
-    func testCreateSDK() {
-        let config = UseSenseConfig(apiKey: "test_key")
-        let sdk = UseSense(config: config)
-        XCTAssertEqual(sdk.sdkVersion, UseSense.version)
+    func testSDKVersionIs4_1() {
+        XCTAssertEqual(UseSense.version, "4.1.0")
     }
 
-    func testSDKVersionMatchesServer() {
-        XCTAssertEqual(UseSense.version, "1.17.57")
+    func testAPIClientVersion() {
+        XCTAssertEqual(UseSenseAPIClient.sdkVersion, "4.1.0")
+    }
+
+    func testCreateSDK() {
+        let config = UseSenseConfig(apiKey: "pk_prod_test")
+        let sdk = UseSense(config: config)
+        XCTAssertEqual(sdk.sdkVersion, UseSense.version)
     }
 
     func testVerificationRequest() {
@@ -456,10 +584,6 @@ final class UseSenseEntryPointTests: XCTestCase {
         XCTAssertEqual(request.sessionType, .enrollment)
         XCTAssertEqual(request.externalUserId, "user_123")
         XCTAssertNil(request.identityId)
-    }
-
-    func testDefaultGatewayKey() {
-        XCTAssertFalse(UseSenseAPIClient.defaultGatewayKey.isEmpty)
     }
 
     func testEventEmitterClear() {
@@ -480,7 +604,7 @@ final class MetadataBuilderTests: XCTestCase {
         let builder = MetadataBuilder()
         let channelIntegrity: [String: Any] = [
             "platform": "ios",
-            "sdk_version": "1.17.25",
+            "sdk_version": "4.1.0",
             "device_model": "iPhone15,2"
         ]
         let deviceTelemetry: [String: Any] = [
@@ -488,28 +612,80 @@ final class MetadataBuilderTests: XCTestCase {
             "processor_count": 6
         ]
         let startTime = Date()
-        let endTime = startTime.addingTimeInterval(2.5)
+        let endTime = startTime.addingTimeInterval(8.0)
 
         let data = try builder.build(
-            challengeResponse: nil,
-            channelIntegrity: channelIntegrity,
-            deviceTelemetry: deviceTelemetry,
             captureStartTime: startTime,
             captureEndTime: endTime,
-            framesCaptured: 37,
-            framesDropped: 3,
-            avgFrameIntervalMs: 67
+            framesCaptured: 24,
+            framesDropped: 0,
+            avgFrameIntervalMs: 333,
+            challengeResponse: nil,
+            channelIntegrity: channelIntegrity,
+            deviceTelemetry: deviceTelemetry
         )
 
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        XCTAssertEqual(json["sdk_version"] as? String, "4.1.0")
+        XCTAssertEqual(json["platform"] as? String, "ios")
         XCTAssertNotNil(json["channel_integrity"])
         XCTAssertNotNil(json["device_telemetry"])
+        XCTAssertNotNil(json["timestamps"])
 
         let ci = json["channel_integrity"] as! [String: Any]
         XCTAssertEqual(ci["platform"] as? String, "ios")
-        XCTAssertEqual(ci["frames_captured"] as? Int, 37)
-        XCTAssertEqual(ci["frames_dropped"] as? Int, 3)
+        XCTAssertEqual(ci["frames_captured"] as? Int, 24)
+        XCTAssertEqual(ci["frames_dropped"] as? Int, 0)
         XCTAssertNotNil(ci["capture_start_time"])
         XCTAssertNotNil(ci["capture_end_time"])
+    }
+
+    func testBuildMetadataWithV41Fields() throws {
+        let builder = MetadataBuilder()
+        let startTime = Date()
+        let endTime = startTime.addingTimeInterval(8.0)
+
+        let suspicion: [String: Any] = [
+            "final_score": 42.0,
+            "triggered": false
+        ]
+
+        let screenDetection: [String: Any] = [
+            "luminance_histogram_spread": 0.42,
+            "edge_energy_ratio": 0.55,
+            "frame_luminance_cv": 0.038,
+            "color_channel_uniformity": 0.72
+        ]
+
+        let data = try builder.build(
+            sessionId: "sess_test",
+            captureStartTime: startTime,
+            captureEndTime: endTime,
+            frameHashes: ["abc123", "def456"],
+            framesCaptured: 2,
+            framesDropped: 0,
+            avgFrameIntervalMs: 333,
+            challengeResponse: nil,
+            channelIntegrity: ["channel_type": "ios"],
+            deviceTelemetry: [:],
+            screenDetection: screenDetection,
+            suspicion: suspicion
+        )
+
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        XCTAssertEqual(json["session_id"] as? String, "sess_test")
+        XCTAssertNotNil(json["suspicion"])
+        XCTAssertNotNil(json["frame_hashes"])
+
+        let hashes = json["frame_hashes"] as? [String]
+        XCTAssertEqual(hashes?.count, 2)
+
+        let ci = json["channel_integrity"] as! [String: Any]
+        XCTAssertNotNil(ci["screen_detection"])
+
+        let sd = ci["screen_detection"] as! [String: Any]
+        XCTAssertEqual(sd["luminance_histogram_spread"] as? Double, 0.42)
     }
 }

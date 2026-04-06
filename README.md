@@ -17,7 +17,7 @@ Native iOS SDK for human presence verification. Verify real humans, detect deepf
 Add to your Podfile:
 
 ```ruby
-pod 'UseSenseSDK', '~> 1.0'
+pod 'UseSenseSDK', '~> 4.1'
 ```
 
 Then run:
@@ -36,12 +36,12 @@ In Xcode: **File > Add Package Dependencies**, enter:
 https://github.com/usesense/usesense-ios-sdk.git
 ```
 
-Select version "Up to Next Major" from `1.0.0`.
+Select version "Up to Next Major" from `4.1.0`.
 
 Or add to your `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/usesense/usesense-ios-sdk.git", from: "1.0.0")
+.package(url: "https://github.com/usesense/usesense-ios-sdk.git", from: "4.1.0")
 ```
 
 ### Manual Installation
@@ -57,7 +57,7 @@ import UseSenseSDK
 
 // 1. Configure the SDK
 let config = UseSenseConfig(
-    apiKey: "your_sandbox_api_key"  // sk_ prefix = sandbox, pk_ prefix = production
+    apiKey: "pk_prod_your_key_here"  // pk_prod_ = production, sk_sandbox_ = sandbox
 )
 let useSense = UseSense(config: config)
 
@@ -70,7 +70,7 @@ UseSenseView(
     onComplete: { result in
         switch result {
         case .success(let decision):
-            print("Decision: \(decision.decision)")
+            print("Decision: \(decision.decision)")  // APPROVE, REJECT, MANUAL_REVIEW
             print("Session ID: \(decision.sessionId)")
             if let identityId = decision.identityId {
                 print("Identity ID: \(identityId)")
@@ -88,12 +88,28 @@ UseSenseView(
 // The SDK result is for UI feedback only.
 ```
 
+### Server-Side Init (Reference Image Matching / KYC)
+
+For 1:1 photo matching or zero-credential-exposure deployments, use the token exchange flow:
+
+```swift
+// Your backend calls POST /v1/sessions/create-token with reference_image
+// and passes the client_token to the app
+let session = useSense.createSessionWithToken(
+    clientToken: "cli_tok_a1b2c3d4e5f6g7h8",
+    sessionType: .authentication
+)
+
+// Present UI exactly the same way
+UseSenseView(session: session, onComplete: { result in ... })
+```
+
 ### UIKit Integration
 
 ```swift
 import UseSenseSDK
 
-let config = UseSenseConfig(apiKey: "your_sandbox_api_key")
+let config = UseSenseConfig(apiKey: "pk_prod_your_key_here")
 let useSense = UseSense(config: config)
 let session = useSense.createSession(type: .enrollment)
 
@@ -115,8 +131,8 @@ present(viewController, animated: true)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `apiKey` | `String` | Required | Your API key from the [UseSense dashboard](https://app.usesense.ai). Keys prefixed with `sk_` or `dk_` target sandbox; `pk_` targets production. |
-| `apiEndpoint` | `String` | UseSense API | API endpoint URL. Override only for on-premise deployments. |
+| `apiKey` | `String` | Required | Your API key from the [UseSense dashboard](https://app.usesense.ai). `sk_prod_*`/`pk_prod_*` = production, `sk_sandbox_*`/`pk_sandbox_*` = sandbox. |
+| `apiEndpoint` | `String` | `api.usesense.ai/v1` | API endpoint URL. Override only for on-premise deployments. |
 | `environment` | `Environment?` | Auto-detected | `.sandbox`, `.production`, or `.auto`. Auto-detection uses the API key prefix. |
 | `branding` | `BrandingConfig?` | `nil` | Customize the verification UI appearance. |
 | `options` | `SDKOptions?` | `nil` | Advanced capture and behavior options. |
@@ -126,8 +142,8 @@ present(viewController, animated: true)
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `logoUrl` | `String?` | `nil` | URL to your organization's logo, displayed in the verification UI. |
-| `primaryColor` | `String` | `"#4F63F5"` | Primary accent color (hex). Used for buttons and highlights. |
-| `buttonRadius` | `CGFloat` | `12` | Corner radius for buttons in the verification UI. |
+| `primaryColor` | `String` | `"#4F7CFF"` | Primary accent color (hex). Used for buttons and highlights. |
+| `buttonRadius` | `CGFloat` | `10` | Corner radius for buttons in the verification UI. |
 | `fontFamily` | `String?` | `nil` | Custom font family name. Falls back to system font. |
 
 ### SDKOptions
@@ -136,9 +152,9 @@ present(viewController, animated: true)
 |-----------|------|---------|-------------|
 | `audioEnabled` | `AudioMode` | `.riskBased` | `.never`, `.riskBased`, or `.always`. Controls audio capture for voice deepfake detection. |
 | `stepUpPolicy` | `StepUpPolicy` | `.riskBased` | `.never`, `.riskBased`, or `.always`. Controls challenge difficulty escalation. |
-| `captureDurationMs` | `Int` | `2500` | Duration of the capture phase in milliseconds. |
-| `targetFps` | `Int` | `15` | Target frame capture rate. |
-| `maxFrames` | `Int` | `40` | Maximum number of frames to capture per session. |
+| `captureDurationMs` | `Int` | `8000` | Duration of the capture phase in milliseconds. Server may override. |
+| `targetFps` | `Int` | `3` | Target frame capture rate (2-5). Server provides optimal value. |
+| `maxFrames` | `Int` | `30` | Maximum number of frames to capture per session. Hard cap. |
 | `maxUploadSizeMb` | `Int` | `10` | Maximum upload payload size in megabytes. |
 
 ## Session Types
@@ -148,7 +164,7 @@ present(viewController, animated: true)
 First-time face registration. The system captures the user's face, performs a 1:N duplicate scan across all enrolled identities in your organization, and creates an identity record if approved.
 
 ```swift
-let config = UseSenseConfig(apiKey: "your_api_key")
+let config = UseSenseConfig(apiKey: "pk_prod_your_key_here")
 let useSense = UseSense(config: config)
 
 let session = useSense.createSession(type: .enrollment)
@@ -338,6 +354,10 @@ useSense.reset()
 | `TIMEOUT` | Session exceeded configured timeout | Retry with a new session. |
 | `SERVER_ERROR` | UseSense API returned a 5xx error | Retry after a short delay. Contact support if persistent. |
 | `SERVICE_UNAVAILABLE` | UseSense service is temporarily unavailable | Retry after a short delay. |
+| `TOKEN_EXPIRED` | Server-init client token expired (10-min TTL) | Request a new `client_token` from your backend. |
+| `TOKEN_ALREADY_USED` | Server-init client token already exchanged | Request a new `client_token`. Tokens are single-use. |
+| `INSUFFICIENT_CREDITS` | Organization out of verification credits | Purchase credits in the UseSense dashboard. |
+| `NONCE_MISMATCH` | Session nonce doesn't match server | Start a new session. Do not reuse nonces. |
 | `UNKNOWN_ERROR` | Unexpected error | Retry the session. Contact support with the session ID. |
 
 ### Error Handling Example
@@ -542,7 +562,9 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 
 - **Sandbox is free and unlimited.** Use it for all development and testing.
 - Sandbox and production use **separate API keys**. Generate both in the [UseSense dashboard](https://app.usesense.ai).
-- Sandbox keys are prefixed with `sk_` or `dk_`. Production keys are prefixed with `pk_`.
+- Sandbox keys: `sk_sandbox_*` (secret) or `pk_sandbox_*` (publishable). Production keys: `sk_prod_*` (secret) or `pk_prod_*` (publishable).
+- **Secret keys (`sk_*`)** are for server-to-server calls only. **Never embed them in client apps.**
+- **Publishable keys (`pk_*`)** can be embedded in client apps for quick prototyping.
 - Sandbox sessions are never billed. Production sessions consume one credit each.
 - All features work identically in both environments.
 - The environment is **auto-detected** from your API key prefix. You can also set it explicitly via the `environment` parameter in `UseSenseConfig`.

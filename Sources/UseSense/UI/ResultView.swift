@@ -85,9 +85,10 @@ struct ResultView: View {
     }
 
     private var resultTitle: String {
+        // Brand voice: precision of an engineer, clarity of a teacher
         switch decision.decision.uppercased() {
         case "APPROVE": return "Verification Successful"
-        case "REJECT": return "Verification Denied"
+        case "REJECT": return "Verification Unsuccessful"
         case "MANUAL_REVIEW": return "Under Review"
         default: return "Verification Complete"
         }

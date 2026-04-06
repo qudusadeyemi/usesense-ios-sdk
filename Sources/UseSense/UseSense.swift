@@ -1,9 +1,9 @@
 import Foundation
 
 /// Main entry point for the UseSense SDK.
-/// Matches Android's UseSense singleton pattern with `initialize()` and `startVerification()`.
+/// UseSense is human presence infrastructure for the AI era.
 public final class UseSense: @unchecked Sendable {
-    public static let version = "1.17.57"
+    public static let version = "4.1.0"
 
     private let config: UseSenseConfig
     private let globalEventEmitter = EventEmitter()
@@ -15,13 +15,8 @@ public final class UseSense: @unchecked Sendable {
         self.config = config
     }
 
-    /// Create a new verification session.
-    /// - Parameters:
-    ///   - type: The session type (enrollment or authentication).
-    ///   - identityId: Optional identity ID for authentication sessions.
-    ///   - externalUserId: Optional external user ID.
-    ///   - metadata: Optional metadata to attach to the session.
-    /// - Returns: A configured `UseSenseSession` ready to be presented.
+    /// Create a new verification session (Standard Init).
+    /// Your backend calls POST /v1/sessions, then passes credentials to the client.
     public func createSession(
         type: SessionType,
         identityId: String? = nil,
@@ -38,9 +33,7 @@ public final class UseSense: @unchecked Sendable {
         )
     }
 
-    /// Start verification using a VerificationRequest (matches Android's startVerification pattern).
-    /// - Parameter request: The verification request with session type and parameters.
-    /// - Returns: A configured `UseSenseSession` ready to be presented.
+    /// Start verification using a VerificationRequest.
     public func startVerification(request: VerificationRequest) -> UseSenseSession {
         return createSession(
             type: request.sessionType,
@@ -50,23 +43,38 @@ public final class UseSense: @unchecked Sendable {
         )
     }
 
-    /// Register a global event listener (matches Android's onEvent pattern).
-    /// - Parameter callback: Closure invoked for each SDK event.
-    /// - Returns: A removal function. Call it to unsubscribe.
+    /// Create a session via Server-Side Init (token exchange).
+    /// Your backend calls POST /v1/sessions/create-token, passes the client_token
+    /// to the SDK, which exchanges it for full session credentials.
+    ///
+    /// Use this when you need:
+    /// 1. Reference image matching (KYC, ID verification)
+    /// 2. Zero credential exposure (sk_* never in client)
+    public func createSessionWithToken(
+        clientToken: String,
+        sessionType: SessionType = .authentication
+    ) -> UseSenseSession {
+        return UseSenseSession(
+            config: config,
+            sessionType: sessionType,
+            clientToken: clientToken,
+            eventEmitter: globalEventEmitter
+        )
+    }
+
+    /// Register a global event listener.
     @discardableResult
     public func onEvent(_ callback: @escaping EventCallback) -> () -> Void {
         globalEventEmitter.addListener(callback)
     }
 
     /// Register a global event listener.
-    /// - Parameter callback: Closure invoked for each SDK event.
-    /// - Returns: A removal function. Call it to unsubscribe.
     @discardableResult
     public func addEventListener(_ callback: @escaping EventCallback) -> () -> Void {
         globalEventEmitter.addListener(callback)
     }
 
-    /// Clear all event listeners (matches Android's reset pattern).
+    /// Clear all event listeners.
     public func reset() {
         globalEventEmitter.clear()
     }

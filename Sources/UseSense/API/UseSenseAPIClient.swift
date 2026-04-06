@@ -1,20 +1,17 @@
 import Foundation
 
 final class UseSenseAPIClient: @unchecked Sendable {
-    static let defaultGatewayKey = UseSenseConfig.defaultGatewayKey
-
-    static let sdkVersion = "1.17.57"
+    static let sdkVersion = "4.1.0"
     private static let userAgent = "UseSense-iOS-SDK/\(sdkVersion)"
 
-    // Retry delays in seconds: immediate, 1s, 3s
-    private static let retryDelays: [TimeInterval] = [0, 1.0, 3.0]
+    /// Retry delays per spec: network errors 3 retries (1s, 2s, 4s), 5xx 2 retries (2s, 2s)
+    private static let networkRetryDelays: [TimeInterval] = [1.0, 2.0, 4.0]
+    private static let serverRetryDelays: [TimeInterval] = [2.0, 2.0]
 
     private let config: UseSenseConfig
     private let session: URLSession
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
-
-    private let gatewayKey: String
 
     // Session-scoped state (set after createSession or injected by hosted page flow)
     var sessionToken: String?
@@ -22,7 +19,6 @@ final class UseSenseAPIClient: @unchecked Sendable {
 
     init(config: UseSenseConfig) {
         self.config = config
-        self.gatewayKey = config.gatewayKey
 
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.timeoutIntervalForResource = 120
@@ -58,16 +54,18 @@ final class UseSenseAPIClient: @unchecked Sendable {
         return components.url!
     }
 
-    /// Apply Layer 1 (Supabase gateway) + Layer 2 (session-specific) headers.
+    /// Apply headers per the Cloudflare Worker proxy model.
+    /// SDKs MUST NOT send apikey or Authorization: Bearer <supabase_key> headers.
+    /// The Cloudflare Worker injects Supabase gateway headers server-side.
     private func applyHeaders(_ request: inout URLRequest, includeSession: Bool = false) {
-        // Layer 1: Supabase gateway auth (ALL requests)
-        request.setValue("Bearer \(gatewayKey)", forHTTPHeaderField: "Authorization")
-        request.setValue(gatewayKey, forHTTPHeaderField: "apikey")
-
         // User-Agent
         request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
 
-        // Layer 2: Session-specific headers
+        // Environment header on every request
+        let env = (config.environment ?? .auto).resolved(apiKey: config.apiKey)
+        request.setValue(env, forHTTPHeaderField: "X-Environment")
+
+        // Session-specific headers (signals + complete)
         if includeSession {
             if let token = sessionToken {
                 request.setValue(token, forHTTPHeaderField: "X-Session-Token")
@@ -82,7 +80,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
     // MARK: - Create Session
 
     func createSession(request body: CreateSessionRequest) async throws -> CreateSessionResponse {
-        var request = URLRequest(url: buildURL(path: "/v1/sessions"))
+        var request = URLRequest(url: buildURL(path: "/sessions"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(config.apiKey, forHTTPHeaderField: "X-API-Key")
@@ -93,6 +91,25 @@ final class UseSenseAPIClient: @unchecked Sendable {
         let response: CreateSessionResponse = try await perform(request)
 
         // Store session-scoped state
+        sessionToken = response.sessionToken
+        nonce = response.nonce
+
+        return response
+    }
+
+    // MARK: - Exchange Token (Server-Side Init)
+
+    func exchangeToken(clientToken: String) async throws -> CreateSessionResponse {
+        var request = URLRequest(url: buildURL(path: "/sessions/exchange-token"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // No API key needed -- the client_token authenticates the request
+        applyHeaders(&request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["client_token": clientToken])
+        request.timeoutInterval = 15
+
+        let response: CreateSessionResponse = try await perform(request)
+
         sessionToken = response.sessionToken
         nonce = response.nonce
 
@@ -118,11 +135,11 @@ final class UseSenseAPIClient: @unchecked Sendable {
         }
         let body = multipart.finalize()
 
-        var request = URLRequest(url: buildURL(path: "/v1/sessions/\(sessionId)/signals", includeNonce: true))
+        var request = URLRequest(url: buildURL(path: "/sessions/\(sessionId)/signals", includeNonce: true))
         request.httpMethod = "POST"
         request.setValue(multipart.contentType, forHTTPHeaderField: "Content-Type")
         applyHeaders(&request, includeSession: true)
-        request.setValue("\(sessionId)_\(Date().timeIntervalSince1970)_\(UUID().uuidString.prefix(9))", forHTTPHeaderField: "X-Idempotency-Key")
+        request.setValue("\(sessionId)_\(Int(Date().timeIntervalSince1970 * 1000))", forHTTPHeaderField: "X-Idempotency-Key")
         request.httpBody = body
         request.timeoutInterval = 30
 
@@ -135,10 +152,10 @@ final class UseSenseAPIClient: @unchecked Sendable {
         self.sessionToken = sessionToken
         self.nonce = nonce
 
-        var request = URLRequest(url: buildURL(path: "/v1/sessions/\(sessionId)/complete", includeNonce: true))
+        var request = URLRequest(url: buildURL(path: "/sessions/\(sessionId)/complete", includeNonce: true))
         request.httpMethod = "POST"
         applyHeaders(&request, includeSession: true)
-        request.setValue(UUID().uuidString, forHTTPHeaderField: "X-Idempotency-Key")
+        request.setValue("\(sessionId)_complete_\(Int(Date().timeIntervalSince1970 * 1000))", forHTTPHeaderField: "X-Idempotency-Key")
         request.timeoutInterval = 60
 
         return try await performWithRetry(request)
@@ -240,7 +257,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
     func getSessionStatus(sessionId: String, sessionToken: String) async throws -> SessionStatusResponse {
         self.sessionToken = sessionToken
 
-        var request = URLRequest(url: buildURL(path: "/v1/sessions/\(sessionId)/status"))
+        var request = URLRequest(url: buildURL(path: "/sessions/\(sessionId)/status"))
         request.httpMethod = "GET"
         applyHeaders(&request, includeSession: true)
         request.timeoutInterval = 15
@@ -250,24 +267,36 @@ final class UseSenseAPIClient: @unchecked Sendable {
 
     // MARK: - Retry Logic
 
-    /// Perform request with retry on 500 errors (0s, 1s, 3s delays).
+    /// Perform request with retry per spec:
+    /// - Network errors: 3 retries (1s, 2s, 4s exponential backoff)
+    /// - 5xx: 2 retries with 2s delay
+    /// - 429: Respect Retry-After header
+    /// - 4xx (except 429): No retry
     private func performWithRetry<T: Decodable>(_ request: URLRequest) async throws -> T {
         var lastError: Error?
+        let maxAttempts = 4 // 1 initial + 3 retries
 
-        for (attempt, delay) in Self.retryDelays.enumerated() {
-            if attempt > 0 {
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            }
-
+        for attempt in 0..<maxAttempts {
             do {
                 let (data, response) = try await session.data(for: request)
                 guard let http = response as? HTTPURLResponse else {
                     throw UseSenseError(code: .networkError, message: "Invalid response type.")
                 }
 
-                // Only retry on 500 errors
-                if http.statusCode == 500 && attempt < Self.retryDelays.count - 1 {
-                    lastError = UseSenseError.fromHTTP(statusCode: 500, serverCode: nil, serverMessage: "Server error")
+                // 429: Respect Retry-After
+                if http.statusCode == 429 {
+                    if attempt < maxAttempts - 1,
+                       let retryAfter = http.value(forHTTPHeaderField: "Retry-After"),
+                       let seconds = Double(retryAfter) {
+                        try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                        continue
+                    }
+                }
+
+                // 5xx: Retry up to 2 times with 2s delay
+                if http.statusCode >= 500 && attempt < min(maxAttempts - 1, 2) {
+                    lastError = UseSenseError.fromHTTP(statusCode: http.statusCode, serverCode: nil, serverMessage: "Server error")
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
                     continue
                 }
 
@@ -279,8 +308,17 @@ final class UseSenseAPIClient: @unchecked Sendable {
                 }
 
                 return try decoder.decode(T.self, from: data)
-            } catch let error as UseSenseError where error.code == .serverError && attempt < Self.retryDelays.count - 1 {
+            } catch let error as URLError {
+                // Network error: retry with exponential backoff (1s, 2s, 4s)
+                lastError = UseSenseError(code: .networkError, message: error.localizedDescription, isRetryable: true)
+                if attempt < Self.networkRetryDelays.count {
+                    try? await Task.sleep(nanoseconds: UInt64(Self.networkRetryDelays[attempt] * 1_000_000_000))
+                    continue
+                }
+                throw lastError!
+            } catch let error as UseSenseError where error.code == .serverError && attempt < 2 {
                 lastError = error
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
                 continue
             } catch {
                 throw error
@@ -323,7 +361,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
     }
 }
 
-struct SessionStatusResponse: Decodable {
+struct SessionStatusResponse: Decodable, Sendable {
     let sessionId: String
     let status: String
     let createdAt: String?
@@ -340,4 +378,4 @@ struct SessionStatusResponse: Decodable {
 }
 
 /// Used for endpoints that return minimal/empty JSON bodies (e.g. /opened).
-struct EmptyResponse: Decodable {}
+struct EmptyResponse: Decodable, Sendable {}
