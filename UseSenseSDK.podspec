@@ -11,10 +11,10 @@ Pod::Spec.new do |s|
     challenges (Flash Reflection, RMAS).
   DESC
 
-  s.homepage         = 'https://github.com/usesense/usesense-ios-sdk'
+  s.homepage         = 'https://github.com/qudusadeyemi/usesense-ios-sdk'
   s.license          = { :type => 'Proprietary', :file => 'LICENSE' }
   s.author           = { 'UseSense' => 'support@usesense.ai' }
-  s.source           = { :git => 'https://github.com/usesense/usesense-ios-sdk.git', :tag => s.version.to_s }
+  s.source           = { :git => 'https://github.com/qudusadeyemi/usesense-ios-sdk.git', :tag => s.version.to_s }
 
   s.ios.deployment_target = '15.0'
   s.swift_version    = '5.9'

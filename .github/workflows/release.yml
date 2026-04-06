@@ -44,13 +44,13 @@ jobs:
             ### CocoaPods
 
             ```ruby
-            pod 'UseSenseSDK', '~> 1.0'
+            pod 'UseSenseSDK', '~> 4.1'
             ```
 
             ### Swift Package Manager
 
             ```swift
-            .package(url: "https://github.com/usesense/usesense-ios-sdk.git", from: "1.0.0")
+            .package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.1.0")
             ```
 
             ## Requirements
