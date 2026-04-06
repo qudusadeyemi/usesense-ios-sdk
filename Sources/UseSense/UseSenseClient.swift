@@ -14,6 +14,9 @@ public protocol UseSenseClientProtocol: AnyObject, Sendable {
     /// Start verification with a request object (matches Android's startVerification).
     func startVerification(request: VerificationRequest) -> UseSenseSession
 
+    /// Create a session via Server-Side Init (token exchange).
+    func createSessionWithToken(clientToken: String, sessionType: SessionType) -> UseSenseSession
+
     /// Register an event listener for all sessions.
     @discardableResult
     func onEvent(_ callback: @escaping EventCallback) -> () -> Void
