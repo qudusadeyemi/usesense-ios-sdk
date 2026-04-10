@@ -1,12 +1,7 @@
 platform :ios, '15.0'
 
 target 'UseSenseExample' do
-  # Static linkage is required because UseSenseSDK depends on
-  # MediaPipeTasksVision and MediaPipeTasksCommon, which are vendored as static
-  # xcframeworks. Mixing static and dynamic in the same target fails CocoaPods
-  # validation with "transitive dependencies that include statically linked
-  # binaries". UseSenseSDK.podspec also sets s.static_framework = true.
-  use_frameworks! :linkage => :static
+  use_frameworks!
 
   # Use the local pod for development
   pod 'UseSenseSDK', :path => '../'

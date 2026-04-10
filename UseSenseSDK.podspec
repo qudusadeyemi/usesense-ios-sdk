@@ -33,20 +33,13 @@ Pod::Spec.new do |s|
   s.frameworks       = 'AVFoundation', 'CoreMotion', 'UIKit', 'Accelerate'
   s.weak_frameworks  = 'LocalAuthentication', 'DeviceCheck', 'CryptoKit'
 
-  # MediaPipe for on-device face mesh (Geometric Coherence).
-  # CocoaPods-only dependency: Google does not ship MediaPipeTasksVision as a
-  # Swift Package. SwiftPM consumers get the gracefully-degraded FaceMeshManager
-  # code path (no face mesh signals); both code paths are guarded by
-  # #if canImport(MediaPipeTasksVision).
-  s.dependency 'MediaPipeTasksVision', '~> 0.10'
-
-  # MediaPipeTasksVision and its transitive dep MediaPipeTasksCommon ship as
-  # static xcframeworks. CocoaPods refuses to link static binaries through a
-  # dynamic framework, so UseSenseSDK must declare itself as a static framework
-  # too. With this set, MediaPipe's static binaries are embedded into the
-  # UseSenseSDK.framework that consumers link against, and the lint error
-  # "transitive dependencies that include statically linked binaries" goes away.
-  s.static_framework = true
+  # MediaPipe for on-device face mesh (Geometric Coherence) is wired in a
+  # follow-up PR. The MediaPipeTasksVision pod ships as a static xcframework
+  # whose CocoaPods integration with `use_frameworks!` requires careful
+  # static_framework / :linkage => :static tuning that needs to be validated
+  # on a real Mac before landing. Until then, FaceMeshManager runs the
+  # gracefully-degraded code path guarded by #if canImport(MediaPipeTasksVision).
+  # s.dependency 'MediaPipeTasksVision', '~> 0.10'
 
   s.exclude_files    = 'Tests/**/*', 'Example/**/*', 'UseSenseDemo/**/*'
 
