@@ -3,6 +3,10 @@ import AVFoundation
 import UIKit
 import Foundation
 
+#if canImport(MediaPipeTasksVision)
+import MediaPipeTasksVision
+#endif
+
 /// Per-frame face mesh data extracted from MediaPipe FaceLandmarker.
 struct FaceMeshResult: Sendable {
     let frameIndex: Int
@@ -29,6 +33,17 @@ struct NormalizedRect: Sendable {
 
 /// Manages MediaPipe FaceLandmarker integration for on-device face mesh extraction.
 /// Runs on a background queue to avoid blocking the capture loop.
+///
+/// The face_landmarker.task model is bundled in the SwiftPM module's Resources
+/// directory and the CocoaPods resource_bundle 'UseSenseSDK', managed by the
+/// mediapipe-sdk-sync workflow in qudusadeyemi/usesense-watchtower. See
+/// MediaPipeModelInfo for the bundled bytes' version, sha256, and provenance.
+///
+/// MediaPipeTasksVision is a CocoaPods-only dependency. Google does not ship
+/// MediaPipeTasksVision as a Swift Package, so SwiftPM consumers get the
+/// gracefully-degraded code path (no face mesh signals). Both code paths
+/// also gracefully degrade when the bundled asset is missing (e.g. between
+/// this PR landing and the first sync run delivering bytes).
 final class FaceMeshManager: @unchecked Sendable {
     private let analysisQueue = DispatchQueue(label: "com.usesense.facemesh", qos: .userInitiated)
     private var isReady = false
@@ -36,18 +51,46 @@ final class FaceMeshManager: @unchecked Sendable {
     private let lock = NSLock()
     private var results: [FaceMeshResult] = []
 
+    #if canImport(MediaPipeTasksVision)
+    private var landmarker: FaceLandmarker?
+    #endif
+
     /// Initialize MediaPipe FaceLandmarker model.
-    /// In production, this loads the face_landmarker.task model.
+    /// Loads face_landmarker.task from the bundled Resources directory via
+    /// Bundle.module.url(forResource:withExtension:). Falls back to no face
+    /// mesh signals if MediaPipeTasksVision is not linked (SwiftPM build) or
+    /// if the bundled asset is missing (gap before the first sync run).
     func setup() {
         analysisQueue.async { [weak self] in
-            // MediaPipe FaceLandmarker initialization:
-            // let options = FaceLandmarkerOptions()
-            // options.baseOptions.modelAssetPath = "face_landmarker.task"
-            // options.runningMode = .liveStream
-            // options.numFaces = 1
-            // options.outputFacialTransformationMatrixes = true
-            // self?.landmarker = try? FaceLandmarker(options: options)
-            self?.isReady = true
+            guard let self = self else { return }
+            #if canImport(MediaPipeTasksVision)
+            do {
+                guard let modelURL = Bundle.module.url(
+                    forResource: MediaPipeModelInfo.resourceName,
+                    withExtension: MediaPipeModelInfo.resourceExtension
+                ) else {
+                    // Bundled asset not present yet (sync workflow has not run).
+                    // SDK gracefully degrades to no face mesh signals.
+                    self.isReady = false
+                    return
+                }
+                let options = FaceLandmarkerOptions()
+                options.baseOptions.modelAssetPath = modelURL.path
+                options.runningMode = .image
+                options.numFaces = 1
+                options.outputFacialTransformationMatrixes = true
+                self.landmarker = try FaceLandmarker(options: options)
+                self.isReady = true
+            } catch {
+                // FaceLandmarker initialization failed (corrupt bytes, unsupported
+                // device, etc.). SDK gracefully degrades to no face mesh signals.
+                self.isReady = false
+            }
+            #else
+            // MediaPipeTasksVision not linked (SwiftPM build).
+            // SDK gracefully degrades to no face mesh signals.
+            self.isReady = false
+            #endif
         }
     }
 
@@ -61,11 +104,6 @@ final class FaceMeshManager: @unchecked Sendable {
         frameIndex += 1
         lock.unlock()
 
-        // Extract landmarks from MediaPipe FaceLandmarker.
-        // When MediaPipe pod is integrated, this calls:
-        //   let mpImage = MPImage(pixelBuffer: pixelBuffer)
-        //   let result = try landmarker.detect(image: mpImage)
-        // For now, return nil until MediaPipe dependency is added.
         guard let landmarkData = extractLandmarks(pixelBuffer) else { return nil }
 
         let pose = estimateHeadPose(from: landmarkData)
@@ -105,21 +143,38 @@ final class FaceMeshManager: @unchecked Sendable {
 
     func teardown() {
         isReady = false
+        #if canImport(MediaPipeTasksVision)
+        landmarker = nil
+        #endif
         reset()
     }
 
     // MARK: - Landmark Extraction
 
     private func extractLandmarks(_ pixelBuffer: CVPixelBuffer) -> [(x: Double, y: Double, z: Double)]? {
-        // Placeholder: MediaPipe FaceLandmarker returns 468 3D landmarks.
-        // Integration requires adding MediaPipeTasksVision pod dependency.
-        // Returns nil until dependency is configured.
+        #if canImport(MediaPipeTasksVision)
+        guard let landmarker = self.landmarker else { return nil }
+        do {
+            let mpImage = try MPImage(pixelBuffer: pixelBuffer)
+            let result = try landmarker.detect(image: mpImage)
+            guard let firstFace = result.faceLandmarks.first, firstFace.count >= 468 else {
+                return nil
+            }
+            return firstFace.map { lm in
+                (x: Double(lm.x), y: Double(lm.y), z: Double(lm.z))
+            }
+        } catch {
+            return nil
+        }
+        #else
+        // MediaPipeTasksVision not linked; no landmarks available.
         return nil
+        #endif
     }
 
     // MARK: - Head Pose Estimation
 
-    /// Extract yaw/pitch/roll from MediaPipe's FacialTransformationMatrix.
+    /// Extract yaw/pitch/roll from MediaPipe's landmark output.
     private func estimateHeadPose(from landmarks: [(x: Double, y: Double, z: Double)]) -> HeadPose {
         guard landmarks.count >= 468 else {
             return HeadPose(yaw: 0, pitch: 0, roll: 0)
