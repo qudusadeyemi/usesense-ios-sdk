@@ -408,7 +408,7 @@ public final class UseSenseSession: @unchecked Sendable {
         stepUpResult = await orchestrator.run(
             suspicionScore: engine.snapshot().score,
             config: config,
-            captureFrame: { [weak self] in
+            captureFrame: {
                 // In production, capture current frame from preview
                 return nil
             },

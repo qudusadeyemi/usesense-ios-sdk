@@ -25,55 +25,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build for iOS device
+      - name: Archive for iOS device
         run: |
-          xcodebuild build \
+          xcodebuild archive \
             -scheme UseSenseSDK \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath build/DerivedData \
+            -archivePath build/ios.xcarchive \
             -skipPackagePluginValidation \
+            SKIP_INSTALL=NO \
             BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
             CODE_SIGNING_ALLOWED=NO \
-            ONLY_ACTIVE_ARCH=NO
+            INSTALL_PATH=/Library/Frameworks
 
-      - name: Build for iOS Simulator
+      - name: Archive for iOS Simulator
         run: |
-          xcodebuild build \
+          xcodebuild archive \
             -scheme UseSenseSDK \
             -configuration Release \
             -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build/DerivedData \
+            -archivePath build/sim.xcarchive \
             -skipPackagePluginValidation \
+            SKIP_INSTALL=NO \
             BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
             CODE_SIGNING_ALLOWED=NO \
-            ONLY_ACTIVE_ARCH=NO
+            INSTALL_PATH=/Library/Frameworks
 
-      - name: Locate frameworks and create XCFramework
+      - name: Locate frameworks
         run: |
-          DEVICE_FW="build/DerivedData/Build/Products/Release-iphoneos/UseSenseSDK.framework"
-          SIM_FW="build/DerivedData/Build/Products/Release-iphonesimulator/UseSenseSDK.framework"
+          echo "=== iOS device archive ==="
+          find build/ios.xcarchive -name '*.framework' -type d 2>/dev/null || echo "none"
+          echo "=== iOS simulator archive ==="
+          find build/sim.xcarchive -name '*.framework' -type d 2>/dev/null || echo "none"
 
-          echo "Looking for frameworks..."
-          echo "Device: $DEVICE_FW (exists: $(test -d "$DEVICE_FW" && echo yes || echo no))"
-          echo "Simulator: $SIM_FW (exists: $(test -d "$SIM_FW" && echo yes || echo no))"
+      - name: Create XCFramework
+        run: |
+          # SPM archives put frameworks under Products/usr/local/lib or Products/Library/Frameworks
+          DEVICE_FW=$(find build/ios.xcarchive -name 'UseSenseSDK.framework' -type d | head -1)
+          SIM_FW=$(find build/sim.xcarchive -name 'UseSenseSDK.framework' -type d | head -1)
 
-          # Fallback: search if not at expected path
-          if [ ! -d "$DEVICE_FW" ]; then
-            echo "Searching for device framework..."
-            DEVICE_FW=$(find build -name 'UseSenseSDK.framework' -path '*Release-iphoneos*' -type d | head -1)
-            echo "Found: $DEVICE_FW"
+          # If not found as .framework, build from the .swiftmodule + static lib
+          if [ -z "$DEVICE_FW" ] || [ -z "$SIM_FW" ]; then
+            echo "Frameworks not found via archive. Trying PackageFrameworks path..."
+            DEVICE_FW=$(find build/ios.xcarchive -path '*/PackageFrameworks/UseSenseSDK.framework' -type d | head -1)
+            SIM_FW=$(find build/sim.xcarchive -path '*/PackageFrameworks/UseSenseSDK.framework' -type d | head -1)
           fi
-          if [ ! -d "$SIM_FW" ]; then
-            echo "Searching for simulator framework..."
-            SIM_FW=$(find build -name 'UseSenseSDK.framework' -path '*Release-iphonesimulator*' -type d | head -1)
-            echo "Found: $SIM_FW"
-          fi
+
+          echo "Device framework: $DEVICE_FW"
+          echo "Simulator framework: $SIM_FW"
 
           if [ -z "$DEVICE_FW" ] || [ -z "$SIM_FW" ]; then
-            echo "ERROR: Could not find frameworks. Directory listing:"
-            find build -name '*.framework' -type d 2>/dev/null || echo "No frameworks found"
-            find build/DerivedData/Build/Products -type d -maxdepth 3 2>/dev/null || echo "No products found"
+            echo "ERROR: Could not locate frameworks"
+            find build -name 'UseSenseSDK*' -type d 2>/dev/null
             exit 1
           fi
 
@@ -97,11 +100,10 @@ jobs:
     name: Publish to CocoaPods
     runs-on: macos-15
     needs: validate
+    if: ${{ secrets.COCOAPODS_TRUNK_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
 
-      # Requires COCOAPODS_TRUNK_TOKEN secret configured in repository settings.
-      # Generate a token with: pod trunk register <email> '<name>'
       - name: Push to CocoaPods Trunk
         env:
           COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
