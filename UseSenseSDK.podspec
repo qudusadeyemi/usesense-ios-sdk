@@ -33,13 +33,19 @@ Pod::Spec.new do |s|
   s.frameworks       = 'AVFoundation', 'CoreMotion', 'UIKit', 'Accelerate'
   s.weak_frameworks  = 'LocalAuthentication', 'DeviceCheck', 'CryptoKit'
 
-  # MediaPipe for on-device face mesh (Geometric Coherence) is wired in a
-  # follow-up PR. The MediaPipeTasksVision pod ships as a static xcframework
-  # whose CocoaPods integration with `use_frameworks!` requires careful
-  # static_framework / :linkage => :static tuning that needs to be validated
-  # on a real Mac before landing. Until then, FaceMeshManager runs the
-  # gracefully-degraded code path guarded by #if canImport(MediaPipeTasksVision).
-  # s.dependency 'MediaPipeTasksVision', '~> 0.10'
+  # MediaPipe for on-device face mesh (Geometric Coherence). The
+  # MediaPipeTasksVision pod vendors static xcframeworks (MediaPipeTasksVision
+  # and its transitive dep MediaPipeTasksCommon). CocoaPods refuses to let a
+  # DYNAMIC framework embed static transitive deps, so UseSenseSDK must declare
+  # itself as a static framework via `s.static_framework = true` below. With
+  # that flag set, `determine_build_type` (cocoapods/installer/analyzer.rb)
+  # resolves UseSenseSDK to `BuildType.static_framework`, which removes it from
+  # the dynamic_pod_targets set that `verify_no_static_framework_transitive_dependencies`
+  # inspects, and the lint error goes away. The consumer Podfile can keep using
+  # plain `use_frameworks!` (dynamic linkage) -- it's only OUR pod that needs
+  # to be static.
+  s.dependency 'MediaPipeTasksVision', '~> 0.10'
+  s.static_framework = true
 
   s.exclude_files    = 'Tests/**/*', 'Example/**/*', 'UseSenseDemo/**/*'
 
