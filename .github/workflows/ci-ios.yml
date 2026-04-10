@@ -17,8 +17,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Lint podspec
-        run: pod lib lint UseSenseSDK.podspec --allow-warnings --no-clean
+      # We use `--quick` (podspec metadata + syntax only, no download/build)
+      # because Google's MediaPipeTasksVision pod ships xcframeworks with a
+      # broken Info.plist (LibraryPath declared as ".a" but the actual file on
+      # disk is a ".framework/" directory). CocoaPods trusts the Info.plist
+      # and emits `-lMediaPipeTasksCommon` linker flags that fail to resolve,
+      # which makes a full `pod lib lint` impossible for any podspec that
+      # depends on MediaPipeTasksVision. The workaround (patch the Info.plist
+      # in a Podfile pre_install hook, see Example/Podfile) cannot be applied
+      # inside `pod lib lint` because the linter generates a fully-hardcoded
+      # synthetic Podfile with no hook extension points.
+      #
+      # Full end-to-end validation runs in the `build-example` job below,
+      # which does `pod install` (running our pre_install patch) and then
+      # builds the Example app with xcodebuild.
+      - name: Lint podspec (metadata/syntax only)
+        run: pod lib lint UseSenseSDK.podspec --allow-warnings --quick
 
   build:
     name: Build SDK (${{ matrix.destination }})

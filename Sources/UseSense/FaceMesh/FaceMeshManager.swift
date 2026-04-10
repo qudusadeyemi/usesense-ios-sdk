@@ -57,7 +57,8 @@ final class FaceMeshManager: @unchecked Sendable {
 
     /// Initialize MediaPipe FaceLandmarker model.
     /// Loads face_landmarker.task from the bundled Resources directory via
-    /// Bundle.module.url(forResource:withExtension:). Falls back to no face
+    /// Bundle.useSenseResources (cross-toolchain: Bundle.module on SwiftPM,
+    /// nested UseSenseSDK.bundle lookup on CocoaPods). Falls back to no face
     /// mesh signals if MediaPipeTasksVision is not linked (SwiftPM build) or
     /// if the bundled asset is missing (gap before the first sync run).
     func setup() {
@@ -65,7 +66,7 @@ final class FaceMeshManager: @unchecked Sendable {
             guard let self = self else { return }
             #if canImport(MediaPipeTasksVision)
             do {
-                guard let modelURL = Bundle.module.url(
+                guard let modelURL = Bundle.useSenseResources.url(
                     forResource: MediaPipeModelInfo.resourceName,
                     withExtension: MediaPipeModelInfo.resourceExtension
                 ) else {
