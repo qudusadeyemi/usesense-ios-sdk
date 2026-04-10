@@ -33,8 +33,12 @@ Pod::Spec.new do |s|
   s.frameworks       = 'AVFoundation', 'CoreMotion', 'UIKit', 'Accelerate'
   s.weak_frameworks  = 'LocalAuthentication', 'DeviceCheck', 'CryptoKit'
 
-  # MediaPipe for on-device face mesh (Geometric Coherence)
-  # s.dependency 'MediaPipeTasksVision', '~> 0.10'
+  # MediaPipe for on-device face mesh (Geometric Coherence).
+  # CocoaPods-only dependency: Google does not ship MediaPipeTasksVision as a
+  # Swift Package. SwiftPM consumers get the gracefully-degraded FaceMeshManager
+  # code path (no face mesh signals); both code paths are guarded by
+  # #if canImport(MediaPipeTasksVision).
+  s.dependency 'MediaPipeTasksVision', '~> 0.10'
 
   s.exclude_files    = 'Tests/**/*', 'Example/**/*', 'UseSenseDemo/**/*'
 

@@ -1,0 +1,69 @@
+name: MediaPipe Parity Check
+
+# Verifies that the bundled face_landmarker.task bytes hash to the SHA-256
+# declared in MediaPipeModelInfo.sha256. Required check on every PR that
+# touches either file. Skips gracefully if the asset is not yet present
+# (the Phase 3 PR ships the constants file without bytes; bytes arrive via
+# the mediapipe-sdk-sync workflow's first run from usesense-watchtower).
+
+on:
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'Sources/UseSense/Resources/face_landmarker.task'
+      - 'Sources/UseSense/FaceMesh/MediaPipeModelInfo.swift'
+      - '.github/workflows/mediapipe-parity-check.yml'
+  push:
+    branches: [main, master]
+    paths:
+      - 'Sources/UseSense/Resources/face_landmarker.task'
+      - 'Sources/UseSense/FaceMesh/MediaPipeModelInfo.swift'
+      - '.github/workflows/mediapipe-parity-check.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: Verify bundled bytes match MediaPipeModelInfo.sha256
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check declared sha256 vs actual bytes
+        run: |
+          set -euo pipefail
+          ASSET=Sources/UseSense/Resources/face_landmarker.task
+          CONST=Sources/UseSense/FaceMesh/MediaPipeModelInfo.swift
+
+          if [ ! -f "$CONST" ]; then
+            echo "::error::Missing $CONST"
+            exit 1
+          fi
+
+          if [ ! -f "$ASSET" ]; then
+            echo "::warning::$ASSET not present yet. Skipping byte parity check."
+            echo "The mediapipe-sdk-sync workflow in usesense-watchtower will deliver the bytes on first run."
+            exit 0
+          fi
+
+          declared=$(grep -oE 'sha256: String = "[a-f0-9]{64}"' "$CONST" | grep -oE '[a-f0-9]{64}')
+          if [ -z "$declared" ]; then
+            echo "::error::Could not find sha256 constant in $CONST"
+            exit 1
+          fi
+
+          actual=$(sha256sum "$ASSET" | awk '{print $1}')
+
+          echo "Declared: $declared"
+          echo "Actual:   $actual"
+
+          if [ "$declared" != "$actual" ]; then
+            echo "::error::Bundled bytes ($actual) do not match MediaPipeModelInfo.sha256 ($declared)"
+            echo "::error::Either re-run the mediapipe-sdk-sync workflow in usesense-watchtower"
+            echo "::error::or update MediaPipeModelInfo.swift to match the new bytes."
+            exit 1
+          fi
+
+          echo "Parity check passed."
