@@ -501,7 +501,9 @@ public final class UseSenseSession: @unchecked Sendable {
         var faceMeshSignals: [String: Any]?
         if !meshResults.isEmpty {
             faceMeshSignals = [
-                "model": "mediapipe_face_landmarker_v2",
+                "model": MediaPipeModelInfo.versionLabel,
+                "model_sha256": MediaPipeModelInfo.sha256,
+                "model_source": MediaPipeModelInfo.sourceUrl,
                 "frame_count": meshResults.count,
                 "frames": meshResults.map { result -> [String: Any] in
                     [
