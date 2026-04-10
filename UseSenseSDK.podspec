@@ -40,6 +40,14 @@ Pod::Spec.new do |s|
   # #if canImport(MediaPipeTasksVision).
   s.dependency 'MediaPipeTasksVision', '~> 0.10'
 
+  # MediaPipeTasksVision and its transitive dep MediaPipeTasksCommon ship as
+  # static xcframeworks. CocoaPods refuses to link static binaries through a
+  # dynamic framework, so UseSenseSDK must declare itself as a static framework
+  # too. With this set, MediaPipe's static binaries are embedded into the
+  # UseSenseSDK.framework that consumers link against, and the lint error
+  # "transitive dependencies that include statically linked binaries" goes away.
+  s.static_framework = true
+
   s.exclude_files    = 'Tests/**/*', 'Example/**/*', 'UseSenseDemo/**/*'
 
   s.pod_target_xcconfig = {
