@@ -1,0 +1,91 @@
+name: UseSenseSDK
+
+# ─────────────────────────────────────────────────────────────────────────
+# This XcodeGen spec exists ONLY to produce the UseSenseSDK.xcframework
+# that ships on the GitHub Release page for manual-install integrators.
+#
+# Why this lives alongside Package.swift instead of replacing it:
+#   * SwiftPM consumers keep their Package.swift entrypoint. No change
+#     to the public product shape for SPM users.
+#   * CocoaPods consumers keep UseSenseSDK.podspec and its own build rules.
+#   * XCFramework consumers get a proper dynamic .framework with Modules/,
+#     Headers, Info.plist and flattened resources that xcodebuild's
+#     "archive a SwiftPM package" path cannot produce. SwiftPM archives
+#     only emit a binary + sibling resource bundle with no Modules dir,
+#     so dragging that into a host app leaves `import UseSenseSDK` broken.
+#
+# Source layout is NOT duplicated. `sources:` points at ../Sources/UseSense,
+# the same directory Package.swift compiles. XcodeGen globs the Swift files
+# and resources automatically, so there's exactly one source of truth.
+#
+# SWIFT_PACKAGE is intentionally NOT set for this target, so
+# Bundle+UseSense.swift takes the CocoaPods fallback branch
+# (Bundle(for: BundleToken.self)) which resolves to the framework bundle
+# itself -- and iOS frameworks are flat-bundled, so the .task / .xcprivacy
+# resources sit at the framework root where BundleToken can find them.
+# ─────────────────────────────────────────────────────────────────────────
+
+options:
+  bundleIdPrefix: ai.usesense
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "15.0"
+  groupSortPosition: top
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    BUILD_LIBRARY_FOR_DISTRIBUTION: YES
+    SKIP_INSTALL: NO
+    DEFINES_MODULE: YES
+    CODE_SIGNING_ALLOWED: NO
+    APPLICATION_EXTENSION_API_ONLY: NO
+
+targets:
+  UseSenseSDK:
+    type: framework
+    platform: iOS
+    info:
+      # XcodeGen only auto-generates an Info.plist when an `info:` block
+      # is declared; otherwise framework targets archive with no plist
+      # at all and the resulting .framework fails to load at runtime.
+      path: Generated/Info.plist
+      properties:
+        CFBundleIdentifier: ai.usesense.sdk
+        CFBundleName: UseSenseSDK
+        CFBundleDisplayName: UseSenseSDK
+        CFBundleShortVersionString: "4.2.0"
+        CFBundleVersion: "1"
+        CFBundlePackageType: FMWK
+        CFBundleExecutable: UseSenseSDK
+        CFBundleInfoDictionaryVersion: "6.0"
+        NSHumanReadableCopyright: "Copyright © 2026 UseSense. All rights reserved."
+        MinimumOSVersion: "15.0"
+    sources:
+      # Swift source files (Resources/ excluded so they don't get
+      # misclassified as sources by the glob).
+      - path: ../Sources/UseSense
+        excludes:
+          - "Resources/**"
+      # Resource files added individually as a group (not a folder
+      # reference) so iOS's flat bundle layout applies -- each file
+      # lands at the framework root, matching where BundleToken expects
+      # to find it via `Bundle(for:).url(forResource:withExtension:)`.
+      - path: ../Sources/UseSense/Resources/face_landmarker.task
+        buildPhase: resources
+      - path: ../Sources/UseSense/Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: UseSenseSDK
+        PRODUCT_MODULE_NAME: UseSenseSDK
+        PRODUCT_BUNDLE_IDENTIFIER: ai.usesense.sdk
+        MARKETING_VERSION: "4.2.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INSTALL_PATH: "/Library/Frameworks"
+        DYLIB_INSTALL_NAME_BASE: "@rpath"
+        LD_RUNPATH_SEARCH_PATHS:
+          - "@executable_path/Frameworks"
+          - "@loader_path/Frameworks"
