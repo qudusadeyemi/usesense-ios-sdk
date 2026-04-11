@@ -1,0 +1,27 @@
+PODS:
+  - MediaPipeTasksCommon (0.10.33)
+  - MediaPipeTasksVision (0.10.33):
+    - MediaPipeTasksCommon (= 0.10.33)
+  - UseSenseSDK (4.1.0):
+    - MediaPipeTasksVision (~> 0.10)
+
+DEPENDENCIES:
+  - UseSenseSDK (from `../`)
+
+SPEC REPOS:
+  trunk:
+    - MediaPipeTasksCommon
+    - MediaPipeTasksVision
+
+EXTERNAL SOURCES:
+  UseSenseSDK:
+    :path: "../"
+
+SPEC CHECKSUMS:
+  MediaPipeTasksCommon: 912f7942cc3aa057bb406af435aaea4c1959255a
+  MediaPipeTasksVision: 2df54e614f029da790f442c8b330a37c841a422f
+  UseSenseSDK: 1485275a148a60ce9cf794b715d53edb50c37503
+
+PODFILE CHECKSUM: a2f5ac2e4d9815bf95e9ea9f7dd14953ada12a8f
+
+COCOAPODS: 1.16.2
