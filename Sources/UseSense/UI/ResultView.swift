@@ -25,11 +25,20 @@ struct ResultView: View {
                 Text(resultTitle)
                     .font(.system(size: 26, weight: .bold))
                     .foregroundColor(Color.UseSense.textPrimary)
+                    // `.multilineTextAlignment(.center)` centers each line
+                    // within the text bounds when the title wraps (e.g.
+                    // "Verification Unsuccessful" on narrow iPhone SE
+                    // widths). Without this, wrapped lines left-align
+                    // inside the Text widget and visually drift off-centre
+                    // from the icon and subtitle above/below.
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
 
                 Text(resultSubtitle)
                     .font(.system(size: 16))
                     .foregroundColor(Color.UseSense.textSecondary)
                     .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
                     .padding(.horizontal, 8)
 
                 Button(action: onDismiss) {
@@ -141,11 +150,19 @@ struct FailureView: View {
                 Text(errorTitle)
                     .font(.system(size: 26, weight: .bold))
                     .foregroundColor(Color.UseSense.textPrimary)
+                    // See ResultView above for the reasoning. Titles
+                    // like "Something Went Wrong" and "Camera Unavailable"
+                    // wrap on smaller screens; without explicit multiline
+                    // centre alignment, the wrapped lines left-align
+                    // within the Text widget and look off.
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
 
                 Text(error.message)
                     .font(.system(size: 16))
                     .foregroundColor(Color.UseSense.textSecondary)
                     .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
                     .padding(.horizontal, 8)
 
                 if error.isRetryable {
