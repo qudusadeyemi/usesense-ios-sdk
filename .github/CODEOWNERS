@@ -1,0 +1,8 @@
+# CODEOWNERS for the UseSense iOS SDK.
+#
+# The owner on every line is requested as a reviewer automatically on
+# any PR that modifies files matching the pattern.
+#
+# Syntax reference: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-security/customizing-your-repository/about-code-owners
+
+* @qudusadeyemi
