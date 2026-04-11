@@ -17,6 +17,8 @@
 
 /* Begin PBXFileReference section */
 		238F2E75211EB74819DEFCED /* Pods-UseSenseExample.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-UseSenseExample.debug.xcconfig"; path = "Target Support Files/Pods-UseSenseExample/Pods-UseSenseExample.debug.xcconfig"; sourceTree = "<group>"; };
+		A2000010 /* Signing.debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.debug.xcconfig; sourceTree = "<group>"; };
+		A2000011 /* Signing.release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.release.xcconfig; sourceTree = "<group>"; };
 		A2000001 /* UseSenseExampleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UseSenseExampleApp.swift; sourceTree = "<group>"; };
 		A2000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A2000003 /* VerificationResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationResultView.swift; sourceTree = "<group>"; };
@@ -61,10 +63,20 @@
 			isa = PBXGroup;
 			children = (
 				A5000002 /* UseSenseExample */,
+				A5000004 /* Config */,
 				A5000003 /* Products */,
 				060E9BEA0703478FCC51D344 /* Pods */,
 				60E4FE99CC78D9BB3685788F /* Frameworks */,
 			);
+			sourceTree = "<group>";
+		};
+		A5000004 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A2000010 /* Signing.debug.xcconfig */,
+				A2000011 /* Signing.release.xcconfig */,
+			);
+			name = Config;
 			sourceTree = "<group>";
 		};
 		A5000002 /* UseSenseExample */ = {
@@ -338,7 +350,7 @@
 		};
 		A8000006 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 238F2E75211EB74819DEFCED /* Pods-UseSenseExample.debug.xcconfig */;
+			baseConfigurationReference = A2000010 /* Signing.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -367,7 +379,7 @@
 		};
 		A8000007 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = C47B4AFF0DD16E81596014EF /* Pods-UseSenseExample.release.xcconfig */;
+			baseConfigurationReference = A2000011 /* Signing.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
