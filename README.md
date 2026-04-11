@@ -17,7 +17,7 @@ Native iOS SDK for human presence verification. Verify real humans, detect deepf
 Add to your Podfile:
 
 ```ruby
-pod 'UseSenseSDK', '~> 4.1'
+pod 'UseSenseSDK', '~> 4.2'
 ```
 
 Then run:
@@ -28,25 +28,64 @@ pod install
 
 Open the `.xcworkspace` file (not `.xcodeproj`).
 
+### Optional: Enable On-Device Face Mesh (Geometric Coherence pillar)
+
+The on-device face-mesh feature uses Google's `MediaPipeTasksVision` CocoaPod. Google's upstream xcframework ships with a broken `Info.plist` (`LibraryPath: MediaPipeTasksCommon.a` for a file that's actually a `.framework/` directory), so CocoaPods generates a `-lMediaPipeTasksCommon` linker flag that fails with `ld: library 'MediaPipeTasksCommon' not found`. UseSenseSDK cannot declare `MediaPipeTasksVision` as a transitive dependency because `pod lib lint` and `pod trunk push` would both reject the spec.
+
+To enable face-mesh in your app, add the dependency directly and patch the upstream `Info.plist` via a `pre_install` hook in your Podfile:
+
+```ruby
+target 'YourApp' do
+  use_frameworks!
+
+  pod 'UseSenseSDK', '~> 4.2'
+  pod 'MediaPipeTasksVision', '~> 0.10'
+end
+
+# Patches Google's MediaPipeTasks{Common,Vision}.xcframework Info.plist
+# in place so CocoaPods classifies them as frameworks (not static libs)
+# and emits the correct -framework linker flag instead of -l.
+#
+# When Google publishes a fixed upstream version, this hook can be removed.
+pre_install do |installer|
+  %w[MediaPipeTasksCommon MediaPipeTasksVision].each do |name|
+    plist_path = "#{installer.sandbox.root}/#{name}/frameworks/#{name}.xcframework/Info.plist"
+    next unless File.exist?(plist_path)
+
+    contents = File.read(plist_path)
+    fixed = contents.gsub(
+      "<string>#{name}.a</string>",
+      "<string>#{name}.framework</string>",
+    )
+    next if fixed == contents
+
+    File.write(plist_path, fixed)
+    puts "[UseSenseSDK] Patched #{plist_path} (LibraryPath .a -> .framework)"
+  end
+end
+```
+
+If you don't need face mesh, you can omit the `MediaPipeTasksVision` pod and the `pre_install` hook entirely. UseSenseSDK gates the face-mesh code path behind `#if canImport(MediaPipeTasksVision)`, so it builds and runs cleanly with or without the MediaPipe dependency. The DeepSense, LiveSense, and MatchSense pillars all continue to work, and `FaceMeshManager.setup()` returns immediately with `isReady=false` so the rest of the SDK never tries to use face-mesh data.
+
 ### Swift Package Manager
 
 In Xcode: **File > Add Package Dependencies**, enter:
 
 ```
-https://github.com/usesense/usesense-ios-sdk.git
+https://github.com/qudusadeyemi/usesense-ios-sdk.git
 ```
 
-Select version "Up to Next Major" from `4.1.0`.
+Select version "Up to Next Major" from `4.2.0`.
 
 Or add to your `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/usesense/usesense-ios-sdk.git", from: "4.1.0")
+.package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.2.0")
 ```
 
 ### Manual Installation
 
-1. Download `UseSenseSDK.xcframework` from the [latest GitHub Release](https://github.com/usesense/usesense-ios-sdk/releases/latest)
+1. Download `UseSenseSDK.xcframework` from the [latest GitHub Release](https://github.com/qudusadeyemi/usesense-ios-sdk/releases/latest)
 2. Drag it into your Xcode project
 3. In your target's **General** tab, ensure it appears under "Frameworks, Libraries, and Embedded Content" set to **Embed & Sign**
 
