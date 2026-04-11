@@ -757,9 +757,15 @@ extension UseSenseSession: FrameCaptureDelegate {
             ])
         }
 
-        // Run face mesh analysis on every frame for suspicion engine
+        // Run face mesh analysis on every camera frame — the suspicion
+        // engine consumes per-frame telemetry during the face guide stage
+        // as well as active capture. The returned result is also the
+        // input the verification package needs, but only for frames that
+        // are ALSO being buffered to the JPEG upload buffer below. See
+        // `FaceMeshManager.recordResult` for the full rationale.
         let timestampMs = Int64(CMTimeGetSeconds(timestamp) * 1000)
-        if let meshResult = faceMeshManager.processFrame(pixelBuffer, timestampMs: timestampMs) {
+        let meshResult = faceMeshManager.processFrame(pixelBuffer, timestampMs: timestampMs)
+        if let meshResult = meshResult {
             // Feed suspicion engine (runs on every 2nd frame internally)
             let luminance = latestQualityReport.map { Double($0.meanBrightness) } ?? 128.0
             let sharpness = latestQualityReport.map { Double($0.laplacianVariance) } ?? 50.0
@@ -769,9 +775,22 @@ extension UseSenseSession: FrameCaptureDelegate {
         // Only store frames during active capture phases
         guard isCapturingFrames else { return }
 
+        // If face mesh failed for this camera frame (face not detected,
+        // MediaPipe throw, etc.), skip capture entirely — do NOT even
+        // consult `frameBuffer.shouldCapture()`, because that method
+        // mutates `lastCaptureTime` as a side effect and would burn the
+        // throttle slot on a frame we cannot pair. Waiting for the next
+        // frame with a valid mesh result keeps the capture cadence
+        // aligned and preserves the invariant that `meshResults[i]`
+        // and `frameHashes[i]` are always the same camera frame.
+        guard let meshResult = meshResult else { return }
+
         if frameBuffer.shouldCapture() && !frameBuffer.isFull {
             let frameIndex = frameBuffer.count
             frameBuffer.addFrame(pixelBuffer, timestamp: CMTimeGetSeconds(timestamp))
+            // Record the mesh result in the SAME delegate callback that
+            // buffers the JPEG, so array indices line up 1:1 downstream.
+            faceMeshManager.recordResult(meshResult)
             challengeResponseBuilder.recordFrame(frameIndex: frameIndex, timestampMs: timestampMs)
             eventEmitter.emit(.frameCaptured, data: ["count": "\(frameBuffer.count)"])
         } else if frameBuffer.isFull {
