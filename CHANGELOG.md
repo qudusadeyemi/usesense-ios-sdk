@@ -4,6 +4,67 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.2.0] - 2026-04-11
+
+### Added
+
+#### On-device Face Mesh (MediaPipe)
+- **MediaPipe FaceLandmarker integration** via the `MediaPipeTasksVision` CocoaPod. The `face_landmarker.task` model is bundled inside the `UseSenseSDK` resource bundle and loaded at session start. Falls back gracefully to a no-face-mesh code path when the module is not linked (SwiftPM build) or the bundled asset is absent (pre-first-sync-run of the mediapipe-sdk-sync workflow). Model bytes are pinned to `64184e22` and kept in lockstep with the web SDK by the shared MediaPipe sync workflow.
+- **`OnDevice3DMMFitter.projectionBasis`** — deterministic 12 × 117 orthonormal projection generated once at static init via xorshift64* + Gram-Schmidt. Replaces a degenerate weighted-sum stub that produced near-zero cross-frame variance in shape parameters and tripped the backend's mesh-integrity validator on every stable-face session. Variance now lands around ~1e-4 in practice, four orders of magnitude above the backend's variance floor. Documented as a Johnson-Lindenstrauss random projection — not trained PCA — so inter-face distinguishability is preserved without a dataset. A real trained basis is a planned follow-up and drops in without changing the wire format.
+
+#### Device Telemetry
+- **`DeviceSignalCollector`** now populates the watchtower dashboard's Device / Hardware / Display & Power / Connection / WebGL Renderer / User Agent / Language cards for iOS sessions (which were previously blank because they had been designed around the web SDK's browser-API values):
+  - `webgl_vendor` / `webgl_renderer` from `MTLCreateSystemDefaultDevice().name` (guarded by `#if canImport(Metal)`)
+  - `battery.{level,charging}` nested dict from `UIDevice.current.batteryLevel` / `.batteryState`
+  - `connection.effective_type` from the existing Network framework resolver
+  - `language` + `languages` from `Locale.current.identifier` and `Locale.preferredLanguages`
+  - `hardware_concurrency` from `ProcessInfo.processInfo.activeProcessorCount`
+  - `device_memory` from `ProcessInfo.processInfo.physicalMemory` (rounded to nearest 0.1 GB)
+  - `user_agent` synthesized as `"UseSense-iOS-SDK/<version> (<model>; <os>; <locale>)"` matching the web SDK's convention
+  - `viewport_size` (pt-based) alongside the existing `screen_width`/`screen_height` (px-based)
+  - `screen_resolution` as a single string, `device_pixel_ratio`, `color_depth` (24), `max_touch_points` (5)
+  - All legacy flat keys (`device_model`, `battery_level`, `network_type`, `locale`, …) are preserved alongside the new nested shapes, so any code reading the 4.1.0 schema keeps working.
+
+#### Cryptographic Binding
+- **`BindingProofGenerator.formatCanonicalDouble`** — new internal helper that mirrors JavaScript's `JSON.stringify` / `Number.prototype.toString()` byte-for-byte, so the canonical mesh JSON the SDK hashes matches what the backend's `computeMeshDigest` produces. Handles the three known Swift ↔ JS divergence cliffs:
+  - Small magnitudes `[1e-6, 1e-4)` where Swift emits `"1e-05"` but JS wants `"0.00001"` (expands scientific to fixed).
+  - Scientific exponent format where Swift emits `"1e-07"` but JS wants `"1e-7"` (strips leading zero from the exponent).
+  - Large magnitudes `[1e17, 1e21)` where Swift emits `"1e+20"` but JS wants `"100000000000000000000"` (expands scientific to long integer).
+- **`Tests/UseSenseTests/BindingProofGeneratorTests.swift`** — 14-case test suite covering zero / NaN / infinity, integer trailing `.0` stripping, all three cliff regions, real production shape-param values, and a hardcoded `meshDigest` reference vector verified against Node 20's `crypto.createHash('sha256')` so future numeric-serialisation drift is caught immediately.
+
+#### Example app
+- **`Example/Signing.debug.xcconfig`** and **`Example/Signing.release.xcconfig`** — committed xcconfig files that `#include` the CocoaPods-generated xcconfigs so pod settings flow through unchanged, then `#include?` an optional `Signing.local.xcconfig` (gitignored) where each developer sets their own `DEVELOPMENT_TEAM`. The Example target's `baseConfigurationReference` now points at these files for both Debug and Release. Eliminates the "dirty `project.pbxproj` on every clone" problem where Xcode was auto-adding the first developer's team ID to the committed project file.
+
+### Changed
+
+#### Canonical mesh JSON format
+The `meshDigest` canonical JSON format changed to match the backend's `computeMeshDigest` exactly. This is a **coordinated wire-format update** with the `usesense-watchtower` edge function — SDK clients on 4.2.0 pair with edge function v49 or later. The old 4.1.0 format was byte-incompatible with the current backend and will fail binding verification at tier `binding`.
+
+- Field order is now `s, p, d, l` (matches backend `JSON.stringify` key order).
+- `p` is now an **array** `[yaw, pitch, roll]`, not an object `{y, p, r}`.
+- `l` is now the literal string `"none"` because the iOS SDK does not upload raw landmarks in `verification_package.frames`. The backend's `computeMeshDigest` also emits `"none"` when the same condition holds.
+- Floating-point formatting now flows through `formatCanonicalDouble` (see Added) for JS parity.
+
+#### Verification package `frameIndex`
+- `VerificationPackageBuilder.build` now emits the **upload-position loop index** (`i`) in `frame.frameIndex` instead of `FaceMeshManager.frameIndex` (which was a camera-sequence counter). This aligns with what the backend's `validateBinding` secondary cross-check expects and silences the "SDK frameIndex is not aligned with upload order" warning the edge function was emitting per frame on every 4.1.0 session.
+
+#### Face mesh ↔ JPEG pairing
+- **`FaceMeshManager.processFrame`** no longer auto-appends to the internal results array. It still runs on every camera frame and returns a `FaceMeshResult` so the suspicion engine can consume per-frame telemetry during the face guide stage.
+- **New `FaceMeshManager.recordResult(_:)`** method called explicitly by the capture delegate only when the frame is also being buffered to the JPEG upload buffer. This guarantees `meshResults[i]` and `frameHashes[i]` correspond to the **same camera frame**, which was previously a coincidental property — `processFrame` ran at camera rate while JPEG capture ran at the throttled `targetFps` rate, so the array zip in `VerificationPackageBuilder.build` was an arbitrary pairing. The binding proof HMAC was always internally valid, but the mesh-to-JPEG semantic pairing is now actually what the code implies.
+- `recordResult` reassigns the result's `frameIndex` to its upload-aligned position (`results.count` at record time), making `results[i].frameIndex == i` an invariant.
+- If `processFrame` returns `nil` for a capture-eligible camera frame (face not detected this frame), the delegate **skips the `frameBuffer.shouldCapture()` check entirely** to avoid mutating `lastCaptureTime` and wasting a capture slot on a frame that cannot be paired.
+
+#### Example app environment handling
+- **`UseSenseConfig` environment now explicit** in the Example app. `UseSenseConfig.init(apiKey:)` without an explicit environment falls through to `Environment.detect(from:)`, which defaults to `.production` for any API key that does not literally start with `sk_sandbox_` / `pk_sandbox_` / `dk_sandbox_`. Real-world sandbox keys without a literal prefix were being silently routed to the production account and failing with 402 insufficient_credits. Example app now passes `environment: useProduction ? .production : .sandbox` explicitly from a toggle.
+- **`.fullScreenCover(isPresented:)` split-state coordination bug** in the Example app fixed by switching to `.fullScreenCover(item:)` bound to a single `SessionWrapper: Identifiable` wrapper. The old two-state approach (`showVerification` + `activeSession`) had a SwiftUI evaluation-order bug where the cover's content closure could see `activeSession` as `nil` and render an empty cover.
+
+### Fixed
+
+- **Mesh integrity "possible replay" false positive.** Pre-4.2.0 sessions on a stable face tripped the backend's `MIN_SHAPE_VARIANCE` floor because the on-device 3DMM fitter was a degenerate weighted-sum stub. The new orthonormal projection (see Added) pushes variance to ~1e-4 in practice, consistently well above the floor.
+- **Mesh integrity "binding tier" failure** on every iOS session. The canonical JSON format change (see Changed) makes the SDK's `meshDigest` byte-match the backend's `computeMeshDigest`, so the per-frame `bindingProof` HMAC now verifies end-to-end.
+- **Per-frame "SDK frameIndex is not aligned with upload order" warning** the backend emits on every 4.1.0 session. Fixed at the wire level by the `VerificationPackageBuilder` change above and at the semantic level by the `FaceMeshManager` refactor.
+- **Dirty `project.pbxproj` on every developer's clone** after opening the Example target in Xcode for signing. Team ID now lives in a gitignored `Signing.local.xcconfig` outside the project file.
+
 ## [4.1.0] - 2026-04-06
 
 ### Breaking Changes
@@ -59,5 +120,6 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - Privacy manifest (PrivacyInfo.xcprivacy) for App Store compliance
 - Sandbox and production environment support
 
-[4.1.0]: https://github.com/usesense/usesense-ios-sdk/releases/tag/v4.1.0
-[1.0.0]: https://github.com/usesense/usesense-ios-sdk/releases/tag/v1.0.0
+[4.2.0]: https://github.com/qudusadeyemi/usesense-ios-sdk/releases/tag/v4.2.0
+[4.1.0]: https://github.com/qudusadeyemi/usesense-ios-sdk/releases/tag/v4.1.0
+[1.0.0]: https://github.com/qudusadeyemi/usesense-ios-sdk/releases/tag/v1.0.0
