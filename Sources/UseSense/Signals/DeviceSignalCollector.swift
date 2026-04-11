@@ -4,6 +4,9 @@ import Foundation
 import CoreMotion
 import AVFoundation
 import Network
+#if canImport(Metal)
+import Metal
+#endif
 
 struct SensorSample: Codable, Sendable {
     let t: Int64  // ms since sensor start
@@ -97,36 +100,72 @@ final class DeviceSignalCollector: @unchecked Sendable {
         signals["sdk_version"] = UseSenseAPIClient.sdkVersion
 
         // Device info
-        signals["device_model"] = deviceModelIdentifier()
+        let modelId = deviceModelIdentifier()
+        let osVersion = "iOS \(device.systemVersion)"
+        signals["device_model"] = modelId
         signals["device_manufacturer"] = "Apple"
-        signals["os_version"] = "iOS \(device.systemVersion)"
+        signals["os_version"] = osVersion
         signals["device_name"] = device.name
 
-        // Screen
-        signals["screen_width"] = Int(screen.nativeBounds.width)
-        signals["screen_height"] = Int(screen.nativeBounds.height)
+        // Screen (legacy flat + watchtower-shaped keys)
+        let pxW = Int(screen.nativeBounds.width)
+        let pxH = Int(screen.nativeBounds.height)
+        let ptW = Int(screen.bounds.width)
+        let ptH = Int(screen.bounds.height)
+        signals["screen_width"] = pxW
+        signals["screen_height"] = pxH
         signals["screen_density"] = Int(screen.scale)
+        signals["screen_resolution"] = "\(pxW)x\(pxH)"
+        signals["device_pixel_ratio"] = screen.scale
+        signals["viewport_size"] = "\(ptW)x\(ptH)"
+        signals["color_depth"] = 24
+        signals["max_touch_points"] = 5
+
+        // GPU (watchtower "WebGL Renderer" card — populated from Metal on native iOS)
+        #if canImport(Metal)
+        if let mtlDevice = MTLCreateSystemDefaultDevice() {
+            signals["webgl_vendor"] = "Apple"
+            signals["webgl_renderer"] = mtlDevice.name
+        }
+        #endif
 
         // Camera
         signals["camera_facing"] = cameraFacing
         signals["camera_resolution"] = cameraResolution
 
-        // Battery
+        // Battery (legacy flat + nested shape expected by watchtower Display & Power card)
         if device.batteryState != .unknown {
             signals["battery_level"] = device.batteryLevel
             signals["battery_charging"] = device.batteryState == .charging || device.batteryState == .full
+            signals["battery"] = [
+                "level": device.batteryLevel,
+                "charging": device.batteryState == .charging || device.batteryState == .full
+            ]
         }
 
-        // Network
+        // Network (legacy flat + nested connection shape expected by watchtower Connection card)
         lock.lock()
         let networkType = resolvedNetworkType
         lock.unlock()
         signals["network_type"] = networkType
+        signals["connection"] = ["effective_type": networkType]
 
-        // Locale/timezone
-        signals["locale"] = Locale.current.identifier
+        // Locale/timezone (legacy `locale` + watchtower-shaped `language`/`languages`)
+        let localeId = Locale.current.identifier
+        signals["locale"] = localeId
+        signals["language"] = localeId
+        signals["languages"] = Locale.preferredLanguages
         signals["timezone"] = TimeZone.current.identifier
         signals["timezone_offset"] = TimeZone.current.secondsFromGMT() / 60
+
+        // Hardware concurrency and device memory (watchtower Hardware card)
+        signals["hardware_concurrency"] = ProcessInfo.processInfo.activeProcessorCount
+        let ramBytes = Double(ProcessInfo.processInfo.physicalMemory)
+        let ramGB = (ramBytes / 1_000_000_000.0 * 10).rounded() / 10
+        signals["device_memory"] = ramGB
+
+        // Synthesized user agent string for the watchtower User Agent card
+        signals["user_agent"] = "UseSense-iOS-SDK/\(UseSenseAPIClient.sdkVersion) (\(modelId); \(osVersion); \(localeId))"
 
         // App info
         signals["app_package"] = Bundle.main.bundleIdentifier ?? "unknown"
