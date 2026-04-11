@@ -27,60 +27,67 @@ jobs:
     name: Build XCFramework
     runs-on: macos-15
     needs: validate
+    # The XCFramework attached to the GitHub Release is built from a
+    # dedicated Xcode framework target defined in XCFrameworkBuild/project.yml
+    # and generated at CI time via xcodegen, rather than from the SwiftPM
+    # package directly.
+    #
+    # Why: `xcodebuild archive` over a SwiftPM static library product only
+    # emits the compiled binary and a sibling resource bundle; the resulting
+    # `UseSenseSDK.framework` has no Modules/ or Info.plist, so consumers
+    # cannot `import UseSenseSDK` or runtime-load the framework. Flipping the
+    # SPM product to `.library(type: .dynamic, ...)` produces a binary but
+    # still doesn't populate Modules/, so it's not a workaround either.
+    #
+    # The wrapper project compiles the same Swift sources under
+    # Sources/UseSense/** as a proper Xcode framework target, so Xcode
+    # generates a complete .framework bundle (Headers, Modules/swiftmodule,
+    # Info.plist, flat resources) that is actually consumable by drag-in
+    # integrators. See XCFrameworkBuild/project.yml for details.
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate wrapper Xcode project
+        run: |
+          cd XCFrameworkBuild
+          xcodegen generate
 
       - name: Archive for iOS device
         run: |
           xcodebuild archive \
+            -project XCFrameworkBuild/UseSenseSDK.xcodeproj \
             -scheme UseSenseSDK \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath build/ios.xcarchive \
-            -skipPackagePluginValidation \
             SKIP_INSTALL=NO \
             BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-            CODE_SIGNING_ALLOWED=NO \
-            INSTALL_PATH=/Library/Frameworks
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Archive for iOS Simulator
         run: |
           xcodebuild archive \
+            -project XCFrameworkBuild/UseSenseSDK.xcodeproj \
             -scheme UseSenseSDK \
             -configuration Release \
             -destination 'generic/platform=iOS Simulator' \
             -archivePath build/sim.xcarchive \
-            -skipPackagePluginValidation \
             SKIP_INSTALL=NO \
             BUILD_LIBRARY_FOR_DISTRIBUTION=YES \
-            CODE_SIGNING_ALLOWED=NO \
-            INSTALL_PATH=/Library/Frameworks
-
-      - name: Locate frameworks
-        run: |
-          echo "=== iOS device archive ==="
-          find build/ios.xcarchive -name '*.framework' -type d 2>/dev/null || echo "none"
-          echo "=== iOS simulator archive ==="
-          find build/sim.xcarchive -name '*.framework' -type d 2>/dev/null || echo "none"
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Create XCFramework
         run: |
-          # SPM archives put frameworks under Products/usr/local/lib or Products/Library/Frameworks
-          DEVICE_FW=$(find build/ios.xcarchive -name 'UseSenseSDK.framework' -type d | head -1)
-          SIM_FW=$(find build/sim.xcarchive -name 'UseSenseSDK.framework' -type d | head -1)
+          DEVICE_FW=build/ios.xcarchive/Products/Library/Frameworks/UseSenseSDK.framework
+          SIM_FW=build/sim.xcarchive/Products/Library/Frameworks/UseSenseSDK.framework
 
-          # If not found as .framework, build from the .swiftmodule + static lib
-          if [ -z "$DEVICE_FW" ] || [ -z "$SIM_FW" ]; then
-            echo "Frameworks not found via archive. Trying PackageFrameworks path..."
-            DEVICE_FW=$(find build/ios.xcarchive -path '*/PackageFrameworks/UseSenseSDK.framework' -type d | head -1)
-            SIM_FW=$(find build/sim.xcarchive -path '*/PackageFrameworks/UseSenseSDK.framework' -type d | head -1)
-          fi
-
-          echo "Device framework: $DEVICE_FW"
-          echo "Simulator framework: $SIM_FW"
-
-          if [ -z "$DEVICE_FW" ] || [ -z "$SIM_FW" ]; then
-            echo "ERROR: Could not locate frameworks"
+          if [ ! -d "$DEVICE_FW" ] || [ ! -d "$SIM_FW" ]; then
+            echo "ERROR: Framework not found at expected archive path."
+            echo "Device: $DEVICE_FW ($(if [ -d "$DEVICE_FW" ]; then echo ok; else echo missing; fi))"
+            echo "Sim:    $SIM_FW ($(if [ -d "$SIM_FW" ]; then echo ok; else echo missing; fi))"
             find build -name 'UseSenseSDK*' -type d 2>/dev/null
             exit 1
           fi
