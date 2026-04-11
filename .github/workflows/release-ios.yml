@@ -1,9 +1,14 @@
 name: Release
 
+# Triggered automatically by pushing a `v*` tag (e.g. `v4.2.0`).
+# Also runnable manually via `gh workflow run release-ios.yml --ref <tag>`
+# or the "Run workflow" button in the Actions tab — useful for re-running
+# a release after a transient CI flake without re-tagging the commit.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -100,7 +105,21 @@ jobs:
     name: Publish to CocoaPods
     runs-on: macos-15
     needs: validate
-    if: ${{ secrets.COCOAPODS_TRUNK_TOKEN != '' }}
+    # Note: this job used to have
+    #   if: ${{ secrets.COCOAPODS_TRUNK_TOKEN != '' }}
+    # as a "graceful skip when token is missing" guard. That conditional
+    # is invalid at the job level — the `secrets` context is not in
+    # scope during workflow plan evaluation, so the expression errors
+    # out at startup and the ENTIRE workflow fails with `jobs: []`
+    # (zero jobs scheduled). Every release-ios.yml run since the
+    # conditional was added failed in 0s for this reason — the run
+    # appears in the Actions tab but no jobs ever materialise.
+    #
+    # COCOAPODS_TRUNK_TOKEN is now a required repo secret. If it
+    # isn't set when the workflow fires, the `pod trunk push` step
+    # below fails with a clear authentication error and the deploy
+    # can be retried via `gh workflow run release-ios.yml --ref <tag>`
+    # after adding the secret.
     steps:
       - uses: actions/checkout@v4
 
