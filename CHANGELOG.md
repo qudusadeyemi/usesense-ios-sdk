@@ -4,6 +4,36 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.2.2] - 2026-04-11
+
+Patch release fixing visual centring of terminal-state titles on
+narrow screens and in localised builds.
+
+### Fixed
+
+- **`ResultView` terminal screens** (APPROVE, REJECT, MANUAL_REVIEW):
+  The title text (e.g. "Verification Successful", "Verification
+  Unsuccessful", "Under Review") lacked an explicit
+  `.multilineTextAlignment(.center)` and an explicit
+  `.frame(maxWidth: .infinity)`. When the title wrapped to multiple
+  lines — which happens on iPhone SE widths and with longer
+  localisations — the wrapped lines left-aligned inside the `Text`
+  widget's intrinsic bounds, so the two-line title drifted off-
+  centre relative to the icon above and subtitle below. Added both
+  modifiers so wrapped titles centre row-by-row. Subtitles gained
+  the `.frame(maxWidth: .infinity)` treatment for the same reason.
+- **`FailureView` error titles** (`Something Went Wrong`,
+  `Connection Error`, `Camera Unavailable`, `Session Expired`,
+  `Rate Limited`): same fix, same reasoning — titles on the error
+  path now centre correctly when they wrap.
+
+### Unchanged
+
+- No SDK public API, ABI, or runtime behaviour changes. Only the
+  UI layout of terminal screens inside the SDK's own camera
+  activity is affected. Integrators don't need to update any code;
+  the patch is purely visual.
+
 ## [4.2.1] - 2026-04-11
 
 Documentation-only patch release. No runtime code, public API, or
