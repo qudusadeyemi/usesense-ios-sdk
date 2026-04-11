@@ -4,6 +4,26 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.2.1] - 2026-04-11
+
+Documentation-only patch release. No runtime code, public API, or
+ABI changes. Re-published to the CocoaPods trunk so the pod page at
+cocoapods.org renders the corrected developer-facing URLs in its
+README panel, which is frozen per version at publish time.
+
+### Fixed
+
+- README, INTEGRATION_GUIDE, Example/README, and the Example app's
+  ContentView now link to `https://watchtower.usesense.ai` (the
+  canonical app host) instead of the retired `app.usesense.ai`
+  marketing URL.
+- Developer documentation links now point at
+  `https://watchtower.usesense.ai/developer-docs` instead of the
+  placeholder `docs.usesense.com` host, which never existed.
+- All support contact references have been collapsed to the single
+  public address `support@usesense.ai`, replacing the stale
+  `support@usesense.com` alias.
+
 ## [4.2.0] - 2026-04-11
 
 ### Added

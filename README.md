@@ -170,7 +170,7 @@ present(viewController, animated: true)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `apiKey` | `String` | Required | Your API key from the [UseSense dashboard](https://app.usesense.ai). `sk_prod_*`/`pk_prod_*` = production, `sk_sandbox_*`/`pk_sandbox_*` = sandbox. |
+| `apiKey` | `String` | Required | Your API key from the [UseSense dashboard](https://watchtower.usesense.ai). `sk_prod_*`/`pk_prod_*` = production, `sk_sandbox_*`/`pk_sandbox_*` = sandbox. |
 | `apiEndpoint` | `String` | `api.usesense.ai/v1` | API endpoint URL. Override only for on-premise deployments. |
 | `environment` | `Environment?` | Auto-detected | `.sandbox`, `.production`, or `.auto`. Auto-detection uses the API key prefix. |
 | `branding` | `BrandingConfig?` | `nil` | Customize the verification UI appearance. |
@@ -600,7 +600,7 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 ## Sandbox vs Production
 
 - **Sandbox is free and unlimited.** Use it for all development and testing.
-- Sandbox and production use **separate API keys**. Generate both in the [UseSense dashboard](https://app.usesense.ai).
+- Sandbox and production use **separate API keys**. Generate both in the [UseSense dashboard](https://watchtower.usesense.ai).
 - Sandbox keys: `sk_sandbox_*` (secret) or `pk_sandbox_*` (publishable). Production keys: `sk_prod_*` (secret) or `pk_prod_*` (publishable).
 - **Secret keys (`sk_*`)** are for server-to-server calls only. **Never embed them in client apps.**
 - **Publishable keys (`pk_*`)** can be embedded in client apps for quick prototyping.
@@ -647,5 +647,5 @@ Proprietary. See [LICENSE](LICENSE) file.
 ## Support
 
 - **Documentation**: [https://docs.usesense.ai](https://docs.usesense.ai)
-- **Dashboard**: [https://app.usesense.ai](https://app.usesense.ai)
+- **Dashboard**: [https://watchtower.usesense.ai](https://watchtower.usesense.ai)
 - **Email**: [support@usesense.ai](mailto:support@usesense.ai)

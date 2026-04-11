@@ -25,7 +25,7 @@ Demonstrates SDK initialization, enrollment, authentication, event listening, an
 5. Open `UseSenseExample.xcworkspace` in Xcode (**not** `.xcodeproj` —
    CocoaPods requires the workspace so Xcode can see the Pods target
    graph alongside the Example target)
-6. Replace the API key placeholder in the app with your sandbox API key from [https://app.usesense.ai](https://app.usesense.ai)
+6. Replace the API key placeholder in the app with your sandbox API key from [https://watchtower.usesense.ai](https://watchtower.usesense.ai)
 7. Build and run on a physical device (camera required)
 
 ## What This Demonstrates
