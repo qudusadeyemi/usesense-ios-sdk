@@ -47,7 +47,13 @@ struct NormalizedRect: Sendable {
 final class FaceMeshManager: @unchecked Sendable {
     private let analysisQueue = DispatchQueue(label: "com.usesense.facemesh", qos: .userInitiated)
     private var isReady = false
-    private var frameIndex: Int = 0
+    /// Monotonic counter of successful `processFrame` calls since the
+    /// last `reset()`. Stamped into the `frameIndex` field of the returned
+    /// `FaceMeshResult` for telemetry/logging, but NOT the index used by
+    /// the verification package — that one is the upload-aligned position
+    /// assigned in `recordResult(_:)` below. See the docstring on
+    /// `recordResult` for the full story.
+    private var cameraFrameCounter: Int = 0
     private let lock = NSLock()
     private var results: [FaceMeshResult] = []
 
@@ -96,14 +102,17 @@ final class FaceMeshManager: @unchecked Sendable {
     }
 
     /// Process a camera frame and extract face mesh data.
-    /// Called from the capture delegate on each frame during active capture.
+    ///
+    /// Called from the capture delegate on EVERY camera frame that arrives
+    /// during a session (the face guide stage as well as active capture),
+    /// so the suspicion engine can consume per-frame telemetry. The
+    /// returned result is NOT automatically recorded into the internal
+    /// results array used by the verification package — the caller must
+    /// explicitly pass it to `recordResult(_:)` for frames that are
+    /// also being buffered to the JPEG upload buffer. See the docstring
+    /// on `recordResult` for why.
     func processFrame(_ pixelBuffer: CVPixelBuffer, timestampMs: Int64) -> FaceMeshResult? {
         guard isReady else { return nil }
-
-        lock.lock()
-        let index = frameIndex
-        frameIndex += 1
-        lock.unlock()
 
         guard let landmarkData = extractLandmarks(pixelBuffer) else { return nil }
 
@@ -112,8 +121,13 @@ final class FaceMeshManager: @unchecked Sendable {
         let rightEAR = computeEAR(landmarks: landmarkData, eye: .right)
         let bbox = computeBoundingBox(from: landmarkData)
 
-        let result = FaceMeshResult(
-            frameIndex: index,
+        lock.lock()
+        let cameraIndex = cameraFrameCounter
+        cameraFrameCounter += 1
+        lock.unlock()
+
+        return FaceMeshResult(
+            frameIndex: cameraIndex,
             timestampMs: timestampMs,
             headPose: pose,
             leftEAR: leftEAR,
@@ -121,12 +135,44 @@ final class FaceMeshManager: @unchecked Sendable {
             bbox: bbox,
             landmarks: landmarkData
         )
+    }
 
+    /// Record a `FaceMeshResult` from `processFrame(...)` into the
+    /// internal results array that the verification package reads from
+    /// via `getResults()`.
+    ///
+    /// The caller (FrameCaptureDelegate in UseSenseSession) MUST only
+    /// call this for frames that are ALSO being buffered into the JPEG
+    /// frame buffer in the same delegate callback, so that
+    /// `meshResults[i]` and `frameHashes[i]` are guaranteed to be the
+    /// same camera frame after VerificationPackageBuilder zips them by
+    /// index. Without that guarantee, the mesh data in verification
+    /// package frame `i` is cryptographically bound (via `bindingProof`)
+    /// to a JPEG captured from a DIFFERENT camera frame — which is
+    /// internally consistent on the wire (the HMAC still verifies
+    /// against the same inputs the SDK signed) but semantically wrong.
+    ///
+    /// The `frameIndex` field of the stored result is reassigned to
+    /// the upload-aligned position (`results.count` at record time),
+    /// not preserved from the `processFrame` return value. This makes
+    /// `results[i].frameIndex == i` an invariant, which is what the
+    /// downstream verification package builder and the backend
+    /// validator both expect after usesense-ios-sdk#28 (the frameIndex
+    /// one-liner).
+    func recordResult(_ result: FaceMeshResult) {
         lock.lock()
-        results.append(result)
+        let uploadIndex = results.count
+        let recorded = FaceMeshResult(
+            frameIndex: uploadIndex,
+            timestampMs: result.timestampMs,
+            headPose: result.headPose,
+            leftEAR: result.leftEAR,
+            rightEAR: result.rightEAR,
+            bbox: result.bbox,
+            landmarks: result.landmarks
+        )
+        results.append(recorded)
         lock.unlock()
-
-        return result
     }
 
     func getResults() -> [FaceMeshResult] {
@@ -138,7 +184,7 @@ final class FaceMeshManager: @unchecked Sendable {
     func reset() {
         lock.lock()
         results.removeAll()
-        frameIndex = 0
+        cameraFrameCounter = 0
         lock.unlock()
     }
 
