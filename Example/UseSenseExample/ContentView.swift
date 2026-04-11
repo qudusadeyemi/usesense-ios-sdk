@@ -1,20 +1,39 @@
 import SwiftUI
 import UseSenseSDK
 
+/// Wrapper that lets us drive .fullScreenCover(item:) with a UseSenseSession.
+/// Two separate @State vars (activeSession + showVerification) had a
+/// coordination bug where SwiftUI would evaluate the cover's content closure
+/// with activeSession still nil because the state changes were visible to the
+/// closure in a non-atomic order. .fullScreenCover(item:) binds presentation
+/// and payload to a single optional, eliminating that split state.
+struct SessionWrapper: Identifiable {
+    let id = UUID()
+    let session: UseSenseSession
+}
+
 struct ContentView: View {
     // TODO: Replace with your sandbox API key from https://app.usesense.ai
     @AppStorage("apiKey") private var apiKey = ""
     @State private var identityId = ""
     @State private var useProduction = false
-    @State private var showVerification = false
-    @State private var activeSession: UseSenseSession?
+    @State private var activeSession: SessionWrapper?
     @State private var sessionType: SessionType = .enrollment
     @State private var result: RedactedDecisionObject?
     @State private var error: UseSenseError?
     @State private var events: [EventEntry] = []
 
     private var useSense: UseSense {
-        let config = UseSenseConfig(apiKey: apiKey)
+        // Force the environment from the toggle instead of relying on
+        // Environment.detect(from:), which defaults to .production for any
+        // key that does not literally start with `sk_sandbox_` / `sk_prod_`.
+        // Real-world keys (e.g. `sk_76p1...`) do not carry that marker, so
+        // auto-detection silently routes sandbox keys to the production
+        // account and fails with 402 insufficient_credits.
+        let config = UseSenseConfig(
+            apiKey: apiKey,
+            environment: useProduction ? .production : .sandbox
+        )
         return UseSense(config: config)
     }
 
@@ -42,28 +61,24 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("UseSense Example")
-            .fullScreenCover(isPresented: $showVerification) {
-                if let session = activeSession {
-                    UseSenseView(
-                        session: session,
-                        onComplete: { completionResult in
-                            showVerification = false
-                            activeSession = nil
-                            switch completionResult {
-                            case .success(let decision):
-                                result = decision
-                                error = nil
-                            case .failure(let err):
-                                error = err
-                                result = nil
-                            }
-                        },
-                        onCancel: {
-                            showVerification = false
-                            activeSession = nil
+            .fullScreenCover(item: $activeSession) { wrapper in
+                UseSenseView(
+                    session: wrapper.session,
+                    onComplete: { completionResult in
+                        activeSession = nil
+                        switch completionResult {
+                        case .success(let decision):
+                            result = decision
+                            error = nil
+                        case .failure(let err):
+                            error = err
+                            result = nil
                         }
-                    )
-                }
+                    },
+                    onCancel: {
+                        activeSession = nil
+                    }
+                )
             }
         }
     }
@@ -176,8 +191,7 @@ struct ContentView: View {
             }
         }
 
-        activeSession = session
-        showVerification = true
+        activeSession = SessionWrapper(session: session)
     }
 
     // MARK: - Helpers
