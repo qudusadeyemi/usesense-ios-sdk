@@ -1,0 +1,39 @@
+// Signing.debug.xcconfig
+// -----------------------------------------------------------------------------
+// Build configuration for the `UseSenseExample` Debug build. Kept separate from
+// project.pbxproj so each developer can set their own Apple Team ID without
+// dirtying the shared Xcode project.
+//
+// Setup (once per clone, takes 30 seconds):
+//
+//   1. Create `Example/Signing.local.xcconfig` (the path is gitignored so your
+//      team ID never gets committed):
+//
+//          DEVELOPMENT_TEAM = YOURTEAMID
+//
+//      Find your team ID in Xcode → Settings → Accounts → select your Apple ID
+//      → "Team ID" column on the right. It's a 10-character alphanumeric
+//      string like `ABCDE12345`.
+//
+//   2. Open `UseSenseExample.xcworkspace` (NOT .xcodeproj) and build. The
+//      signed build will pick up the team automatically.
+//
+// This file itself is committed and should never contain any developer-specific
+// values. If you find yourself editing it, you almost certainly meant to edit
+// `Signing.local.xcconfig` instead.
+// -----------------------------------------------------------------------------
+
+// Flow CocoaPods' generated Debug settings through unchanged. Swapping the
+// target's baseConfigurationReference from the CocoaPods xcconfig to this file
+// means we have to re-include the CocoaPods xcconfig ourselves, otherwise pod
+// settings (header search paths, linker flags, framework search paths, etc.)
+// go missing and the Example app fails to compile.
+#include "Pods/Target Support Files/Pods-UseSenseExample/Pods-UseSenseExample.debug.xcconfig"
+
+// Optional local override file. `#include?` (with the question mark) is
+// Xcode xcconfig syntax for "include if present, silently skip if missing" —
+// so developers who haven't created Signing.local.xcconfig yet see a clear
+// "Signing for 'UseSenseExample' requires a development team" error instead
+// of an xcconfig parse error. Create Signing.local.xcconfig as described in
+// the header comment above.
+#include? "Signing.local.xcconfig"

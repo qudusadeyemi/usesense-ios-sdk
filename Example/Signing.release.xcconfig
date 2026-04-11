@@ -1,0 +1,13 @@
+// Signing.release.xcconfig
+// -----------------------------------------------------------------------------
+// Build configuration for the `UseSenseExample` Release build. Same pattern as
+// Signing.debug.xcconfig — see that file's header comment for the setup steps
+// and rationale. The only difference here is that we include the CocoaPods
+// Release xcconfig instead of Debug.
+// -----------------------------------------------------------------------------
+
+#include "Pods/Target Support Files/Pods-UseSenseExample/Pods-UseSenseExample.release.xcconfig"
+
+// Shared local override — the same Signing.local.xcconfig is used by both
+// Debug and Release so developers only maintain one file.
+#include? "Signing.local.xcconfig"

@@ -30,6 +30,12 @@ Pods/
 *.mobileprovision
 *.provisionprofile
 
+# Per-developer signing overrides for the Example app. The committed
+# Signing.debug.xcconfig / Signing.release.xcconfig files #include? this
+# file so each developer can set DEVELOPMENT_TEAM locally without dirtying
+# the shared project. See Example/Signing.debug.xcconfig for the setup.
+Signing.local.xcconfig
+
 # IDE
 *.swp
 *~
