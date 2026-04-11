@@ -25,8 +25,25 @@ final class VerificationPackageBuilder: @unchecked Sendable {
             let fit = fittingResults[i]
             let hash = frameHashes[i]
 
+            // frameIndex must be the upload-order position (the same index
+            // the server sees when it enumerates the uploaded multipart
+            // frames), NOT FaceMeshManager's camera-sequence counter. The
+            // backend mesh-integrity validator indexes `serverFrameHashes`
+            // by this field as a secondary cross-check; if we emit
+            // `mesh.frameIndex` here the cross-check fires a warning on
+            // every frame (the SDK counter is only coincidentally aligned
+            // with upload position when face-mesh readiness and JPEG
+            // capture start at exactly the same moment). Using `i` gives
+            // the server the alignment it expects and silences the
+            // "SDK frameIndex is not aligned with upload order" warnings.
+            //
+            // The binding proof itself is unaffected — it's always keyed
+            // on `hash` (the upload-position JPEG SHA-256) and
+            // `meshDigest` (the canonicalized shape+pose hash), and the
+            // server's primary verification pivots on `frame.frameHash`,
+            // not `frame.frameIndex`.
             var frame: [String: Any] = [
-                "frameIndex": mesh.frameIndex,
+                "frameIndex": i,
                 "timestamp": mesh.timestampMs,
                 "shapeParams": fit.shapeParams,
                 "pose": [
