@@ -215,7 +215,7 @@ func startVerification() {
 
 1. **Switch API key**: Replace your sandbox key (`sk_` prefix) with your production key (`pk_` prefix) in `UseSenseConfig`.
 2. **Verify environment**: Confirm the SDK is targeting production (auto-detected from `pk_` prefix, or set explicitly).
-3. **Purchase credits**: Production sessions consume one credit each. Purchase credits in the [UseSense dashboard](https://app.usesense.ai).
+3. **Purchase credits**: Production sessions consume one credit each. Purchase credits in the [UseSense dashboard](https://watchtower.usesense.ai).
 4. **Configure webhook endpoint**: Set your production webhook URL in the dashboard. Ensure your backend is handling HMAC signature verification.
 5. **Test end-to-end**: Run the full flow on a physical device in production. Simulators do not have cameras.
 6. **Handle all decision types**: Ensure your backend handles `approved`, `rejected`, and `manual_review`.

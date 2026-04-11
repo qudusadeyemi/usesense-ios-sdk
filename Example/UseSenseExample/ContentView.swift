@@ -13,7 +13,7 @@ struct SessionWrapper: Identifiable {
 }
 
 struct ContentView: View {
-    // TODO: Replace with your sandbox API key from https://app.usesense.ai
+    // TODO: Replace with your sandbox API key from https://watchtower.usesense.ai
     @AppStorage("apiKey") private var apiKey = ""
     @State private var identityId = ""
     @State private var useProduction = false
@@ -93,7 +93,7 @@ struct ContentView: View {
             Toggle("Production", isOn: $useProduction)
             if apiKey.isEmpty {
                 Label(
-                    "Enter your API key from app.usesense.ai",
+                    "Enter your API key from watchtower.usesense.ai",
                     systemImage: "exclamationmark.triangle"
                 )
                 .font(.caption)
