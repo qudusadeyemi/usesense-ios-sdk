@@ -98,16 +98,45 @@ public final class LiveSenseV4Session: NSObject {
 
         // Try to lock the device at 30fps with explicit frame duration.
         try cam.lockForConfiguration()
-        defer { cam.unlockForConfiguration() }
         let desired = CMTime(value: 1, timescale: 30)
         cam.activeVideoMinFrameDuration = desired
         cam.activeVideoMaxFrameDuration = desired
-        // Lock exposure and white balance for the capture window.
-        if cam.isExposureModeSupported(.locked) { cam.exposureMode = .locked }
-        if cam.isWhiteBalanceModeSupported(.locked) { cam.whiteBalanceMode = .locked }
+        // Keep AE/AWB auto at session start so the camera can sample a
+        // baseline from the first few frames. We promote to .locked
+        // 300ms into the capture (see armExposureLockIfReady below);
+        // that pins exposure + WB to the auto-sampled values so replay
+        // flicker cannot slide auto-exposure into the signal.
+        if cam.isExposureModeSupported(.continuousAutoExposure) {
+            cam.exposureMode = .continuousAutoExposure
+        }
+        if cam.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+            cam.whiteBalanceMode = .continuousAutoWhiteBalance
+        }
+        cam.unlockForConfiguration()
 
         self.faceRequest = VNDetectFaceRectanglesRequest()
     }
+
+    /// Called from the sample-buffer delegate 300ms after the first
+    /// frame; pins exposure + WB to the current auto-sampled values.
+    private func armExposureLockIfReady(nowMs: Double) {
+        guard !exposureLockArmed else { return }
+        if firstFrameAtMs == 0 { firstFrameAtMs = nowMs; return }
+        if nowMs - firstFrameAtMs < 300 { return }
+        exposureLockArmed = true
+        guard let device = self.device else { return }
+        do {
+            try device.lockForConfiguration()
+            if device.isExposureModeSupported(.locked) { device.exposureMode = .locked }
+            if device.isWhiteBalanceModeSupported(.locked) { device.whiteBalanceMode = .locked }
+            device.unlockForConfiguration()
+        } catch {
+            // Best effort; continue without hard-lock.
+        }
+    }
+
+    private var firstFrameAtMs: Double = 0
+    private var exposureLockArmed: Bool = false
 
     // MARK: - Lifecycle on motion events
 
@@ -179,6 +208,9 @@ extension LiveSenseV4Session: AVCaptureVideoDataOutputSampleBufferDelegate {
     ) {
         guard !stopped else { return }
         guard let pixel = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        let nowMs = CACurrentMediaTime() * 1000.0
+        armExposureLockIfReady(nowMs: nowMs)
 
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         try? encoder.appendPixelBuffer(pixel, at: pts)
