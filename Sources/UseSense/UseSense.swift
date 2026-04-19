@@ -43,6 +43,21 @@ public final class UseSense: @unchecked Sendable {
         )
     }
 
+    /// Start a LiveSense v4 session. Phase 1 ticket I-2.
+    ///
+    /// v4 runs the perspective-distortion zoom-motion capture. Returns
+    /// a LiveSenseV4Session the caller must `.start()` from the main
+    /// thread. The delegate receives phase updates and the final
+    /// opaque V4Verdict (or error) asynchronously.
+    ///
+    /// v3 `startVerification` and `createSessionWithToken` are unaffected.
+    public func startV4Session(
+        config v4Config: LiveSenseV4Config,
+        delegate: LiveSenseV4Delegate? = nil
+    ) -> LiveSenseV4Session {
+        return LiveSenseV4Session(config: v4Config, delegate: delegate)
+    }
+
     /// Create a session via Server-Side Init (token exchange).
     /// Your backend calls POST /v1/sessions/create-token, passes the client_token
     /// to the SDK, which exchanges it for full session credentials.
