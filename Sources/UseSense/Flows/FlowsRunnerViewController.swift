@@ -105,9 +105,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             return
         }
         switch action {
-        case .captureFace:
-            // 5a-2 wires the existing capture engine; today fail loud.
-            finish(.failure(FlowError(code: .unsupportedAction, message: "Face capture in Flows lands in slice 5a-2; until then use Sessions (verifyFace) for face capture.")))
+        case .captureFace(let toolId):
+            presentFaceCapture(toolId: toolId)
         case .captureDocument(let category, _, _):
             presentDocumentPicker(category: category)
         case .captureForm(let fields):
@@ -171,6 +170,54 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             stack.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -24),
         ])
+    }
+
+    private func presentFaceCapture(toolId: String?) {
+        Task {
+            do {
+                let response = try await client.initSession(toolId: toolId)
+                presentCaptureViewController(with: response)
+            } catch let e as FlowError {
+                finish(.failure(e))
+            } catch {
+                finish(.failure(FlowError(code: .unknown, message: error.localizedDescription)))
+            }
+        }
+    }
+
+    /// Build a UseSenseSession from the /init-session response, inject the
+    /// pre-minted credentials, and present the existing capture UI. The api
+    /// key is a placeholder ("flow_runner") because every downstream API call
+    /// the capture engine makes authenticates with the session_token set by
+    /// injectHostedSessionData(...); the session-create / exchange-token paths
+    /// that would need a real api key are skipped because sessionData is
+    /// already populated. Environment is inherited from the flow run.
+    private func presentCaptureViewController(with response: CreateSessionResponse) {
+        guard let view = view_ else { return }
+        let endpoint = options.apiBaseURL.appendingPathComponent("v1").absoluteString
+        let environment: Environment = view.environment == "sandbox" ? .sandbox : .production
+        let config = UseSenseConfig(apiEndpoint: endpoint, apiKey: "flow_runner", environment: environment)
+        let session = UseSenseSession(config: config, sessionType: .enrollment)
+        session.injectHostedSessionData(response)
+        let captureVC = UseSenseViewController(session: session) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let decision):
+                let sessionId = decision.sessionId
+                let identityId = decision.identityId
+                var inputs: [String: Any] = ["sessionId": sessionId]
+                if let id = identityId { inputs["identityId"] = id }
+                Task { await self.advance(inputs: inputs) }
+            case .failure(let err):
+                if err.code == .userCancelled {
+                    Task { await self.cancelRun() }
+                } else {
+                    self.finish(.failure(FlowError(code: .providerUnavailable, message: err.message)))
+                }
+            }
+        }
+        captureVC.modalPresentationStyle = .fullScreen
+        present(captureVC, animated: true)
     }
 
     private func presentDocumentPicker(category: String) {

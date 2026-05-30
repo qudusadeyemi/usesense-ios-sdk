@@ -113,9 +113,16 @@ public final class UseSenseSession: @unchecked Sendable {
         eventEmitter.addListener(callback)
     }
 
-    // MARK: - Hosted Page Injection
+    // MARK: - Hosted / Flows Session Injection
 
-    func injectHostedSessionData(_ response: CreateSessionResponse) {
+    /// Inject pre-minted session credentials returned by a server-side init
+    /// step (the hosted enrollment page and the Flows `/sdk/flow-runs/:id/init-session`
+    /// endpoint both produce a CreateSessionResponse). `start()` then sees
+    /// `sessionData != nil` and skips the createSession/exchangeToken path.
+    ///
+    /// Made public for the Flows runner; the dashboard hosted page calls it
+    /// internally too via UseSenseSession's framework-internal init path.
+    public func injectHostedSessionData(_ response: CreateSessionResponse) {
         let data = SessionData(from: response)
         self.sessionData = data
         self.apiClient.sessionToken = data.sessionToken

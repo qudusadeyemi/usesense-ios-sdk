@@ -96,6 +96,44 @@ final class FlowsClientTests: XCTestCase {
         } catch { XCTFail() }
     }
 
+    func test_initSession_decodesAsCreateSessionResponse_andInjectsSyntheticExpiresAt() async throws {
+        let body: [String: Any] = [
+            "session_id": "sess_abc",
+            "session_token": "tok_xyz",
+            "nonce": "nonce_1",
+            "policy": [
+                "requires_audio": false,
+                "requires_stepup": false,
+                "challenge_type": "none",
+                "challenge": NSNull(),
+                "audio_challenge": NSNull(),
+                "policy_source": "flow",
+                "inline_step_up": NSNull(),
+                "geometricCoherence": NSNull(),
+                "screenIllumination": NSNull(),
+                "meshIntegrity": NSNull(),
+            ],
+            "upload": [
+                "max_frames": 24,
+                "target_fps": 6,
+                "capture_duration_ms": 4000,
+            ],
+            "geometric_coherence": NSNull(),
+        ]
+        let client = FlowsClient(flowRunId: "fr_1", sdkToken: "t", apiBaseURL: baseURL,
+                                 fetcher: makeFetcher(status: 200, body: body))
+        let response = try await client.initSession(toolId: nil)
+        XCTAssertEqual(response.sessionId, "sess_abc")
+        XCTAssertEqual(response.sessionToken, "tok_xyz")
+        XCTAssertEqual(response.nonce, "nonce_1")
+        XCTAssertEqual(response.upload.maxFrames, 24)
+        XCTAssertEqual(response.upload.targetFps, 6)
+        // expires_at is missing from the wire payload; the client synthesises it
+        // to satisfy the Codable model. Anything non-empty is enough for the
+        // session pipeline, which doesn't consume the value.
+        XCTAssertFalse(response.expiresAt.isEmpty)
+    }
+
     func test_transportError_translatesTo_networkUnavailable() async {
         let client = FlowsClient(flowRunId: "fr_1", sdkToken: "t", apiBaseURL: baseURL) { _ in
             throw URLError(.notConnectedToInternet)

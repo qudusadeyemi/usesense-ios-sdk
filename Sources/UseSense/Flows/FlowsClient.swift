@@ -97,32 +97,28 @@ public final class FlowsClient: @unchecked Sendable {
         return try FlowRunView.decode(try await send(request))
     }
 
-    public struct InitSessionResponse {
-        public let sessionId: String
-        public let sessionToken: String
-        public let nonce: String
-        public let policy: [String: Any]
-        public let upload: [String: Any]
-        public let geometricCoherence: [String: Any]?
-    }
-
-    public func initSession(toolId: String?) async throws -> InitSessionResponse {
+    /// Initialise a face-capture session for the parked Flows step. Returns a
+    /// `CreateSessionResponse` so the runner can hand it straight to
+    /// `UseSenseSession.injectHostedSessionData`. The server response shape is
+    /// nearly identical; the only difference is `expires_at` is omitted (the
+    /// run's wall-clock is enforced by the parent flow run, not the session),
+    /// so we inject a synthetic 15-minute expiry to satisfy the Codable model.
+    public func initSession(toolId: String?) async throws -> CreateSessionResponse {
         let body: [String: Any] = toolId.map { ["toolId": $0] } ?? [:]
         let request = try makeRequest(method: "POST", suffix: "/init-session", body: body)
-        guard let json = try await send(request) as? [String: Any],
-              let sessionId = json["session_id"] as? String,
-              let sessionToken = json["session_token"] as? String,
-              let nonce = json["nonce"] as? String else {
+        guard var json = try await send(request) as? [String: Any] else {
             throw FlowError(code: .unknown, message: "Malformed init-session response")
         }
-        return InitSessionResponse(
-            sessionId: sessionId,
-            sessionToken: sessionToken,
-            nonce: nonce,
-            policy: (json["policy"] as? [String: Any]) ?? [:],
-            upload: (json["upload"] as? [String: Any]) ?? [:],
-            geometricCoherence: json["geometric_coherence"] as? [String: Any]
-        )
+        if json["expires_at"] == nil {
+            let formatter = ISO8601DateFormatter()
+            json["expires_at"] = formatter.string(from: Date().addingTimeInterval(15 * 60))
+        }
+        do {
+            let data = try JSONSerialization.data(withJSONObject: json)
+            return try JSONDecoder().decode(CreateSessionResponse.self, from: data)
+        } catch {
+            throw FlowError(code: .unknown, message: "Failed to decode init-session response: \(error.localizedDescription)")
+        }
     }
 
     public struct UploadDocumentResponse {
