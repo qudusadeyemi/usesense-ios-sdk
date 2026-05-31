@@ -62,17 +62,31 @@ public final class FlowsClient: @unchecked Sendable {
         let envelope = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         let code = envelope?["code"] as? String
         let message = (envelope?["error"] as? String) ?? "Request failed with status \(http.statusCode)"
-        throw FlowsClient.translate(status: http.statusCode, code: code, message: message)
+        // 422 invalid_input — flatten details.errors into [field_key: message]
+        // so the runner can highlight each offending field inline.
+        var details: [String: String] = [:]
+        if code == "invalid_input",
+           let detailsRaw = envelope?["details"] as? [String: Any],
+           let errors = detailsRaw["errors"] as? [[String: Any]] {
+            for e in errors {
+                if let key = e["field_key"] as? String, let msg = e["message"] as? String {
+                    details[key] = msg
+                }
+            }
+        }
+        throw FlowsClient.translate(status: http.statusCode, code: code, message: message, details: details)
     }
 
     /// Map server HTTP/JSON error to the SDK's FlowError taxonomy. Kept as a
     /// static so tests can verify the translation independently of any I/O.
-    static func translate(status: Int, code: String?, message: String) -> FlowError {
+    static func translate(status: Int, code: String?, message: String, details: [String: String] = [:]) -> FlowError {
         switch (status, code) {
         case (401, _), (_, "token_expired"):
             return FlowError(code: .tokenExpired, message: message, serverCode: code)
         case (403, _), (_, "forbidden"):
             return FlowError(code: .tokenInvalid, message: message, serverCode: code)
+        case (_, "invalid_input"):
+            return FlowError(code: .invalidInput, message: message, serverCode: code, details: details)
         case (500..., _), (_, "provider_unavailable"), (_, "internal"):
             return FlowError(code: .providerUnavailable, message: message, serverCode: code)
         default:

@@ -12,6 +12,10 @@ public struct FlowError: Error, CustomStringConvertible, Equatable {
         case providerUnavailable = "provider_unavailable"
         case cancelled
         case unsupportedAction = "unsupported_action"
+        /// Server form validation failed; `details` carries per-field messages
+        /// keyed by FormField.key. The runner surfaces these inline rather
+        /// than terminating the run via the completion handler.
+        case invalidInput = "invalid_input"
         case unknown
     }
 
@@ -19,11 +23,14 @@ public struct FlowError: Error, CustomStringConvertible, Equatable {
     public let message: String
     /// Server-side error code passed through verbatim when present.
     public let serverCode: String?
+    /// Populated when `code == .invalidInput`. Keyed by field_key.
+    public let details: [String: String]
 
-    public init(code: Code, message: String, serverCode: String? = nil) {
+    public init(code: Code, message: String, serverCode: String? = nil, details: [String: String] = [:]) {
         self.code = code
         self.message = message
         self.serverCode = serverCode
+        self.details = details
     }
 
     public var description: String { "FlowError(\(code.rawValue)): \(message)" }

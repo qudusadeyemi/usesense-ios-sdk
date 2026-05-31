@@ -21,6 +21,12 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     private var spinner: UIActivityIndicatorView?
     private var contentContainer: UIView!
     private var safari: SFSafariViewController?
+    /// Per-field server validation errors from the last advance(). Keyed on
+    /// FormField.key. Cleared on the next successful advance.
+    private var fieldErrors: [String: String] = [:]
+    /// Tracks whether we have opened the info action's external URL so the
+    /// primary CTA changes copy and the next tap advances.
+    private var infoOpenURLPresented = false
 
     init(options: RunFlowOptions, completion: @escaping (Result<FlowRunResult, FlowError>) -> Void) {
         self.options = options
@@ -68,6 +74,11 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         do {
             let next = try await client.advance(inputs: inputs)
             view_ = next
+            fieldErrors = [:]
+            render()
+        } catch let e as FlowError where e.code == .invalidInput {
+            // Inline per-field errors; do not terminate the run.
+            fieldErrors = e.details
             render()
         } catch let e as FlowError {
             finish(.failure(e))
@@ -111,6 +122,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             presentDocumentPicker(category: category)
         case .captureForm(let fields):
             installForm(fields: fields)
+        case .info(let info):
+            installInfo(info)
         case .redirectToConsent(let url):
             presentConsent(url: url)
         }
@@ -127,7 +140,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
 
     // MARK: - Surfaces
 
-    private func installForm(fields: [String]) {
+    private func installForm(fields: [FormField]) {
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
         let stack = UIStackView()
         stack.axis = .vertical
@@ -139,17 +152,16 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         title.font = .preferredFont(forTextStyle: .title2)
         stack.addArrangedSubview(title)
 
-        var inputs: [String: UITextField] = [:]
+        // One row per field. Inputs and error labels are kept in dictionaries
+        // keyed on field.key so a 422 invalid_input response can flip the
+        // matching error label visible without rebuilding the form.
+        var inputs: [String: FieldInputBinding] = [:]
+        var errorLabels: [String: UILabel] = [:]
         for field in fields {
-            let label = UILabel()
-            label.text = humanise(field)
-            label.font = .preferredFont(forTextStyle: .subheadline)
-            let tf = UITextField()
-            tf.borderStyle = .roundedRect
-            tf.placeholder = humanise(field)
-            inputs[field] = tf
-            stack.addArrangedSubview(label)
-            stack.addArrangedSubview(tf)
+            let (row, binding, errorLabel) = makeFieldRow(field, serverError: fieldErrors[field.key])
+            inputs[field.key] = binding
+            errorLabels[field.key] = errorLabel
+            stack.addArrangedSubview(row)
         }
 
         let submit = UIButton(type: .system)
@@ -159,8 +171,28 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         submit.tintColor = .white
         submit.layer.cornerRadius = 8
         submit.addAction(UIAction { [weak self] _ in
-            let values = inputs.mapValues { $0.text ?? "" }
-            Task { await self?.advance(inputs: values) }
+            guard let self else { return }
+            // Client-side echo of modules/flows/form-validation.ts. The server
+            // is still authoritative; this is just inline feedback before the
+            // round-trip.
+            var clientErrors: [String: String] = [:]
+            var values: [String: Any] = [:]
+            for field in fields {
+                let raw = inputs[field.key]?.value() ?? ""
+                if let err = self.validate(field: field, raw: raw) {
+                    clientErrors[field.key] = err
+                } else {
+                    values[field.key] = self.coerce(field: field, raw: raw)
+                }
+            }
+            if !clientErrors.isEmpty {
+                for (k, msg) in clientErrors {
+                    errorLabels[k]?.text = msg
+                    errorLabels[k]?.isHidden = false
+                }
+                return
+            }
+            Task { await self.advance(inputs: values) }
         }, for: .touchUpInside)
         stack.addArrangedSubview(submit)
 
@@ -170,6 +202,221 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             stack.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 24),
             stack.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -24),
         ])
+    }
+
+    // MARK: - Form rendering helpers
+
+    /// Bound to a single field's input control so the submit handler can read
+    /// its value without caring about the concrete UIKit class underneath.
+    private struct FieldInputBinding {
+        let value: () -> Any
+    }
+
+    private func makeFieldRow(_ field: FormField, serverError: String?) -> (UIView, FieldInputBinding, UILabel) {
+        let container = UIStackView()
+        container.axis = .vertical
+        container.spacing = 4
+
+        let label = UILabel()
+        label.text = (field.label ?? humanise(field.key)) + (field.required ? " *" : "")
+        label.font = .preferredFont(forTextStyle: .subheadline)
+        container.addArrangedSubview(label)
+
+        let binding: FieldInputBinding
+        switch field.type {
+        case .select, .country:
+            let options: [(String, String)] = field.type == .country
+                ? (field.allowedCountries ?? []).map { ($0, $0) }
+                : (field.options ?? []).map { ($0.value, $0.label) }
+            let picker = OptionButton(title: field.placeholder ?? "Select…", options: options,
+                                      initial: field.initial?.value as? String)
+            container.addArrangedSubview(picker)
+            binding = FieldInputBinding(value: { picker.selectedValue ?? "" })
+        case .checkbox:
+            let sw = UISwitch()
+            sw.isOn = (field.initial?.value as? Bool) ?? false
+            let row = UIStackView(arrangedSubviews: [sw, UILabel.makeBody(field.hint ?? "")])
+            row.axis = .horizontal
+            row.spacing = 12
+            container.addArrangedSubview(row)
+            binding = FieldInputBinding(value: { sw.isOn })
+        default:
+            let tf = UITextField()
+            tf.borderStyle = .roundedRect
+            tf.placeholder = field.placeholder
+            tf.text = field.initial?.value as? String
+            switch field.type {
+            case .email: tf.keyboardType = .emailAddress; tf.autocapitalizationType = .none
+            case .tel:   tf.keyboardType = .phonePad
+            case .number: tf.keyboardType = .decimalPad
+            case .date:  tf.placeholder = field.placeholder ?? "YYYY-MM-DD"
+            default: break
+            }
+            container.addArrangedSubview(tf)
+            binding = FieldInputBinding(value: { tf.text ?? "" })
+        }
+
+        if let hint = field.hint, !hint.isEmpty, field.type != .checkbox {
+            container.addArrangedSubview(UILabel.makeHint(hint))
+        }
+
+        let errorLabel = UILabel()
+        errorLabel.font = .preferredFont(forTextStyle: .caption1)
+        errorLabel.textColor = .systemRed
+        errorLabel.numberOfLines = 0
+        errorLabel.text = serverError
+        errorLabel.isHidden = serverError == nil
+        container.addArrangedSubview(errorLabel)
+
+        return (container, binding, errorLabel)
+    }
+
+    private func validate(field: FormField, raw: Any) -> String? {
+        let v = field.validators
+        let isBlank: Bool = {
+            if let s = raw as? String { return s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            return false
+        }()
+        if isBlank {
+            return field.required ? "\(field.label ?? humanise(field.key)) is required" : nil
+        }
+        if let s = raw as? String, let v {
+            if let pattern = v.pattern,
+               let _ = try? NSRegularExpression(pattern: pattern, options: []),
+               s.range(of: pattern, options: .regularExpression) == nil {
+                return v.errorMessage ?? "\(field.label ?? humanise(field.key)) is not in the expected format"
+            }
+            if let min = v.minLength, s.count < min { return v.errorMessage ?? "Must be at least \(min) characters" }
+            if let max = v.maxLength, s.count > max { return v.errorMessage ?? "Must be at most \(max) characters" }
+        }
+        if field.type == .number, let s = raw as? String {
+            guard let n = Double(s) else { return field.validators?.errorMessage ?? "\(field.label ?? humanise(field.key)) must be a number" }
+            if let min = field.validators?.minNumber, n < min { return field.validators?.errorMessage ?? "Must be at least \(min)" }
+            if let max = field.validators?.maxNumber, n > max { return field.validators?.errorMessage ?? "Must be at most \(max)" }
+        }
+        if field.type == .date, let s = raw as? String {
+            if let min = field.validators?.minString, s < min { return field.validators?.errorMessage ?? "Must be on or after \(min)" }
+            if let max = field.validators?.maxString, s > max { return field.validators?.errorMessage ?? "Must be on or before \(max)" }
+        }
+        return nil
+    }
+
+    private func coerce(field: FormField, raw: Any) -> Any {
+        switch field.type {
+        case .checkbox: return raw as? Bool ?? false
+        case .number:
+            if let s = raw as? String, let n = Double(s) { return n }
+            return raw
+        default: return raw
+        }
+    }
+
+    private func installInfo(_ info: InfoAction) {
+        contentContainer.subviews.forEach { $0.removeFromSuperview() }
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 16
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = UILabel()
+        title.text = info.title
+        title.font = .preferredFont(forTextStyle: .title1)
+        title.numberOfLines = 0
+        stack.addArrangedSubview(title)
+
+        if let body = info.body, !body.isEmpty {
+            let label = UILabel()
+            label.text = body
+            label.font = .preferredFont(forTextStyle: .body)
+            label.textColor = .secondaryLabel
+            label.numberOfLines = 0
+            stack.addArrangedSubview(label)
+        }
+
+        for bullet in info.bullets {
+            stack.addArrangedSubview(bulletRow(bullet))
+        }
+
+        let primary = UIButton(type: .system)
+        let primaryTitle: String = {
+            if infoOpenURLPresented && info.primary.openURL != nil { return "I'm back, continue" }
+            return info.primary.label
+        }()
+        primary.setTitle(primaryTitle, for: .normal)
+        primary.contentEdgeInsets = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+        primary.backgroundColor = UIColor(red: 0.31, green: 0.49, blue: 1.0, alpha: 1.0)
+        primary.tintColor = .white
+        primary.layer.cornerRadius = 8
+        primary.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            // Open the external URL in SFSafariViewController first; advance
+            // only after the subject returns (delegate dismiss → advance via
+            // safariViewControllerDidFinish, which already calls advance(:)).
+            if let url = info.primary.openURL, !self.infoOpenURLPresented {
+                self.infoOpenURLPresented = true
+                self.presentConsent(url: url)
+                return
+            }
+            self.infoOpenURLPresented = false
+            Task { await self.advance(inputs: [:]) }
+        }, for: .touchUpInside)
+        stack.addArrangedSubview(primary)
+
+        if let secondary = info.secondary {
+            let s = UIButton(type: .system)
+            s.setTitle(secondary.label, for: .normal)
+            s.contentEdgeInsets = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+            s.backgroundColor = .secondarySystemBackground
+            s.setTitleColor(.label, for: .normal)
+            s.layer.cornerRadius = 8
+            s.addAction(UIAction { [weak self] _ in
+                guard let self else { return }
+                switch secondary.action {
+                case .cancel:  Task { await self.cancelRun() }
+                case .advance: Task { await self.advance(inputs: [:]) }
+                }
+            }, for: .touchUpInside)
+            stack.addArrangedSubview(s)
+        }
+
+        contentContainer.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: contentContainer.topAnchor, constant: 24),
+            stack.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -24),
+        ])
+    }
+
+    private func bulletRow(_ bullet: InfoBullet) -> UIView {
+        let icon = UILabel()
+        icon.text = Self.bulletGlyph(bullet.icon)
+        icon.font = .preferredFont(forTextStyle: .body)
+        icon.textAlignment = .center
+        icon.widthAnchor.constraint(equalToConstant: 24).isActive = true
+
+        let text = UILabel()
+        text.text = bullet.text
+        text.font = .preferredFont(forTextStyle: .callout)
+        text.textColor = .label
+        text.numberOfLines = 0
+
+        let row = UIStackView(arrangedSubviews: [icon, text])
+        row.axis = .horizontal
+        row.spacing = 10
+        row.alignment = .top
+        return row
+    }
+
+    private static func bulletGlyph(_ icon: InfoBulletIcon?) -> String {
+        // Single-char glyphs keep the SDK icon-library-free; unknown icons
+        // render as the info dot per the contract (never block).
+        switch icon {
+        case .check: return "✓"
+        case .shield: return "⛨"
+        case .camera: return "📷"
+        case .warning: return "!"
+        case .info, .none: return "i"
+        }
     }
 
     private func presentFaceCapture(toolId: String?) {
@@ -323,5 +570,55 @@ private func humanise(_ s: String) -> String {
         .split(separator: " ")
         .map { $0.prefix(1).uppercased() + $0.dropFirst() }
         .joined(separator: " ")
+}
+
+/// Minimal UIMenu-backed picker so we don't pull in UIKit pickers for a
+/// single-choice select. Holds the chosen value; the title shows the chosen
+/// label or the placeholder.
+private final class OptionButton: UIButton {
+    private let placeholderTitle: String
+    private(set) var selectedValue: String?
+    init(title: String, options: [(value: String, label: String)], initial: String?) {
+        self.placeholderTitle = title
+        super.init(frame: .zero)
+        setTitleColor(.label, for: .normal)
+        contentHorizontalAlignment = .leading
+        backgroundColor = .secondarySystemBackground
+        layer.cornerRadius = 8
+        contentEdgeInsets = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        let actions = options.map { opt in
+            UIAction(title: opt.label) { [weak self] _ in
+                self?.selectedValue = opt.value
+                self?.setTitle(opt.label, for: .normal)
+            }
+        }
+        menu = UIMenu(children: actions)
+        showsMenuAsPrimaryAction = true
+        if let initial, let match = options.first(where: { $0.value == initial }) {
+            selectedValue = match.value
+            setTitle(match.label, for: .normal)
+        } else {
+            setTitle(title, for: .normal)
+        }
+    }
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+}
+
+private extension UILabel {
+    static func makeHint(_ text: String) -> UILabel {
+        let l = UILabel()
+        l.text = text
+        l.font = .preferredFont(forTextStyle: .caption1)
+        l.textColor = .secondaryLabel
+        l.numberOfLines = 0
+        return l
+    }
+    static func makeBody(_ text: String) -> UILabel {
+        let l = UILabel()
+        l.text = text
+        l.font = .preferredFont(forTextStyle: .body)
+        l.numberOfLines = 0
+        return l
+    }
 }
 #endif
