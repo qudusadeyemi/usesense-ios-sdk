@@ -1,6 +1,7 @@
 #if canImport(UIKit) && canImport(SafariServices)
 import UIKit
 import SafariServices
+import VisionKit
 
 /// Drives a Flow Run end to end. One state machine; one of four surfaces
 /// rendered per parked action (face / document / form / consent). Mirrors the
@@ -12,7 +13,7 @@ import SafariServices
 /// runner pre-minted session credentials from /init-session. Adding the
 /// session-injection seam is the focused follow-up; today the runner
 /// surfaces FlowError.unsupportedAction for face steps with a clear hint.
-final class FlowsRunnerViewController: UIViewController, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+final class FlowsRunnerViewController: UIViewController, UIImagePickerControllerDelegate, UINavigationControllerDelegate, VNDocumentCameraViewControllerDelegate {
     private let client: FlowsClient
     private let options: RunFlowOptions
     private let completion: (Result<FlowRunResult, FlowError>) -> Void
@@ -118,8 +119,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         switch action {
         case .captureFace(let toolId):
             presentFaceCapture(toolId: toolId)
-        case .captureDocument(let category, _, _):
-            presentDocumentPicker(category: category)
+        case .captureDocument(_, _, _, _, let captureMethods):
+            presentDocumentCapture(methods: captureMethods)
         case .captureForm(let fields):
             installForm(fields: fields)
         case .info(let info):
@@ -467,9 +468,37 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         present(captureVC, animated: true)
     }
 
-    private func presentDocumentPicker(category: String) {
+    /// Offer the subject every operator-allowed method (default both): a rear-
+    /// camera VisionKit scan and/or file upload.
+    private func presentDocumentCapture(methods: [String]) {
+        let canScan = methods.isEmpty || methods.contains("camera")
+        let canUpload = methods.isEmpty || methods.contains("upload")
+        if canScan && canUpload {
+            let sheet = UIAlertController(title: "Add your document", message: nil, preferredStyle: .actionSheet)
+            sheet.addAction(UIAlertAction(title: "Scan with camera", style: .default) { [weak self] _ in self?.launchDocumentScanner() })
+            sheet.addAction(UIAlertAction(title: "Upload a file", style: .default) { [weak self] _ in self?.presentUploadPicker() })
+            sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in Task { await self?.cancelRun() } })
+            present(sheet, animated: true)
+        } else if canScan {
+            launchDocumentScanner()
+        } else {
+            presentUploadPicker()
+        }
+    }
+
+    /// Rear-camera document scan via VisionKit (edge detect, deskew). Falls back
+    /// to the upload picker when scanning is unsupported.
+    private func launchDocumentScanner() {
+        guard VNDocumentCameraViewController.isSupported else { presentUploadPicker(); return }
+        let scanner = VNDocumentCameraViewController()
+        scanner.delegate = self
+        present(scanner, animated: true)
+    }
+
+    /// Photo-library / file upload.
+    private func presentUploadPicker() {
         let picker = UIImagePickerController()
-        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
+        picker.sourceType = .photoLibrary
         picker.delegate = self
         present(picker, animated: true)
     }
@@ -480,9 +509,29 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
               let data = image.jpegData(compressionQuality: 0.85) else {
             return
         }
-        let base64 = data.base64EncodedString()
+        uploadDocument(base64: data.base64EncodedString())
+    }
+
+    // MARK: - VisionKit document scanner
+
+    func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
+        controller.dismiss(animated: true)
+        guard scan.pageCount > 0, let data = scan.imageOfPage(at: 0).jpegData(compressionQuality: 0.85) else { return }
+        uploadDocument(base64: data.base64EncodedString())
+    }
+
+    func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
+        controller.dismiss(animated: true) { [weak self] in Task { await self?.cancelRun() } }
+    }
+
+    func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) {
+        controller.dismiss(animated: true) { [weak self] in self?.presentUploadPicker() }
+    }
+
+    /// Upload a document (scanned or picked) and advance the run.
+    private func uploadDocument(base64: String) {
         let category: String = {
-            if case .captureDocument(let cat, _, _) = view_?.pendingAction { return cat }
+            if case .captureDocument(let cat, _, _, _, _) = view_?.pendingAction { return cat }
             return "identity"
         }()
         Task {
