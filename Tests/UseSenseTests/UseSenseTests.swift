@@ -560,12 +560,12 @@ final class UseSenseEntryPointTests: XCTestCase {
         XCTAssertFalse(UseSense.version.isEmpty)
     }
 
-    func testSDKVersionIs4_1() {
-        XCTAssertEqual(UseSense.version, "4.1.0")
+    func testSDKVersionIs4_3() {
+        XCTAssertEqual(UseSense.version, "4.3.0")
     }
 
     func testAPIClientVersion() {
-        XCTAssertEqual(UseSenseAPIClient.sdkVersion, "4.1.0")
+        XCTAssertEqual(UseSenseAPIClient.sdkVersion, "4.3.0")
     }
 
     func testCreateSDK() {
