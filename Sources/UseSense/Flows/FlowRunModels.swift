@@ -156,7 +156,7 @@ public struct InfoAction: Sendable, Equatable {
 /// See guides/flows/action-contract.mdx.
 public enum PendingAction: Sendable, Equatable {
     case captureFace(toolId: String?)
-    case captureDocument(category: String, documentTypes: [String], issuingCountries: [String])
+    case captureDocument(category: String, documentTypes: [String], issuingCountries: [String], camera: String?, captureMethods: [String])
     case captureForm(fields: [FormField])
     case info(InfoAction)
     case redirectToConsent(url: URL)
@@ -180,7 +180,10 @@ public enum PendingAction: Sendable, Equatable {
                 let category = (raw["documentCategory"] as? String) ?? "identity"
                 let types = (raw["documentTypes"] as? [String]) ?? []
                 let countries = (raw["issuingCountries"] as? [String]) ?? []
-                return .captureDocument(category: category, documentTypes: types, issuingCountries: countries)
+                let camera = raw["camera"] as? String
+                let methodsRaw = (raw["captureMethods"] as? [String]) ?? []
+                let methods = methodsRaw.isEmpty ? ["camera", "upload"] : methodsRaw
+                return .captureDocument(category: category, documentTypes: types, issuingCountries: countries, camera: camera, captureMethods: methods)
             case "form":
                 let rawFields = raw["fields"] as? [Any] ?? []
                 return .captureForm(fields: rawFields.map(FormField.decode))
