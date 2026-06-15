@@ -10,6 +10,7 @@ public enum CapturePhase: String, CaseIterable, Sendable {
     case instructions    = "instructions"
     case faceGuide       = "face-guide"
     case baseline        = "baseline"
+    case zoom            = "zoom"
     case countdown       = "countdown"
     case challenge       = "challenge"
     case inlineStepUp    = "inline-step-up"
@@ -26,6 +27,7 @@ enum SessionState: Sendable {
     case instructions(challenge: ChallengeSpecWrapper)
     case faceGuide
     case baseline(remaining: TimeInterval)
+    case zoom(progressFraction: Double)
     case countdown(number: Int)
     case challenge(spec: ChallengeSpecWrapper)
     case inlineStepUp(phase: String)

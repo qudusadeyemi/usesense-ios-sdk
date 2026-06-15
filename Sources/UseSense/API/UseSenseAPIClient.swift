@@ -65,6 +65,12 @@ final class UseSenseAPIClient: @unchecked Sendable {
         let env = (config.environment ?? .auto).resolved(apiKey: config.apiKey)
         request.setValue(env, forHTTPHeaderField: "X-Environment")
 
+        // v4 SDK opt-in. Server v4-flag-resolver enforces the org feature
+        // flag in addition to this header (PRD section 9.1).
+        if config.options?.liveSenseV4Enabled == true {
+            request.setValue("v4", forHTTPHeaderField: "x-usesense-sdk-version")
+        }
+
         // Session-specific headers (signals + complete)
         if includeSession {
             if let token = sessionToken {

@@ -5,17 +5,37 @@ import Foundation
 import CryptoKit
 
 final class FrameBuffer: @unchecked Sendable {
-    private var frames: [(data: Data, timestamp: TimeInterval, hash: String, luminance: Double)] = []
+    /// Capture phase tag attached to each frame. Used by the v4 perspective
+    /// validator (SfM bundle adjustment requires a coherent zoom motion;
+    /// head_turn or framing frames are noise).
+    enum CapturePhase: String {
+        case framing
+        case baseline
+        case zoom
+        case challenge
+        case other
+    }
+
+    private var frames: [(data: Data, timestamp: TimeInterval, hash: String, luminance: Double, phase: String)] = []
     private let lock = NSLock()
     private var maxFrames: Int
     private var targetFps: Int
     private var lastCaptureTime: CFAbsoluteTime = 0
     private var captureInterval: TimeInterval
+    private var currentPhase: CapturePhase = .other
 
     init(maxFrames: Int = 30, targetFps: Int = 3) {
         self.maxFrames = maxFrames
         self.targetFps = targetFps
         self.captureInterval = 1.0 / Double(targetFps)
+    }
+
+    /// Update the phase that subsequently captured frames will be tagged with.
+    /// Safe to call from any thread.
+    func setCapturePhase(_ phase: CapturePhase) {
+        lock.lock()
+        defer { lock.unlock() }
+        currentPhase = phase
     }
 
     /// Re-configure with server-provided limits (called after session creation).
@@ -58,7 +78,7 @@ final class FrameBuffer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard frames.count < maxFrames else { return }
-        frames.append((data: jpegData, timestamp: timestamp, hash: hash, luminance: luminance))
+        frames.append((data: jpegData, timestamp: timestamp, hash: hash, luminance: luminance, phase: currentPhase.rawValue))
     }
 
     func getFrames() -> [Data] {
@@ -85,6 +105,13 @@ final class FrameBuffer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return frames.map { $0.luminance }
+    }
+
+    /// Get per-frame capture-phase tags for the v4 SfM frame filter.
+    func getFramePhases() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return frames.map { $0.phase }
     }
 
     func reset() {
