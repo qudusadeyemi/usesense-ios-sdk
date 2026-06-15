@@ -4,6 +4,37 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.3.0] - 2026-06-15
+
+Minor release adding the **Flows runner** (run operator-authored
+verification Flows in-app) and **LiveSense v4** zoom capture. Existing
+v3 `startVerification` / Sessions integrations are unaffected; Sessions
+and Flows coexist.
+
+### Added
+
+- **`UseSenseFlows.run(flowRunId:sdkToken:apiBaseURL:from:completion:)`**:
+  presents a full-screen runner that drives an operator-authored Flow
+  (face, document, form, consent, and info steps) to a terminal outcome,
+  delivered as `Result<FlowRunResult, FlowError>`. Flows are token-based
+  and do not require an API key or `UseSense.init` on the device: your
+  backend creates the run via `POST /v1/flow-runs` (with
+  `mint_sdk_token: true`) and ships `flowRunId` + `sdkToken` to the app.
+- **Document capture via VisionKit** for a Flow's document step, with a
+  photo-library fallback, honoring the server-declared capture contract.
+- **LiveSense v4 zoom capture**: `startV4Session(config:delegate:)`, a
+  hardware-key chain signer, MP4 encoder, and the v4 session
+  orchestrator. v3 verification behaviour is unchanged.
+
+### Changed
+
+- **Reported SDK version** (`UseSense.version`, sent to the backend as
+  `sdk_version`) corrected from `4.1.0` to `4.3.0`. This was stale and
+  understated the client version, which matters for Flow
+  `min_sdk_version` gating and the `POST /v1/flow-runs` version check
+  (`409 sdk_too_old`). The podspec version is aligned to `4.3.0` to match
+  the Android SDK.
+
 ## [4.2.2] - 2026-04-11
 
 Patch release fixing visual centring of terminal-state titles on
