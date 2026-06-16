@@ -94,10 +94,30 @@ public struct SDKOptions: Sendable {
     public var targetFps: Int
     public var maxFrames: Int
     public var maxUploadSizeMb: Int
+    /// Opt in to the on-device antispoof classifier. When enabled the SDK loads
+    /// the bundled CoreML model, runs inference against each captured frame,
+    /// and attaches per-frame spoof probabilities to the uploaded metadata under
+    /// `signals.deep_classifier_on_device`. When disabled the watchtower backend
+    /// runs the classifier server-side. Defaults to false in v4.2 -- see
+    /// `docs/sdk-specs/antispoof-classifier-sdk-spec.md` for the rollout plan.
+    public var antispoofOnDeviceEnabled: Bool
+
+    /// Opt the session into the LiveSense v4 capture flow. When true the SDK:
+    ///   - sends `x-usesense-sdk-version: v4` on session creation
+    ///   - inserts a constitutive zoom-motion phase between framing and the
+    ///     active challenge (additive, not a replacement -- existing
+    ///     head_turn / follow_dot / speak_phrase challenges still run)
+    ///   - tags every captured frame with its capture phase so the server's
+    ///     SfM perspective validator can filter to the zoom subset
+    /// Defaults to false. The org must also have `livesense_v4_enabled` in its
+    /// features map; the server returns 400 v4_not_enabled otherwise.
+    public var liveSenseV4Enabled: Bool
 
     public init(
         audioEnabled: AudioMode = .riskBased, stepUpPolicy: StepUpPolicy = .riskBased,
-        captureDurationMs: Int = 8000, targetFps: Int = 3, maxFrames: Int = 30, maxUploadSizeMb: Int = 10
+        captureDurationMs: Int = 8000, targetFps: Int = 3, maxFrames: Int = 30, maxUploadSizeMb: Int = 10,
+        antispoofOnDeviceEnabled: Bool = false,
+        liveSenseV4Enabled: Bool = false
     ) {
         self.audioEnabled = audioEnabled
         self.stepUpPolicy = stepUpPolicy
@@ -105,6 +125,8 @@ public struct SDKOptions: Sendable {
         self.targetFps = targetFps
         self.maxFrames = maxFrames
         self.maxUploadSizeMb = maxUploadSizeMb
+        self.antispoofOnDeviceEnabled = antispoofOnDeviceEnabled
+        self.liveSenseV4Enabled = liveSenseV4Enabled
     }
 }
 

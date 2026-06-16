@@ -351,9 +351,10 @@ final class EventSystemTests: XCTestCase {
 
 final class SessionStateMachineTests: XCTestCase {
     func testCapturePhases() {
-        // v4.1 added inlineStepUp phase
-        XCTAssertEqual(CapturePhase.allCases.count, 12)
+        // v4.1 added inlineStepUp; v4 added the zoom-motion phase
+        XCTAssertEqual(CapturePhase.allCases.count, 13)
         XCTAssertEqual(CapturePhase.instructions.rawValue, "instructions")
+        XCTAssertEqual(CapturePhase.zoom.rawValue, "zoom")
         XCTAssertEqual(CapturePhase.inlineStepUp.rawValue, "inline-step-up")
         XCTAssertEqual(CapturePhase.done.rawValue, "done")
     }

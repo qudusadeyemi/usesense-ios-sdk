@@ -49,6 +49,13 @@ public struct UseSenseView: View {
             case .baseline:
                 cameraWithBaseline
 
+            case .zoom:
+                // V4 zoom-motion state. The legacy UI does not render this;
+                // V4 sessions use their own view path (LiveSenseV4Session).
+                // Render baseline as a benign fallback so the switch stays
+                // exhaustive without breaking the legacy capture flow.
+                cameraWithBaseline
+
             case .countdown(let number):
                 ZStack {
                     cameraLayer

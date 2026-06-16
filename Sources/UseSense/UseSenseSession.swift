@@ -352,6 +352,49 @@ public final class UseSenseSession: @unchecked Sendable {
         frameBuffer.reconfigure(maxFrames: maxFrames, targetFps: targetFps)
     }
 
+    /// Build a small summary block describing the zoom phase for the upload
+    /// payload. The server cross-checks SDK-reported counts against the SfM
+    /// reconstruction (PRD section 4.6 motion_coherence).
+    private func buildZoomMotionStats(framePhases: [String]) -> [String: Any] {
+        let total = framePhases.count
+        let zoomCount = framePhases.filter { $0 == FrameBuffer.CapturePhase.zoom.rawValue }.count
+        return [
+            "frames_total": total,
+            "frames_in_zoom": zoomCount,
+            "expected_duration_ms": 1500,
+            "sdk_version": UseSenseAPIClient.sdkVersion
+        ]
+    }
+
+    /// LiveSense v4 zoom phase. The user is prompted to move the camera
+    /// closer (~30cm to ~18cm over 1.5s) so the server's perspective
+    /// validator can reconstruct 3D face geometry from the frame sequence.
+    /// Frames captured during this window are tagged `phase: "zoom"` so the
+    /// SfM service can filter to the coherent-motion subset.
+    private func runZoomPhase() async {
+        let zoomDurationMs: UInt64 = 1500
+        let stepMs: UInt64 = 50
+        let steps = zoomDurationMs / stepMs
+
+        frameBuffer.setCapturePhase(.zoom)
+        eventEmitter.emit(.zoomStarted, data: ["expected_duration_ms": "\(zoomDurationMs)"])
+
+        for step in 0..<steps {
+            let progress = Double(step) / Double(steps)
+            currentState = .zoom(progressFraction: progress)
+            do {
+                try await Task.sleep(nanoseconds: stepMs * 1_000_000)
+            } catch is CancellationError {
+                return
+            } catch {
+                break
+            }
+        }
+        currentState = .zoom(progressFraction: 1.0)
+        eventEmitter.emit(.zoomCompleted)
+        // Subsequent frames revert to whatever phase the next state sets.
+    }
+
     private func startBaseline() async {
         do {
             eventEmitter.emit(.captureStarted)
@@ -360,6 +403,8 @@ public final class UseSenseSession: @unchecked Sendable {
             faceMeshManager.reset()
             suspicionEngine?.reset()
             isCapturingFrames = true
+            // v4: tag frames captured during baseline.
+            frameBuffer.setCapturePhase(.baseline)
             currentState = .baseline(remaining: baselineDuration)
 
             if needsAudio {
@@ -367,6 +412,13 @@ public final class UseSenseSession: @unchecked Sendable {
             }
 
             try await Task.sleep(nanoseconds: UInt64(baselineDuration * 1_000_000_000))
+
+            // v4: insert a constitutive zoom phase between baseline and the
+            // active challenge. Additive -- existing challenges still run.
+            // ZoomMotionController + ZoomPromptView observe `currentState`.
+            if config.options?.liveSenseV4Enabled == true {
+                await runZoomPhase()
+            }
 
             if sessionData?.policy.challenge != nil {
                 for i in stride(from: 3, through: 1, by: -1) {
@@ -378,6 +430,7 @@ public final class UseSenseSession: @unchecked Sendable {
             challengeResponseBuilder.markStarted()
             if let challenge = sessionData?.policy.challenge {
                 eventEmitter.emit(.challengeStarted, data: ["type": challenge.challengeType.rawValue])
+                frameBuffer.setCapturePhase(.challenge)
                 currentState = .challenge(spec: challenge)
             } else {
                 let captureDurationMs = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 8000
@@ -559,6 +612,52 @@ public final class UseSenseSession: @unchecked Sendable {
             ]
         }
 
+        // v4.2: On-device antispoof classifier.
+        // When opted in AND the model artifact is available, score each captured
+        // frame within the MediaPipe face bbox and attach per-frame spoof
+        // probabilities to the metadata upload. When disabled or unavailable,
+        // the server path remains authoritative.
+        var deepClassifierOnDevice: [String: Any]?
+        if config.options?.antispoofOnDeviceEnabled == true {
+            let classifier = AntiSpoofClassifier(enabled: true)
+            if classifier.isAvailable, !meshResults.isEmpty {
+                var samples: [[String: Any]] = []
+                var modelVersion = "v1"
+                for (frameIdx, frameData) in frames.enumerated() {
+                    guard frameIdx < meshResults.count else { break }
+                    guard let image = UIImage(data: frameData) else { continue }
+                    let mesh = meshResults[frameIdx]
+                    // bbox is in normalised [0,1] image coords with top-left origin;
+                    // convert to Vision's bottom-left origin for the classifier.
+                    let vx = CGFloat(mesh.bbox.x)
+                    let vw = CGFloat(mesh.bbox.w)
+                    let vh = CGFloat(mesh.bbox.h)
+                    let vy = 1.0 - CGFloat(mesh.bbox.y) - vh
+                    let visionBbox = CGRect(x: vx, y: vy, width: vw, height: vh)
+                    if let sample = classifier.predict(image: image, frameIndex: frameIdx, boundingBox: visionBbox) {
+                        samples.append([
+                            "frameIndex": sample.frameIndex,
+                            "spoofProbability": sample.spoofProbability,
+                            "latencyMs": sample.latencyMs,
+                            "modelVersion": sample.modelVersion,
+                            "backbone": sample.backbone
+                        ])
+                        modelVersion = sample.modelVersion
+                    }
+                }
+                if !samples.isEmpty {
+                    deepClassifierOnDevice = [
+                        "modelVersion": modelVersion,
+                        "backbone": "efficientnet_b0",
+                        "threshold": 0.5,
+                        "samples": samples
+                    ]
+                }
+            } else if let err = classifier.availabilityError {
+                print("[UseSense] antispoof classifier unavailable -- falling back to server: \(err)")
+            }
+        }
+
         // Inline step-up data (only when triggered, per spec)
         var inlineStepUpData: [String: Any]?
         if let result = stepUpResult {
@@ -660,7 +759,14 @@ public final class UseSenseSession: @unchecked Sendable {
                 faceMeshSignals: faceMeshSignals,
                 verificationPackage: verificationPackage,
                 suspicion: suspicionData,
-                inlineStepUp: inlineStepUpData
+                inlineStepUp: inlineStepUpData,
+                deepClassifierOnDevice: deepClassifierOnDevice,
+                framePhases: config.options?.liveSenseV4Enabled == true
+                    ? frameBuffer.getFramePhases()
+                    : nil,
+                zoomMotion: config.options?.liveSenseV4Enabled == true
+                    ? buildZoomMotionStats(framePhases: frameBuffer.getFramePhases())
+                    : nil
             )
         } catch {
             handleError(UseSenseError(code: .unknownError, message: "Failed to build metadata."))

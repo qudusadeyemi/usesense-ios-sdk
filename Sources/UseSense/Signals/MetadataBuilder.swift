@@ -42,7 +42,16 @@ final class MetadataBuilder: @unchecked Sendable {
         suspicion: [String: Any]? = nil,
 
         // Inline Step-Up (Chapter 7) - only when triggered
-        inlineStepUp: [String: Any]? = nil
+        inlineStepUp: [String: Any]? = nil,
+
+        // Deep classifier on-device samples (v4.2) - only when antispoofOnDeviceEnabled
+        deepClassifierOnDevice: [String: Any]? = nil,
+
+        // v4 per-frame capture-phase tags (PRD section 6.3) - only on v4 sessions
+        framePhases: [String]? = nil,
+
+        // v4 zoom-motion summary stats (PRD section 6.4) - only on v4 sessions
+        zoomMotion: [String: Any]? = nil
     ) throws -> Data {
         var metadata: [String: Any] = [:]
 
@@ -99,6 +108,19 @@ final class MetadataBuilder: @unchecked Sendable {
         // Inline step-up (only when triggered, otherwise null)
         if let isu = inlineStepUp {
             metadata["inline_step_up"] = isu
+        }
+
+        // Deep classifier on-device samples (v4.2; only when the feature flag is on)
+        if let dc = deepClassifierOnDevice {
+            metadata["deep_classifier_on_device"] = dc
+        }
+
+        // v4 per-frame phase tags + zoom-motion summary
+        if let phases = framePhases {
+            metadata["frame_phases"] = phases
+        }
+        if let zm = zoomMotion {
+            metadata["zoom_motion"] = zm
         }
 
         // Build channel_integrity with embedded capture timing and screen detection

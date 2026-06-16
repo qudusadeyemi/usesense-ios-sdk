@@ -12,6 +12,8 @@ public enum UseSenseEventType: String, CaseIterable, Sendable {
     case audioRecordCompleted = "audio_record_completed"
     case challengeStarted = "challenge_started"
     case challengeCompleted = "challenge_completed"
+    case zoomStarted = "zoom_started"
+    case zoomCompleted = "zoom_completed"
     case uploadStarted = "upload_started"
     case uploadProgress = "upload_progress"
     case uploadCompleted = "upload_completed"
