@@ -560,12 +560,12 @@ final class UseSenseEntryPointTests: XCTestCase {
         XCTAssertFalse(UseSense.version.isEmpty)
     }
 
-    func testSDKVersionIs4_1() {
-        XCTAssertEqual(UseSense.version, "4.1.0")
+    func testSDKVersionIs4_3() {
+        XCTAssertEqual(UseSense.version, "4.3.0")
     }
 
     func testAPIClientVersion() {
-        XCTAssertEqual(UseSenseAPIClient.sdkVersion, "4.1.0")
+        XCTAssertEqual(UseSenseAPIClient.sdkVersion, "4.3.0")
     }
 
     func testCreateSDK() {
@@ -604,7 +604,7 @@ final class MetadataBuilderTests: XCTestCase {
         let builder = MetadataBuilder()
         let channelIntegrity: [String: Any] = [
             "platform": "ios",
-            "sdk_version": "4.1.0",
+            "sdk_version": "4.3.0",
             "device_model": "iPhone15,2"
         ]
         let deviceTelemetry: [String: Any] = [
@@ -627,7 +627,7 @@ final class MetadataBuilderTests: XCTestCase {
 
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
 
-        XCTAssertEqual(json["sdk_version"] as? String, "4.1.0")
+        XCTAssertEqual(json["sdk_version"] as? String, "4.3.0")
         XCTAssertEqual(json["platform"] as? String, "ios")
         XCTAssertNotNil(json["channel_integrity"])
         XCTAssertNotNil(json["device_telemetry"])
