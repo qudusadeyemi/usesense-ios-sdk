@@ -30,9 +30,18 @@ PODS=(MediaPipeTasksVision MediaPipeTasksCommon)
 MEDIAPIPE_VERSION="${MEDIAPIPE_VERSION:-0.10.21}"
 
 OUT_DIR="${1:-$PWD/build/mediapipe}"
+mkdir -p "$OUT_DIR"
+ZIP="$OUT_DIR/UseSenseMediaPipe.xcframeworks.zip"
+
+# Idempotent: skip the (large) download + repackage if the bundle already exists.
+# Delete the output dir to force a rebuild.
+if [ -f "$ZIP" ]; then
+  echo "==> $ZIP already exists; skipping rebuild (delete it to force)."
+  exit 0
+fi
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-mkdir -p "$OUT_DIR"
 STAGE="$WORK/stage"
 mkdir -p "$STAGE"
 

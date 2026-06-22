@@ -1,16 +1,39 @@
 platform :ios, '15.0'
 
+# Face mesh needs the patched MediaPipe bundle. UseSenseMediaPipe is published to
+# CocoaPods trunk at release time; before that (local dev + PR CI) it isn't on
+# trunk, so build the bundle here and consume it from a local podspec whose
+# source points at the freshly built zip (file://). Once UseSenseMediaPipe is on
+# trunk, you can delete Example/.mediapipe and it resolves transitively instead.
+repo_root  = File.expand_path('..', __dir__)
+vendor_dir = File.join(repo_root, 'Example', '.mediapipe')
+local_spec = File.join(vendor_dir, 'UseSenseMediaPipe.local.podspec')
+local_zip  = File.join(vendor_dir, 'UseSenseMediaPipe.xcframeworks.zip')
+
+unless File.exist?(local_spec)
+  unless system('bash', File.join(repo_root, 'scripts', 'vendor-mediapipe.sh'), vendor_dir)
+    raise '[UseSense] Failed to build the MediaPipe bundle (scripts/vendor-mediapipe.sh).'
+  end
+  spec = File.read(File.join(repo_root, 'UseSenseMediaPipe.podspec'))
+  spec = spec.sub(
+    %r{:http => "https://github\.com/[^"]+/UseSenseMediaPipe\.xcframeworks\.zip"},
+    %(:http => "file://#{local_zip}")
+  )
+  File.write(local_spec, spec)
+end
+
 target 'UseSenseExample' do
-  # MediaPipe (pulled in transitively via UseSenseSDK -> UseSenseMediaPipe) ships
-  # static binaries, so the app must link statically. Plain `use_frameworks!`
-  # fails pod install with "transitive dependencies that include statically
-  # linked binaries".
+  # Static linkage is required: MediaPipe ships static binaries, so plain
+  # `use_frameworks!` fails pod install with "transitive dependencies that
+  # include statically linked binaries".
   use_frameworks! :linkage => :static
 
   # Local pod for development. UseSenseSDK depends on UseSenseMediaPipe (the
-  # vendored, Info.plist-patched MediaPipe frameworks), resolved from trunk —
-  # so face mesh works with no per-app pod or pre_install patch hook.
+  # vendored, Info.plist-patched MediaPipe frameworks) — provided here by the
+  # locally built podspec so face mesh works with no per-app pod or pre_install
+  # patch hook.
   pod 'UseSenseSDK', :path => '../'
+  pod 'UseSenseMediaPipe', :podspec => local_spec
 end
 
 post_install do |installer|

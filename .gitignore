@@ -16,6 +16,10 @@ Pods/
 
 # Build artifacts
 *.xcframework.zip
+*.xcframeworks.zip
+build/
+# Locally built MediaPipe bundle for the Example (see Example/Podfile)
+Example/.mediapipe/
 *.ipa
 *.dSYM.zip
 *.dSYM
