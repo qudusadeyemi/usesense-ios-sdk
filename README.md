@@ -33,24 +33,22 @@ Open the `.xcworkspace` file (not `.xcodeproj`).
 Face capture buffers a camera frame only when the on-device face mesh detects a
 face in it, so the face-mesh runtime (Google's MediaPipe) must be linked or the
 liveness step fails with **"No frames captured."** As of **4.4.0 this works out
-of the box**: `UseSenseSDK` depends on `UseSenseMediaPipe`, a companion pod that
-vendors the MediaPipe `Tasks{Vision,Common}` frameworks with Google's broken
-xcframework `Info.plist` already patched (`LibraryPath: <NAME>.a` -> `.framework`).
-You no longer add `MediaPipeTasksVision` or a `pre_install` hook yourself.
-
-The only requirement is **static linkage**, because MediaPipe ships static
-binaries (the same constraint the upstream pod imposes):
+of the box** — no extra setup:
 
 ```ruby
 target 'YourApp' do
-  use_frameworks! :linkage => :static   # required: MediaPipe binaries are static
+  use_frameworks!
 
   pod 'UseSenseSDK', '~> 4.4'
 end
 ```
 
-Plain `use_frameworks!` (dynamic) fails `pod install` with "transitive
-dependencies that include statically linked binaries"; add `:linkage => :static`.
+`UseSenseSDK` depends on `UseSenseMediaPipe`, a companion pod that vendors the
+MediaPipe `Tasks{Vision,Common}` frameworks with Google's broken xcframework
+`Info.plist` already patched (`LibraryPath: <NAME>.a` -> `.framework`). You no
+longer add `MediaPipeTasksVision` or a `pre_install` hook. `UseSenseSDK` is a
+`static_framework`, so it carries MediaPipe's static binaries under a normal
+`use_frameworks!` — no `:linkage => :static` needed.
 
 > Provenance: the patched binaries are produced by `scripts/vendor-mediapipe.sh`
 > at release time and attached to the GitHub Release that `UseSenseMediaPipe.podspec`
