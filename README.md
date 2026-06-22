@@ -70,12 +70,12 @@ In Xcode: **File > Add Package Dependencies**, enter:
 https://github.com/qudusadeyemi/usesense-ios-sdk.git
 ```
 
-Select version "Up to Next Major" from `4.2.0`.
+Select version "Up to Next Major" from `4.4.0`.
 
 Or add to your `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.2.0")
+.package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.4.0")
 ```
 
 ### Manual Installation

@@ -4,6 +4,31 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.4.0] - 2026-06-22
+
+Minor release making **on-device face mesh work out of the box**. Face capture
+records frames only when face mesh detects a face, so without MediaPipe linked
+the liveness step failed with "No frames captured." Previously each app had to
+add `MediaPipeTasksVision` plus a `pre_install` Info.plist patch hook themselves.
+
+### Added
+
+- **`UseSenseMediaPipe` companion pod** — vendors the MediaPipe
+  `Tasks{Vision,Common}` frameworks with Google's broken xcframework `Info.plist`
+  pre-patched (`LibraryPath: <NAME>.a` -> `.framework`) and the force-loaded
+  static graph archives bundled. Built by `scripts/vendor-mediapipe.sh` and
+  attached to the GitHub Release.
+- `UseSenseSDK` now depends on `UseSenseMediaPipe`, so face mesh is transitive —
+  no per-app MediaPipe pod or `pre_install` hook.
+
+### Changed
+
+- **Requires `use_frameworks! :linkage => :static`** in the app's Podfile
+  (MediaPipe ships static binaries). Plain `use_frameworks!` fails `pod install`
+  with "transitive dependencies that include statically linked binaries".
+- Release pipeline builds + hosts the patched MediaPipe bundle and publishes
+  `UseSenseMediaPipe` before `UseSenseSDK`.
+
 ## [4.3.0] - 2026-06-15
 
 Minor release adding the **Flows runner** (run operator-authored

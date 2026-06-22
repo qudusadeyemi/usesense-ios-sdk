@@ -8,7 +8,7 @@ assignees: ''
 
 ## Environment
 
-- **SDK version**: (e.g., 4.2.1)
+- **SDK version**: (e.g., 4.4.0)
 - **Install channel**: CocoaPods / SwiftPM / Manual XCFramework
 - **iOS version**: (e.g., 17.4)
 - **Device**: (e.g., iPhone 15 Pro, iPhone SE 2nd gen, simulator)
