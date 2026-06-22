@@ -1,35 +1,16 @@
 platform :ios, '15.0'
 
 target 'UseSenseExample' do
-  use_frameworks!
+  # MediaPipe (pulled in transitively via UseSenseSDK -> UseSenseMediaPipe) ships
+  # static binaries, so the app must link statically. Plain `use_frameworks!`
+  # fails pod install with "transitive dependencies that include statically
+  # linked binaries".
+  use_frameworks! :linkage => :static
 
-  # Use the local pod for development
+  # Local pod for development. UseSenseSDK depends on UseSenseMediaPipe (the
+  # vendored, Info.plist-patched MediaPipe frameworks), resolved from trunk —
+  # so face mesh works with no per-app pod or pre_install patch hook.
   pod 'UseSenseSDK', :path => '../'
-end
-
-# Google's MediaPipeTasks{Common,Vision}.xcframeworks ship with a broken
-# Info.plist: LibraryPath is declared as "*.a", but the actual file on disk is
-# a "*.framework/" directory that contains a Mach-O ar archive. CocoaPods trusts
-# the Info.plist and classifies the xcframework as a static_library, which
-# makes it emit `-lMediaPipeTasksCommon` linker flags that fail to resolve
-# because there is no `.a` file on disk. Patch the Info.plist in place before
-# the CocoaPods analyzer reads it -- pre_install runs after pods are downloaded
-# but before validate_targets and project generation.
-pre_install do |installer|
-  %w[MediaPipeTasksCommon MediaPipeTasksVision].each do |name|
-    plist_path = "#{installer.sandbox.root}/#{name}/frameworks/#{name}.xcframework/Info.plist"
-    next unless File.exist?(plist_path)
-
-    contents = File.read(plist_path)
-    fixed = contents.gsub(
-      "<string>#{name}.a</string>",
-      "<string>#{name}.framework</string>",
-    )
-    next if fixed == contents
-
-    File.write(plist_path, fixed)
-    puts "[UseSenseSDK] Patched #{plist_path} (LibraryPath .a -> .framework)"
-  end
 end
 
 post_install do |installer|

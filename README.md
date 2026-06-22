@@ -28,44 +28,39 @@ pod install
 
 Open the `.xcworkspace` file (not `.xcodeproj`).
 
-### Optional: Enable On-Device Face Mesh (Geometric Coherence pillar)
+### On-Device Face Mesh (required for face capture)
 
-The on-device face-mesh feature uses Google's `MediaPipeTasksVision` CocoaPod. Google's upstream xcframework ships with a broken `Info.plist` (`LibraryPath: MediaPipeTasksCommon.a` for a file that's actually a `.framework/` directory), so CocoaPods generates a `-lMediaPipeTasksCommon` linker flag that fails with `ld: library 'MediaPipeTasksCommon' not found`. UseSenseSDK cannot declare `MediaPipeTasksVision` as a transitive dependency because `pod lib lint` and `pod trunk push` would both reject the spec.
+Face capture buffers a camera frame only when the on-device face mesh detects a
+face in it, so the face-mesh runtime (Google's MediaPipe) must be linked or the
+liveness step fails with **"No frames captured."** As of **4.4.0 this works out
+of the box**: `UseSenseSDK` depends on `UseSenseMediaPipe`, a companion pod that
+vendors the MediaPipe `Tasks{Vision,Common}` frameworks with Google's broken
+xcframework `Info.plist` already patched (`LibraryPath: <NAME>.a` -> `.framework`).
+You no longer add `MediaPipeTasksVision` or a `pre_install` hook yourself.
 
-To enable face-mesh in your app, add the dependency directly and patch the upstream `Info.plist` via a `pre_install` hook in your Podfile:
+The only requirement is **static linkage**, because MediaPipe ships static
+binaries (the same constraint the upstream pod imposes):
 
 ```ruby
 target 'YourApp' do
-  use_frameworks!
+  use_frameworks! :linkage => :static   # required: MediaPipe binaries are static
 
-  pod 'UseSenseSDK', '~> 4.2'
-  pod 'MediaPipeTasksVision', '~> 0.10'
-end
-
-# Patches Google's MediaPipeTasks{Common,Vision}.xcframework Info.plist
-# in place so CocoaPods classifies them as frameworks (not static libs)
-# and emits the correct -framework linker flag instead of -l.
-#
-# When Google publishes a fixed upstream version, this hook can be removed.
-pre_install do |installer|
-  %w[MediaPipeTasksCommon MediaPipeTasksVision].each do |name|
-    plist_path = "#{installer.sandbox.root}/#{name}/frameworks/#{name}.xcframework/Info.plist"
-    next unless File.exist?(plist_path)
-
-    contents = File.read(plist_path)
-    fixed = contents.gsub(
-      "<string>#{name}.a</string>",
-      "<string>#{name}.framework</string>",
-    )
-    next if fixed == contents
-
-    File.write(plist_path, fixed)
-    puts "[UseSenseSDK] Patched #{plist_path} (LibraryPath .a -> .framework)"
-  end
+  pod 'UseSenseSDK', '~> 4.4'
 end
 ```
 
-If you don't need face mesh, you can omit the `MediaPipeTasksVision` pod and the `pre_install` hook entirely. UseSenseSDK gates the face-mesh code path behind `#if canImport(MediaPipeTasksVision)`, so it builds and runs cleanly with or without the MediaPipe dependency. The DeepSense, LiveSense, and MatchSense pillars all continue to work, and `FaceMeshManager.setup()` returns immediately with `isReady=false` so the rest of the SDK never tries to use face-mesh data.
+Plain `use_frameworks!` (dynamic) fails `pod install` with "transitive
+dependencies that include statically linked binaries"; add `:linkage => :static`.
+
+> Provenance: the patched binaries are produced by `scripts/vendor-mediapipe.sh`
+> at release time and attached to the GitHub Release that `UseSenseMediaPipe.podspec`
+> downloads from. MediaPipe is redistributed under Apache-2.0 (LICENSE bundled);
+> the only change is the `Info.plist` LibraryPath fix.
+
+The SDK still gates the face-mesh code behind `#if canImport(MediaPipeTasksVision)`,
+so SwiftPM/source builds without the binary degrade cleanly (`FaceMeshManager`
+returns `isReady=false`) — but note that face capture is non-functional in that
+degraded state, so CocoaPods integrators should keep the dependency.
 
 ### Swift Package Manager
 
