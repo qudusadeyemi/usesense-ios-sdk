@@ -1,9 +1,16 @@
 name: Release
 
-# Triggered automatically by pushing a `v*` tag (e.g. `v4.2.0`).
-# Also runnable manually via `gh workflow run release-ios.yml --ref <tag>`
-# or the "Run workflow" button in the Actions tab — useful for re-running
-# a release after a transient CI flake without re-tagging the commit.
+# Triggered automatically by pushing a `v*` tag (e.g. `v4.4.0`).
+# Also runnable manually via `gh workflow run release-ios.yml --ref <tag>`.
+#
+# Publish order matters: UseSenseSDK now depends on UseSenseMediaPipe (the
+# vendored, Info.plist-patched MediaPipe frameworks), and UseSenseMediaPipe's
+# podspec downloads its binaries from THIS tag's GitHub Release. So the pipeline
+# is strictly sequenced:
+#   vendor-mediapipe + build-xcframework  ->  create-release (attaches both zips)
+#     ->  publish-mediapipe (pod trunk push)  ->  publish-sdk (pod trunk push)
+# Each `pod trunk push` lints first, so a misconfiguration FAILS the release
+# rather than publishing a broken pod.
 on:
   push:
     tags:
@@ -14,36 +21,26 @@ permissions:
   contents: write
 
 jobs:
-  validate:
-    name: Validate Podspec
+  vendor-mediapipe:
+    name: Build patched MediaPipe bundle
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-
-      - name: Lint podspec
-        run: pod lib lint UseSenseSDK.podspec --allow-warnings
+      - name: Vendor + patch MediaPipe xcframeworks
+        run: bash scripts/vendor-mediapipe.sh "$PWD/build/mediapipe"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UseSenseMediaPipe-xcframeworks
+          path: build/mediapipe/UseSenseMediaPipe.xcframeworks.zip
 
   build-xcframework:
     name: Build XCFramework
     runs-on: macos-15
-    needs: validate
-    # The XCFramework attached to the GitHub Release is built from a
-    # dedicated Xcode framework target defined in XCFrameworkBuild/project.yml
-    # and generated at CI time via xcodegen, rather than from the SwiftPM
-    # package directly.
-    #
-    # Why: `xcodebuild archive` over a SwiftPM static library product only
-    # emits the compiled binary and a sibling resource bundle; the resulting
-    # `UseSenseSDK.framework` has no Modules/ or Info.plist, so consumers
-    # cannot `import UseSenseSDK` or runtime-load the framework. Flipping the
-    # SPM product to `.library(type: .dynamic, ...)` produces a binary but
-    # still doesn't populate Modules/, so it's not a workaround either.
-    #
-    # The wrapper project compiles the same Swift sources under
-    # Sources/UseSense/** as a proper Xcode framework target, so Xcode
-    # generates a complete .framework bundle (Headers, Modules/swiftmodule,
-    # Info.plist, flat resources) that is actually consumable by drag-in
-    # integrators. See XCFrameworkBuild/project.yml for details.
+    # The XCFramework attached to the GitHub Release is built from a dedicated
+    # Xcode framework target (XCFrameworkBuild/project.yml) generated via
+    # xcodegen at CI time. See that file for why the SwiftPM product can't be
+    # archived into a consumable .framework directly.
     steps:
       - uses: actions/checkout@v4
 
@@ -108,52 +105,55 @@ jobs:
           name: UseSenseSDK-xcframework
           path: build/UseSenseSDK.xcframework.zip
 
-  publish-cocoapods:
-    name: Publish to CocoaPods
-    runs-on: macos-15
-    needs: validate
-    # Note: this job used to have
-    #   if: ${{ secrets.COCOAPODS_TRUNK_TOKEN != '' }}
-    # as a "graceful skip when token is missing" guard. That conditional
-    # is invalid at the job level — the `secrets` context is not in
-    # scope during workflow plan evaluation, so the expression errors
-    # out at startup and the ENTIRE workflow fails with `jobs: []`
-    # (zero jobs scheduled). Every release-ios.yml run since the
-    # conditional was added failed in 0s for this reason — the run
-    # appears in the Actions tab but no jobs ever materialise.
-    #
-    # COCOAPODS_TRUNK_TOKEN is now a required repo secret. If it
-    # isn't set when the workflow fires, the `pod trunk push` step
-    # below fails with a clear authentication error and the deploy
-    # can be retried via `gh workflow run release-ios.yml --ref <tag>`
-    # after adding the secret.
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Push to CocoaPods Trunk
-        env:
-          COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
-        run: pod trunk push UseSenseSDK.podspec --allow-warnings
-
   create-release:
     name: Create GitHub Release
     runs-on: macos-15
-    needs: build-xcframework
+    needs: [vendor-mediapipe, build-xcframework]
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Download XCFramework
+      - name: Download SDK XCFramework
         uses: actions/download-artifact@v4
         with:
           name: UseSenseSDK-xcframework
           path: build/
-
+      - name: Download patched MediaPipe bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: UseSenseMediaPipe-xcframeworks
+          path: build/
       - name: Create Release
+        # UseSenseMediaPipe.podspec downloads its binaries from this asset, so the
+        # release MUST exist before the CocoaPods publish jobs run.
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: build/UseSenseSDK.xcframework.zip
+          files: |
+            build/UseSenseSDK.xcframework.zip
+            build/UseSenseMediaPipe.xcframeworks.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-mediapipe:
+    name: Publish UseSenseMediaPipe to CocoaPods
+    runs-on: macos-15
+    needs: create-release
+    # Must publish before UseSenseSDK, which declares it as a dependency.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Push UseSenseMediaPipe to CocoaPods Trunk
+        env:
+          COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
+        run: pod trunk push UseSenseMediaPipe.podspec --allow-warnings
+
+  publish-sdk:
+    name: Publish UseSenseSDK to CocoaPods
+    runs-on: macos-15
+    needs: publish-mediapipe
+    steps:
+      - uses: actions/checkout@v4
+      - name: Push UseSenseSDK to CocoaPods Trunk
+        env:
+          COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
+        run: pod trunk push UseSenseSDK.podspec --allow-warnings
