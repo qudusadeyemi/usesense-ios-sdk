@@ -47,15 +47,18 @@ mkdir -p "$STAGE"
 
 echo "==> Vendoring MediaPipe ${MEDIAPIPE_VERSION} (pods: ${PODS[*]})"
 
-# Resolve each pod's binary (http) source from its published podspec and download
-# it directly -- no `pod install` / Xcode project needed, since we only repackage
-# the prebuilt xcframeworks.
+# Resolve each pod's binary (http) source from its podspec and download it
+# directly -- no `pod install` / Xcode project needed, since we only repackage
+# the prebuilt xcframeworks. Read the podspec straight from the CocoaPods CDN
+# (md5-sharded `Specs/<a>/<b>/<c>/<name>/<ver>/<name>.podspec.json`) via curl,
+# rather than `pod spec cat`, which needs a cloned trunk spec repo that fresh
+# CI runners don't have (they use the CDN).
 for pod in "${PODS[@]}"; do
   echo "==> Resolving ${pod} ${MEDIAPIPE_VERSION} source URL"
-  spec_json="$(pod spec cat "${pod}" --version="${MEDIAPIPE_VERSION}" 2>/dev/null \
-    || pod spec cat "${pod}")"
-  url="$(printf '%s' "$spec_json" | python3 -c \
-    'import sys,json; print(json.load(sys.stdin)["source"]["http"])')"
+  shard="$(python3 -c "import hashlib,sys;print('/'.join(hashlib.md5(sys.argv[1].encode()).hexdigest()[0:3]))" "$pod")"
+  spec_url="https://cdn.cocoapods.org/Specs/${shard}/${pod}/${MEDIAPIPE_VERSION}/${pod}.podspec.json"
+  curl -fsSL "$spec_url" -o "$WORK/${pod}.podspec.json"
+  url="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['source']['http'])" "$WORK/${pod}.podspec.json")"
   if [ -z "$url" ]; then
     echo "ERROR: could not resolve http source for ${pod}" >&2
     exit 1
