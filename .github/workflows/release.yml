@@ -50,7 +50,7 @@ jobs:
             ### Swift Package Manager
 
             ```swift
-            .package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.1.0")
+            .package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.4.0")
             ```
 
             ## Requirements
