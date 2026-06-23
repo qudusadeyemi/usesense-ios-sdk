@@ -23,10 +23,9 @@ unless File.exist?(local_spec)
 end
 
 target 'UseSenseExample' do
-  # Static linkage is required: MediaPipe ships static binaries, so plain
-  # `use_frameworks!` fails pod install with "transitive dependencies that
-  # include statically linked binaries".
-  use_frameworks! :linkage => :static
+  # Plain dynamic frameworks. UseSenseSDK is a static_framework, so it carries its
+  # static MediaPipe deps statically without the app needing `:linkage => :static`.
+  use_frameworks!
 
   # Local pod for development. UseSenseSDK depends on UseSenseMediaPipe (the
   # vendored, Info.plist-patched MediaPipe frameworks) — provided here by the

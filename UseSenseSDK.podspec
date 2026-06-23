@@ -56,4 +56,9 @@ Pod::Spec.new do |s|
     'SWIFT_ACTIVE_COMPILATION_CONDITIONS' => '$(inherited)',
     'APPLICATION_EXTENSION_API_ONLY' => 'NO'
   }
+  # MediaPipe ships static binaries, so UseSenseSDK integrates as a static
+  # framework. This lets it carry the static MediaPipe deps under a normal
+  # `use_frameworks!` (the Flutter default) without the app needing
+  # `:linkage => :static`, and lets `pod trunk push` validate the static deps.
+  s.static_framework = true
 end
