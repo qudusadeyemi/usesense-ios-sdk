@@ -38,6 +38,11 @@ public final class FlowsClient: @unchecked Sendable {
         var request = URLRequest(url: url(suffix))
         request.httpMethod = method
         request.setValue("Bearer \(sdkToken)", forHTTPHeaderField: "Authorization")
+        // Identify the platform to the server at the first device contact
+        // (init-session), so the flow capture session is scored on the iOS
+        // surface from creation rather than defaulting to web. Mirrors the
+        // session API client's User-Agent.
+        request.setValue("UseSense-iOS-SDK/\(UseSenseAPIClient.sdkVersion)", forHTTPHeaderField: "User-Agent")
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
