@@ -4,6 +4,20 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.4.1] - 2026-06-23
+
+Patch release: the Flows client now identifies its platform to the server.
+
+### Fixed
+
+- **Flow capture scored on the web surface.** `FlowsClient` (the
+  `/v1/sdk/flow-runs/*` client, including `init-session`) sent no `User-Agent`,
+  so the server couldn't tell iOS from web at session creation and ran
+  DeepSense channel-trust scoring on the web surface — penalising native
+  captures for absent browser signals (WebGL/canvas/cookies). It now sends
+  `UseSense-iOS-SDK/<version>`, which the server reads to score flow captures on
+  the iOS surface from creation.
+
 ## [4.4.0] - 2026-06-22
 
 Minor release making **on-device face mesh work out of the box**. Face capture

@@ -32,7 +32,7 @@ Open the `.xcworkspace` file (not `.xcodeproj`).
 
 Face capture buffers a camera frame only when the on-device face mesh detects a
 face in it, so the face-mesh runtime (Google's MediaPipe) must be linked or the
-liveness step fails with **"No frames captured."** As of **4.4.0 this works out
+liveness step fails with **"No frames captured."** As of **4.4.1 this works out
 of the box** — no extra setup:
 
 ```ruby
@@ -68,12 +68,12 @@ In Xcode: **File > Add Package Dependencies**, enter:
 https://github.com/qudusadeyemi/usesense-ios-sdk.git
 ```
 
-Select version "Up to Next Major" from `4.4.0`.
+Select version "Up to Next Major" from `4.4.1`.
 
 Or add to your `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.4.0")
+.package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.4.1")
 ```
 
 ### Manual Installation
