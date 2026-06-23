@@ -145,15 +145,29 @@ jobs:
       - name: Push UseSenseMediaPipe to CocoaPods Trunk
         env:
           COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
-        # Idempotent so the workflow can be safely re-run: a pod version can only
-        # be pushed once, and a re-run after a partial failure must not error here.
+        # Idempotent + resilient to CocoaPods trunk flakiness. Two real failure
+        # modes this guards against (both observed in prod):
+        #   1. The skip-check pattern starts with "-", so plain `grep -qF "- $VER ("`
+        #      errors with "invalid option" and never skips. Use `grep -qF --`.
+        #   2. `pod trunk push` frequently times out calling GitHub's commit API
+        #      *after* the spec has already been committed, exiting non-zero on a
+        #      successful publish. So on a non-zero push we re-check trunk and
+        #      treat "now present" as success, and retry a couple of times.
         run: |
           VER=$(grep -m1 's.version' UseSenseMediaPipe.podspec | sed -E "s/.*'([^']+)'.*/\1/")
-          if pod trunk info UseSenseMediaPipe 2>/dev/null | grep -qF "- $VER ("; then
-            echo "UseSenseMediaPipe $VER already on trunk; skipping."
-          else
-            pod trunk push UseSenseMediaPipe.podspec --allow-warnings --synchronous
-          fi
+          on_trunk() { pod trunk info UseSenseMediaPipe 2>/dev/null | grep -qF -- "- $VER ("; }
+          if on_trunk; then echo "UseSenseMediaPipe $VER already on trunk; skipping."; exit 0; fi
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt: pod trunk push UseSenseMediaPipe $VER"
+            if pod trunk push UseSenseMediaPipe.podspec --allow-warnings --synchronous; then exit 0; fi
+            echo "push exited non-zero; CocoaPods may have timed out AFTER committing — re-checking trunk..."
+            sleep 30
+            if on_trunk; then echo "UseSenseMediaPipe $VER landed on trunk despite the error; treating as success."; exit 0; fi
+            echo "not on trunk yet; backing off before retry..."
+            sleep 30
+          done
+          echo "::error::UseSenseMediaPipe $VER failed to publish after 3 attempts"
+          exit 1
 
   publish-sdk:
     name: Publish UseSenseSDK to CocoaPods
@@ -173,11 +187,22 @@ jobs:
         #   fails ("transitive dependencies that include statically linked
         #   binaries"). Real integration uses static linkage and is covered by the
         #   Example app CI build, so skip the import step here.
-        # Idempotent: skip if this version is already on trunk.
+        # Idempotent + resilient (same guards as the MediaPipe push): `grep -qF --`
+        # so the leading-"-" skip-check works, and on a non-zero push re-check
+        # trunk so a GitHub-commit-API timeout *after* a successful commit isn't
+        # reported as a failure; retry a couple of times for genuine transients.
         run: |
           VER=$(grep -m1 's.version' UseSenseSDK.podspec | sed -E "s/.*'([^']+)'.*/\1/")
-          if pod trunk info UseSenseSDK 2>/dev/null | grep -qF "- $VER ("; then
-            echo "UseSenseSDK $VER already on trunk; skipping."
-          else
-            pod trunk push UseSenseSDK.podspec --allow-warnings --synchronous --skip-import-validation
-          fi
+          on_trunk() { pod trunk info UseSenseSDK 2>/dev/null | grep -qF -- "- $VER ("; }
+          if on_trunk; then echo "UseSenseSDK $VER already on trunk; skipping."; exit 0; fi
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt: pod trunk push UseSenseSDK $VER"
+            if pod trunk push UseSenseSDK.podspec --allow-warnings --synchronous --skip-import-validation; then exit 0; fi
+            echo "push exited non-zero; CocoaPods may have timed out AFTER committing — re-checking trunk..."
+            sleep 30
+            if on_trunk; then echo "UseSenseSDK $VER landed on trunk despite the error; treating as success."; exit 0; fi
+            echo "not on trunk yet; backing off before retry..."
+            sleep 30
+          done
+          echo "::error::UseSenseSDK $VER failed to publish after 3 attempts"
+          exit 1
