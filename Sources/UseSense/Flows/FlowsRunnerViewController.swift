@@ -1,5 +1,6 @@
 #if canImport(UIKit) && canImport(SafariServices)
 import UIKit
+import SwiftUI
 import SafariServices
 import VisionKit
 
@@ -421,16 +422,30 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     private func presentFaceCapture(toolId: String?) {
-        Task {
-            do {
-                let response = try await client.initSession(toolId: toolId)
-                presentCaptureViewController(with: response)
-            } catch let e as FlowError {
-                finish(.failure(e))
-            } catch {
-                finish(.failure(FlowError(code: .unknown, message: error.localizedDescription)))
+        // Hosted parity: show the face primer first ("Take a selfie" + the do's),
+        // then mint the capture session on the CTA and hand off to the existing
+        // capture UI. The CTA shows progress while init-session is in flight.
+        let model = FacePrimerModel()
+        let primer = UIHostingController(
+            rootView: FacePrimerContainer(model: model, brandColor: USColors.primary) { [weak self] in
+                guard let self else { return }
+                model.isBusy = true
+                Task {
+                    do {
+                        let response = try await self.client.initSession(toolId: toolId)
+                        self.dismiss(animated: false) { self.presentCaptureViewController(with: response) }
+                    } catch let e as FlowError {
+                        self.dismiss(animated: true) { self.finish(.failure(e)) }
+                    } catch {
+                        self.dismiss(animated: true) {
+                            self.finish(.failure(FlowError(code: .unknown, message: error.localizedDescription)))
+                        }
+                    }
+                }
             }
-        }
+        )
+        primer.modalPresentationStyle = .fullScreen
+        present(primer, animated: true)
     }
 
     /// Build a UseSenseSession from the /init-session response, inject the

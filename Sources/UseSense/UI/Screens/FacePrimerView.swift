@@ -1,5 +1,6 @@
 #if canImport(UIKit) && canImport(SwiftUI)
 import SwiftUI
+import Combine
 
 // MARK: - FacePrimerView
 //
@@ -100,6 +101,32 @@ public struct FacePrimerView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
+    }
+}
+
+// MARK: - Flow integration
+
+/// Drives the primer's CTA busy state while the flow runner mints the capture
+/// session, so the button shows progress before the camera opens.
+@MainActor public final class FacePrimerModel: ObservableObject {
+    @Published public var isBusy = false
+    public init() {}
+}
+
+/// Hostable wrapper (for UIHostingController) that binds [FacePrimerModel].
+public struct FacePrimerContainer: View {
+    @ObservedObject private var model: FacePrimerModel
+    private let brandColor: Color
+    private let onStart: () -> Void
+
+    public init(model: FacePrimerModel, brandColor: Color = USColors.primary, onStart: @escaping () -> Void) {
+        self.model = model
+        self.brandColor = brandColor
+        self.onStart = onStart
+    }
+
+    public var body: some View {
+        FacePrimerView(brandColor: brandColor, isBusy: model.isBusy, onStart: onStart)
     }
 }
 #endif
