@@ -1,5 +1,6 @@
 #if canImport(UIKit) && canImport(SafariServices)
 import UIKit
+import SwiftUI
 import SafariServices
 import VisionKit
 
@@ -28,6 +29,10 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     /// Tracks whether we have opened the info action's external URL so the
     /// primary CTA changes copy and the next tap advances.
     private var infoOpenURLPresented = false
+    /// The branded form surface, while a captureForm step is on screen. Reused
+    /// across server invalid_input re-renders so the subject's input is preserved.
+    private var formModel: FormModel?
+    private weak var formHost: UIViewController?
 
     init(options: RunFlowOptions, completion: @escaping (Result<FlowRunResult, FlowError>) -> Void) {
         self.options = options
@@ -122,7 +127,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         case .captureDocument(_, _, _, _, let captureMethods):
             presentDocumentCapture(methods: captureMethods)
         case .captureForm(let fields):
-            installForm(fields: fields)
+            presentForm(fields: fields)
         case .info(let info):
             installInfo(info)
         case .redirectToConsent(let url):
@@ -140,6 +145,64 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     // MARK: - Surfaces
+
+    // MARK: - Form surface (branded)
+
+    private func presentForm(fields: [FormField]) {
+        // Re-render after a server invalid_input: refresh the existing form's
+        // errors instead of re-presenting (keeps the subject's input).
+        if let model = formModel {
+            model.errors = fieldErrors
+            model.isBusy = false
+            return
+        }
+        let model = FormModel(fields: fields, serverErrors: fieldErrors)
+        formModel = model
+        let host = UIHostingController(rootView: FormScreen(model: model, brandColor: USColors.primary) { [weak self] in
+            self?.submitForm()
+        })
+        host.modalPresentationStyle = .fullScreen
+        formHost = host
+        present(host, animated: true)
+    }
+
+    private func submitForm() {
+        guard let model = formModel else { return }
+        // Client-side echo of the server validation; the server stays authoritative.
+        var clientErrors: [String: String] = [:]
+        var values: [String: Any] = [:]
+        for field in model.fields {
+            let raw = model.rawValue(for: field)
+            if let err = validate(field: field, raw: raw) {
+                clientErrors[field.key] = err
+            } else {
+                values[field.key] = coerce(field: field, raw: raw)
+            }
+        }
+        if !clientErrors.isEmpty {
+            model.errors = clientErrors
+            return
+        }
+        model.errors = [:]
+        model.isBusy = true
+        Task {
+            await advance(inputs: values)
+            // If still parked on a form, the server rejected the input (errors are
+            // refreshed via presentForm's guard); otherwise the run moved on, so
+            // tear the form down to reveal the next surface.
+            if let action = view_?.pendingAction, case .captureForm = action {
+                model.isBusy = false
+            } else {
+                dismissForm()
+            }
+        }
+    }
+
+    private func dismissForm() {
+        formModel = nil
+        formHost?.dismiss(animated: true)
+        formHost = nil
+    }
 
     private func installForm(fields: [FormField]) {
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
