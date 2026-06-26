@@ -31,7 +31,7 @@ struct HeadTurnChallengeView: View {
                     .transition(.scale.combined(with: .opacity))
 
                     Text(directionText(for: step.direction))
-                        .font(.system(size: 22, weight: .semibold))
+                        .font(.usDisplay(22, .bold))
                         .foregroundColor(.white)
                 }
             }
@@ -40,7 +40,7 @@ struct HeadTurnChallengeView: View {
             Spacer()
 
             Text("Turn your head slowly")
-                .font(.system(size: 15, weight: .medium))
+                .font(.usBody(15, .medium))
                 .foregroundColor(.white.opacity(0.8))
                 .padding(.bottom, 80)
         }
