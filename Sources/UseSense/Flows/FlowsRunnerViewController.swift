@@ -29,6 +29,12 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     /// Tracks whether we have opened the info action's external URL so the
     /// primary CTA changes copy and the next tap advances.
     private var infoOpenURLPresented = false
+    /// The branded form surface, while a captureForm step is on screen. Reused
+    /// across server invalid_input re-renders so the subject's input is preserved.
+    private var formModel: FormModel?
+    private weak var formHost: UIViewController?
+    /// Guards re-presenting the id_number surface on a re-render.
+    private var idNumberPresented = false
 
     init(options: RunFlowOptions, completion: @escaping (Result<FlowRunResult, FlowError>) -> Void) {
         self.options = options
@@ -129,7 +135,9 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
                 methods: captureMethods
             )
         case .captureForm(let fields):
-            installForm(fields: fields)
+            presentForm(fields: fields)
+        case .captureIdNumber(let idTypes):
+            presentIdNumber(idTypes: idTypes)
         case .info(let info):
             installInfo(info)
         case .redirectToConsent(let url):
@@ -147,6 +155,85 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     // MARK: - Surfaces
+
+    // MARK: - ID number surface (branded)
+
+    private func presentIdNumber(idTypes: [IdTypeSpec]) {
+        // Avoid re-presenting on a re-render; the modal stays until submit.
+        if idNumberPresented { return }
+        idNumberPresented = true
+        let options = idTypes.map {
+            IdTypeOption(value: $0.value, label: $0.label, hint: $0.hint, field: $0.field, maxLength: $0.maxLength, numeric: $0.numeric)
+        }
+        let host = UIHostingController(rootView: IdNumberView(idTypes: options, brandColor: USColors.primary) { [weak self] idType, field, value in
+            guard let self else { return }
+            self.idNumberPresented = false
+            // Mirror the hosted page: advance({ id_type, [field]: value }).
+            self.dismiss(animated: false) {
+                Task { await self.advance(inputs: ["id_type": idType, field: value]) }
+            }
+        })
+        host.modalPresentationStyle = .fullScreen
+        present(host, animated: true)
+    }
+
+    // MARK: - Form surface (branded)
+
+    private func presentForm(fields: [FormField]) {
+        // Re-render after a server invalid_input: refresh the existing form's
+        // errors instead of re-presenting (keeps the subject's input).
+        if let model = formModel {
+            model.errors = fieldErrors
+            model.isBusy = false
+            return
+        }
+        let model = FormModel(fields: fields, serverErrors: fieldErrors)
+        formModel = model
+        let host = UIHostingController(rootView: FormScreen(model: model, brandColor: USColors.primary) { [weak self] in
+            self?.submitForm()
+        })
+        host.modalPresentationStyle = .fullScreen
+        formHost = host
+        present(host, animated: true)
+    }
+
+    private func submitForm() {
+        guard let model = formModel else { return }
+        // Client-side echo of the server validation; the server stays authoritative.
+        var clientErrors: [String: String] = [:]
+        var values: [String: Any] = [:]
+        for field in model.fields {
+            let raw = model.rawValue(for: field)
+            if let err = validate(field: field, raw: raw) {
+                clientErrors[field.key] = err
+            } else {
+                values[field.key] = coerce(field: field, raw: raw)
+            }
+        }
+        if !clientErrors.isEmpty {
+            model.errors = clientErrors
+            return
+        }
+        model.errors = [:]
+        model.isBusy = true
+        Task {
+            await advance(inputs: values)
+            // If still parked on a form, the server rejected the input (errors are
+            // refreshed via presentForm's guard); otherwise the run moved on, so
+            // tear the form down to reveal the next surface.
+            if let action = view_?.pendingAction, case .captureForm = action {
+                model.isBusy = false
+            } else {
+                dismissForm()
+            }
+        }
+    }
+
+    private func dismissForm() {
+        formModel = nil
+        formHost?.dismiss(animated: true)
+        formHost = nil
+    }
 
     private func installForm(fields: [FormField]) {
         contentContainer.subviews.forEach { $0.removeFromSuperview() }
