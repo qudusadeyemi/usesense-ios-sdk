@@ -1,0 +1,17 @@
+UseSense SDK — Bundled Brand Fonts
+===================================
+
+The following font families are bundled with this SDK and are licensed under the
+SIL Open Font License, Version 1.1 (OFL-1.1), which permits bundling and
+redistribution within software:
+
+  - Outfit            © The Outfit Project Authors
+                      https://github.com/Outfitio/Outfit-Fonts
+  - DM Sans           © The DM Sans Project Authors (Colophon Foundry, et al.)
+                      https://github.com/googlefonts/dm-fonts
+  - JetBrains Mono    © The JetBrains Mono Project Authors
+                      https://github.com/JetBrains/JetBrainsMono
+
+Full OFL-1.1 text: https://openfontlicense.org
+
+Static weights vendored: Outfit 700/800, DM Sans 400/500/600, JetBrains Mono 400/500.
