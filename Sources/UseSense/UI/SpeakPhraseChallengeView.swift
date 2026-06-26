@@ -31,18 +31,18 @@ struct SpeakPhraseChallengeView: View {
                 }
 
                 Text("Say the following phrase:")
-                    .font(.system(size: 16))
+                    .font(.usBody(16))
                     .foregroundColor(.white.opacity(0.8))
 
                 Text("\"\(challenge.phrase)\"")
-                    .font(.system(size: 22, weight: .bold))
+                    .font(.usDisplay(22, .bold))
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
 
                 // Timer
                 Text(String(format: "%.0fs remaining", max(0, timeRemaining)))
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.usMono(14, medium: true))
                     .foregroundColor(.white.opacity(0.6))
             }
 

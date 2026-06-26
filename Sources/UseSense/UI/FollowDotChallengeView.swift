@@ -28,7 +28,7 @@ struct FollowDotChallengeView: View {
                     Spacer()
 
                     Text("Follow the dot")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.usBody(15, .medium))
                         .foregroundColor(.white)
                         .padding(.bottom, 80)
                 }
