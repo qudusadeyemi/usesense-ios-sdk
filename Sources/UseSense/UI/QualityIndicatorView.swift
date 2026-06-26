@@ -20,7 +20,7 @@ struct QualityIndicatorView: View {
         } else {
             if qualityLevel != .good, let msg = message {
                 Text(msg)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.usBody(13, .semibold))
                     .foregroundColor(.white)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
@@ -55,7 +55,7 @@ struct QualityWarningBanner: View {
                     .font(.system(size: 14))
 
                 Text(guidance.message)
-                    .font(.system(size: 12))
+                    .font(.usBody(12))
                     .foregroundColor(textColor(guidance.severity))
             }
             .padding(.horizontal, 12)
