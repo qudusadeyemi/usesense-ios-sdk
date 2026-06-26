@@ -69,7 +69,8 @@ public struct FormScreen: View {
 
     @ViewBuilder
     private func fieldView(_ field: FormField) -> some View {
-        if field.type == .checkbox {
+        switch field.type {
+        case .checkbox:
             VStack(alignment: .leading, spacing: 6) {
                 Toggle(isOn: boolBinding(field.key)) {
                     Text(field.label ?? humanise(field.key))
@@ -77,11 +78,13 @@ public struct FormScreen: View {
                         .foregroundColor(USColors.foreground)
                 }
                 .tint(brandColor)
-                if let err = model.errors[field.key] {
-                    Text(err).font(.usBody(12)).foregroundColor(USColors.criticalText)
-                }
+                fieldError(field.key)
             }
-        } else {
+        case .select, .country:
+            selectRow(field)
+        case .date:
+            dateRow(field)
+        default:
             USTextField(
                 text: stringBinding(field.key),
                 label: field.label ?? humanise(field.key),
@@ -91,6 +94,93 @@ public struct FormScreen: View {
             )
         }
     }
+
+    @ViewBuilder private func fieldError(_ key: String) -> some View {
+        if let err = model.errors[key] {
+            Text(err).font(.usBody(12)).foregroundColor(USColors.criticalText)
+        }
+    }
+
+    private func fieldLabel(_ field: FormField) -> some View {
+        Text(field.label ?? humanise(field.key))
+            .font(.usBody(13, .medium))
+            .foregroundColor(USColors.foreground)
+    }
+
+    private func boxBorder(_ key: String) -> some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(model.errors[key] != nil ? USColors.destructive : USColors.border, lineWidth: 1)
+    }
+
+    private func selectOptions(_ field: FormField) -> [FormField.Option] {
+        if let options = field.options, !options.isEmpty { return options }
+        if let countries = field.allowedCountries, !countries.isEmpty {
+            return countries.map { FormField.Option(value: $0, label: $0) }
+        }
+        return []
+    }
+
+    private func selectRow(_ field: FormField) -> some View {
+        let options = selectOptions(field)
+        let current = options.first { $0.value == (model.values[field.key] ?? "") }
+        return VStack(alignment: .leading, spacing: 6) {
+            fieldLabel(field)
+            Menu {
+                ForEach(options, id: \.value) { opt in
+                    Button(opt.label) { model.values[field.key] = opt.value }
+                }
+            } label: {
+                HStack {
+                    Text(current?.label ?? (field.placeholder ?? "Select"))
+                        .font(.usBody(16))
+                        .foregroundColor(current == nil ? USColors.mutedForeground : USColors.foreground)
+                    Spacer()
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(USColors.mutedForeground)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(USColors.card)
+                .overlay(boxBorder(field.key))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            fieldError(field.key)
+        }
+    }
+
+    private func dateRow(_ field: FormField) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            fieldLabel(field)
+            HStack {
+                DatePicker("", selection: dateBinding(field.key), displayedComponents: .date)
+                    .labelsHidden()
+                    .tint(brandColor)
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(USColors.card)
+            .overlay(boxBorder(field.key))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            fieldError(field.key)
+        }
+    }
+
+    private func dateBinding(_ key: String) -> Binding<Date> {
+        Binding(
+            get: { Self.dateFormatter.date(from: model.values[key] ?? "") ?? Date() },
+            set: { model.values[key] = Self.dateFormatter.string(from: $0) }
+        )
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
 
     private func stringBinding(_ key: String) -> Binding<String> {
         Binding(get: { model.values[key] ?? "" }, set: { model.values[key] = $0 })
