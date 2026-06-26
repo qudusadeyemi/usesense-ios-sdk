@@ -14,8 +14,8 @@ struct CountdownOverlay: View {
                     .ignoresSafeArea()
 
                 Text("\(number)")
-                    .font(.system(size: 96, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
+                    .font(.usDisplay(96, .extraBold))
+                    .foregroundColor(.white.opacity(0.9))
                     .scaleEffect(scale)
                     .opacity(opacity)
                     // Match oval's -10% vertical offset so number sits inside the oval

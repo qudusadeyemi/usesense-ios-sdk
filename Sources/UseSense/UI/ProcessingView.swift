@@ -34,12 +34,12 @@ struct ProcessingView: View {
                 }
 
                 Text(title)
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.usDisplay(20, .bold))
                     .foregroundColor(.white)
 
                 if let subtitle = subtitle {
                     Text(subtitle)
-                        .font(.system(size: 15))
+                        .font(.usBody(15))
                         .foregroundColor(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
                 }
@@ -60,7 +60,7 @@ struct ProcessingView: View {
                         .frame(height: 8)
 
                         Text("\(Int(progress * 100))%")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.usMono(13, medium: true))
                             .foregroundColor(.white.opacity(0.7))
                     }
                     .padding(.horizontal, 40)

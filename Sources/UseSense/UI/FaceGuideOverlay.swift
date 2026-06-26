@@ -50,12 +50,13 @@ struct FaceGuideOverlay: View {
                     )
 
                 // Content below the oval – pinned to the bottom so the button
-                // is always reachable, even on smaller screens.
-                VStack(spacing: 8) {
+                // is always reachable, even on smaller screens. A bottom gradient
+                // (matching the hosted page) keeps the copy legible over the feed.
+                VStack(spacing: 12) {
                     Spacer()
 
-                    Text("Position your face in the oval")
-                        .font(.system(size: 16, weight: .medium))
+                    Text("Position your face inside the oval")
+                        .font(.usBody(16, .medium))
                         .foregroundColor(.white)
 
                     // Quality indicator
@@ -72,20 +73,24 @@ struct FaceGuideOverlay: View {
                     }
 
                     if showReadyButton {
-                        Button(action: { onReady?() }) {
-                            Text("I'm Ready")
-                                .font(.system(size: 17, weight: .semibold))
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 52)
-                                .background(Color.UseSense.primary)
-                                .cornerRadius(12)
-                        }
-                        .padding(.horizontal, 32)
-                        .padding(.top, 8)
+                        USButton("I'm Ready", variant: .primary, size: .large) { onReady?() }
+                            .padding(.horizontal, 32)
+                            .padding(.top, 4)
                     }
                 }
                 .padding(.bottom, 48)
+                .padding(.top, 80)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .background(
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.6), .black.opacity(0.9)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: screenH * 0.45)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                    .allowsHitTesting(false)
+                )
             }
             .onAppear {
                 isPulsing = true
