@@ -4,7 +4,8 @@ import SwiftUI
 // MARK: - DocumentConfirmView
 //
 // Post-capture confirm step matching the hosted run page's DocConfirm: a preview
-// of the captured document with Use / Retake (and an optional upload-instead).
+// of the captured document plus a client-side quality check (DocumentQuality). A
+// detected issue surfaces a warning and flips the CTAs to Retake / Use anyway.
 // Pure presentation.
 
 public struct DocumentConfirmView: View {
@@ -14,6 +15,9 @@ public struct DocumentConfirmView: View {
     private let onUse: () -> Void
     private let onRetake: () -> Void
     private let onUploadInstead: (() -> Void)?
+
+    @State private var checking = true
+    @State private var issue: DocumentQualityIssue?
 
     public init(
         image: UIImage,
@@ -40,26 +44,42 @@ public struct DocumentConfirmView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.top, 4)
 
-                Color.clear
-                    .aspectRatio(3.0 / 2.0, contentMode: .fit)
-                    .overlay(
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                    )
-                    .background(USColors.secondary)
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(USColors.border, lineWidth: 1)
-                    )
+                if let issue { issueBanner(issue) }
+
+                ZStack {
+                    Color.clear
+                        .aspectRatio(3.0 / 2.0, contentMode: .fit)
+                        .overlay(Image(uiImage: image).resizable().scaledToFit())
+                        .background(USColors.secondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(USColors.border, lineWidth: 1)
+                        )
+
+                    if checking {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.black.opacity(0.4))
+                            VStack(spacing: 8) {
+                                ProgressView().tint(.white)
+                                Text("Checking image quality…").font(.usBody(13)).foregroundColor(.white)
+                            }
+                        }
+                        .aspectRatio(3.0 / 2.0, contentMode: .fit)
+                    }
+                }
 
                 Spacer(minLength: 0)
             }
         } footer: {
             VStack(spacing: 12) {
-                USButton("Use this photo", variant: .primary, size: .large, action: onUse)
-                USButton("Retake", variant: .secondary, size: .large, action: onRetake)
+                if issue != nil {
+                    USButton("Retake", variant: .primary, size: .large, action: onRetake)
+                    USButton("Use anyway", variant: .secondary, size: .large, action: onUse)
+                } else {
+                    USButton("Use this photo", variant: .primary, size: .large, isLoading: checking, action: onUse)
+                    USButton("Retake", variant: .secondary, size: .large, action: onRetake)
+                }
                 if let onUploadInstead {
                     Button(action: onUploadInstead) {
                         Text("Upload a different file")
@@ -69,6 +89,37 @@ public struct DocumentConfirmView: View {
                     }
                     .buttonStyle(USPressStyle())
                 }
+            }
+        }
+        .onAppear(perform: runQualityCheck)
+    }
+
+    private func issueBanner(_ issue: DocumentQualityIssue) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            ZStack {
+                Circle().fill(USColors.destructive).frame(width: 20, height: 20)
+                Image(systemName: "exclamationmark").font(.system(size: 11, weight: .bold)).foregroundColor(.white)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(issue.title).font(.usBody(14, .semibold)).foregroundColor(USColors.criticalText)
+                Text(issue.detail).font(.usBody(12)).foregroundColor(USColors.criticalText.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(USColors.criticalBg)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func runQualityCheck() {
+        let img = image
+        Task.detached(priority: .userInitiated) {
+            let result = DocumentQuality.assess(img)
+            await MainActor.run {
+                self.issue = result
+                self.checking = false
             }
         }
     }
