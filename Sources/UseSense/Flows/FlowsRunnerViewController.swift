@@ -556,20 +556,40 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-        picker.dismiss(animated: true)
-        guard let image = info[.originalImage] as? UIImage,
-              let data = image.jpegData(compressionQuality: 0.85) else {
-            return
+        let image = info[.originalImage] as? UIImage
+        picker.dismiss(animated: true) { [weak self] in
+            guard let self, let image else { return }
+            self.presentDocumentConfirm(image: image) { [weak self] in self?.presentUploadPicker() }
         }
-        uploadDocument(base64: data.base64EncodedString())
     }
 
     // MARK: - VisionKit document scanner
 
     func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
-        controller.dismiss(animated: true)
-        guard scan.pageCount > 0, let data = scan.imageOfPage(at: 0).jpegData(compressionQuality: 0.85) else { return }
-        uploadDocument(base64: data.base64EncodedString())
+        let image = scan.pageCount > 0 ? scan.imageOfPage(at: 0) : nil
+        controller.dismiss(animated: true) { [weak self] in
+            guard let self, let image else { return }
+            self.presentDocumentConfirm(image: image) { [weak self] in self?.launchDocumentScanner() }
+        }
+    }
+
+    /// Hosted parity: confirm the captured document (preview + Use / Retake)
+    /// before uploading.
+    private func presentDocumentConfirm(image: UIImage, retake: @escaping () -> Void) {
+        let host = UIHostingController(rootView: DocumentConfirmView(
+            image: image,
+            brandColor: USColors.primary,
+            onUse: { [weak self] in
+                self?.dismiss(animated: false) {
+                    let base64 = image.jpegData(compressionQuality: 0.85)?.base64EncodedString() ?? ""
+                    self?.uploadDocument(base64: base64)
+                }
+            },
+            onRetake: { [weak self] in self?.dismiss(animated: true) { retake() } },
+            onUploadInstead: { [weak self] in self?.dismiss(animated: true) { self?.presentUploadPicker() } }
+        ))
+        host.modalPresentationStyle = .fullScreen
+        present(host, animated: true)
     }
 
     func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
