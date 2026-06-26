@@ -578,9 +578,17 @@ public final class UseSenseSession: @unchecked Sendable {
             ]
         }
 
-        // Verification package (Geometric Coherence)
+        // Verification package (Geometric Coherence).
+        // Build whenever the server asks for on-device mesh — either via the
+        // full dual-path flow (dualPathEnabled) or the lighter mesh-only signal
+        // (onDevice3dmmRequired). The two were previously conflated: the gate only
+        // honoured dualPathEnabled, so flow-run sessions that set
+        // on_device_3dmm_required=true (mesh wanted, dual-path off) never built the
+        // package and scored a server-side "mesh absent" penalty. Decouple them.
+        let meshRequested = session.geometricCoherence?.dualPathEnabled == true
+            || session.geometricCoherence?.onDevice3dmmRequired == true
         var verificationPackage: [String: Any]?
-        if session.geometricCoherence?.dualPathEnabled == true, !meshResults.isEmpty {
+        if meshRequested, !meshResults.isEmpty {
             let fittingResults = meshResults.compactMap { mesh in
                 threeDMMFitter.fit(landmarks: mesh.landmarks, pose: mesh.headPose)
             }
