@@ -4,6 +4,19 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Mesh verification_package skipped on flow runs (mesh decoupled from
+  dual-path).** The capture engine only built and uploaded the Geometric
+  Coherence `verification_package` when `dual_path_enabled` was true, ignoring
+  `on_device_3dmm_required`. Flow-run sessions request mesh via
+  `on_device_3dmm_required` (dual-path off), so the package was never built and
+  the server scored a "mesh absent" DeepSense penalty even though MediaPipe ran
+  and captured frames. The gate now also honours `on_device_3dmm_required`, so
+  mesh is produced whenever the server asks for it on either path.
+
 ## [4.4.1] - 2026-06-23
 
 Patch release: the Flows client now identifies its platform to the server.
