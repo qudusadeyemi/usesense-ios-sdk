@@ -26,7 +26,8 @@ Pod::Spec.new do |s|
       'Sources/UseSense/Resources/**/*.mlmodel',
       'Sources/UseSense/Resources/**/*.json',
       'Sources/UseSense/Resources/**/*.task',
-      'Sources/UseSense/Resources/**/*.lproj'
+      'Sources/UseSense/Resources/**/*.lproj',
+      'Sources/UseSense/Resources/**/*.ttf'
     ]
   }
 
