@@ -27,10 +27,12 @@ public enum UseSenseFonts {
         guard !registered else { return }
         registered = true
         for name in faces {
-            // `.process("Resources")` may flatten or preserve the Fonts/ subdir,
-            // so try both lookups.
-            let url = Bundle.module.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts")
-                ?? Bundle.module.url(forResource: name, withExtension: "ttf")
+            // Bundle.useSenseResources resolves under BOTH SwiftPM (Bundle.module)
+            // and CocoaPods (nested UseSenseSDK.bundle); Bundle.module alone fails
+            // to compile in the CocoaPods build. The fonts may be flattened or keep
+            // the Fonts/ subdir depending on the build system, so try both lookups.
+            let url = Bundle.useSenseResources.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts")
+                ?? Bundle.useSenseResources.url(forResource: name, withExtension: "ttf")
             guard let url else { continue }
             CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
         }
