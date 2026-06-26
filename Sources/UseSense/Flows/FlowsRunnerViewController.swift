@@ -120,8 +120,14 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         switch action {
         case .captureFace(let toolId):
             presentFaceCapture(toolId: toolId)
-        case .captureDocument(_, _, _, _, let captureMethods):
-            presentDocumentCapture(methods: captureMethods)
+        case .captureDocument(let category, let documentTypes, let issuingCountries, let camera, let captureMethods):
+            presentDocumentFlow(
+                category: category,
+                documentTypes: documentTypes,
+                issuingCountries: issuingCountries,
+                camera: camera,
+                methods: captureMethods
+            )
         case .captureForm(let fields):
             installForm(fields: fields)
         case .info(let info):
@@ -483,21 +489,66 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         present(captureVC, animated: true)
     }
 
-    /// Offer the subject every operator-allowed method (default both): a rear-
-    /// camera VisionKit scan and/or file upload.
-    private func presentDocumentCapture(methods: [String]) {
+    /// Hosted parity: the operator-allowed methods are offered through the
+    /// branded document primer (and a type chooser when there are multiple types),
+    /// then the existing VisionKit scan / file upload. The primer's CTAs are the
+    /// method choice ("Take a photo" / "Upload a file instead"), replacing the
+    /// plain action sheet.
+    private func presentDocumentFlow(
+        category: String,
+        documentTypes: [String],
+        issuingCountries: [String],
+        camera: String?,
+        methods: [String]
+    ) {
         let canScan = methods.isEmpty || methods.contains("camera")
         let canUpload = methods.isEmpty || methods.contains("upload")
-        if canScan && canUpload {
-            let sheet = UIAlertController(title: "Add your document", message: nil, preferredStyle: .actionSheet)
-            sheet.addAction(UIAlertAction(title: "Scan with camera", style: .default) { [weak self] _ in self?.launchDocumentScanner() })
-            sheet.addAction(UIAlertAction(title: "Upload a file", style: .default) { [weak self] _ in self?.presentUploadPicker() })
-            sheet.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in Task { await self?.cancelRun() } })
-            present(sheet, animated: true)
-        } else if canScan {
-            launchDocumentScanner()
+
+        func showPrimer(docType: String?) {
+            let host = UIHostingController(rootView: DocumentPrimerView(
+                documentType: docType,
+                categoryLabel: Self.documentCategoryLabel(category),
+                issuingCountries: issuingCountries,
+                allowCamera: canScan,
+                allowUpload: canUpload,
+                brandColor: USColors.primary,
+                onPrimary: { [weak self] in
+                    self?.dismiss(animated: true) {
+                        if canScan { self?.launchDocumentScanner() } else { self?.presentUploadPicker() }
+                    }
+                },
+                onSecondary: (canScan && canUpload) ? { [weak self] in
+                    self?.dismiss(animated: true) { self?.presentUploadPicker() }
+                } : nil
+            ))
+            host.modalPresentationStyle = .fullScreen
+            present(host, animated: true)
+        }
+
+        if !documentTypes.isEmpty {
+            let typeHost = UIHostingController(rootView: DocumentTypeSelectView(
+                documentTypes: documentTypes,
+                brandColor: USColors.primary,
+                onContinue: { [weak self] selected in
+                    self?.dismiss(animated: false) { showPrimer(docType: selected) }
+                }
+            ))
+            typeHost.modalPresentationStyle = .fullScreen
+            present(typeHost, animated: true)
         } else {
-            presentUploadPicker()
+            showPrimer(docType: nil)
+        }
+    }
+
+    /// Friendly category label matching the hosted page's map.
+    private static func documentCategoryLabel(_ category: String) -> String {
+        switch category {
+        case "identity": return "identity document"
+        case "proof_of_address": return "proof of address"
+        case "organisation_doc": return "organisation document"
+        case "tax_doc": return "tax document"
+        case "invoice": return "invoice"
+        default: return "document"
         }
     }
 
@@ -519,20 +570,40 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-        picker.dismiss(animated: true)
-        guard let image = info[.originalImage] as? UIImage,
-              let data = image.jpegData(compressionQuality: 0.85) else {
-            return
+        let image = info[.originalImage] as? UIImage
+        picker.dismiss(animated: true) { [weak self] in
+            guard let self, let image else { return }
+            self.presentDocumentConfirm(image: image) { [weak self] in self?.presentUploadPicker() }
         }
-        uploadDocument(base64: data.base64EncodedString())
     }
 
     // MARK: - VisionKit document scanner
 
     func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFinishWith scan: VNDocumentCameraScan) {
-        controller.dismiss(animated: true)
-        guard scan.pageCount > 0, let data = scan.imageOfPage(at: 0).jpegData(compressionQuality: 0.85) else { return }
-        uploadDocument(base64: data.base64EncodedString())
+        let image = scan.pageCount > 0 ? scan.imageOfPage(at: 0) : nil
+        controller.dismiss(animated: true) { [weak self] in
+            guard let self, let image else { return }
+            self.presentDocumentConfirm(image: image) { [weak self] in self?.launchDocumentScanner() }
+        }
+    }
+
+    /// Hosted parity: confirm the captured document (preview + Use / Retake)
+    /// before uploading.
+    private func presentDocumentConfirm(image: UIImage, retake: @escaping () -> Void) {
+        let host = UIHostingController(rootView: DocumentConfirmView(
+            image: image,
+            brandColor: USColors.primary,
+            onUse: { [weak self] in
+                self?.dismiss(animated: false) {
+                    let base64 = image.jpegData(compressionQuality: 0.85)?.base64EncodedString() ?? ""
+                    self?.uploadDocument(base64: base64)
+                }
+            },
+            onRetake: { [weak self] in self?.dismiss(animated: true) { retake() } },
+            onUploadInstead: { [weak self] in self?.dismiss(animated: true) { self?.presentUploadPicker() } }
+        ))
+        host.modalPresentationStyle = .fullScreen
+        present(host, animated: true)
     }
 
     func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
