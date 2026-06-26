@@ -33,6 +33,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     /// across server invalid_input re-renders so the subject's input is preserved.
     private var formModel: FormModel?
     private weak var formHost: UIViewController?
+    /// Guards re-presenting the id_number surface on a re-render.
+    private var idNumberPresented = false
 
     init(options: RunFlowOptions, completion: @escaping (Result<FlowRunResult, FlowError>) -> Void) {
         self.options = options
@@ -128,6 +130,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             presentDocumentCapture(methods: captureMethods)
         case .captureForm(let fields):
             presentForm(fields: fields)
+        case .captureIdNumber(let idTypes):
+            presentIdNumber(idTypes: idTypes)
         case .info(let info):
             installInfo(info)
         case .redirectToConsent(let url):
@@ -145,6 +149,27 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     // MARK: - Surfaces
+
+    // MARK: - ID number surface (branded)
+
+    private func presentIdNumber(idTypes: [IdTypeSpec]) {
+        // Avoid re-presenting on a re-render; the modal stays until submit.
+        if idNumberPresented { return }
+        idNumberPresented = true
+        let options = idTypes.map {
+            IdTypeOption(value: $0.value, label: $0.label, hint: $0.hint, field: $0.field, maxLength: $0.maxLength, numeric: $0.numeric)
+        }
+        let host = UIHostingController(rootView: IdNumberView(idTypes: options, brandColor: USColors.primary) { [weak self] idType, field, value in
+            guard let self else { return }
+            self.idNumberPresented = false
+            // Mirror the hosted page: advance({ id_type, [field]: value }).
+            self.dismiss(animated: false) {
+                Task { await self.advance(inputs: ["id_type": idType, field: value]) }
+            }
+        })
+        host.modalPresentationStyle = .fullScreen
+        present(host, animated: true)
+    }
 
     // MARK: - Form surface (branded)
 

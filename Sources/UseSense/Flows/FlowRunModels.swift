@@ -151,6 +151,30 @@ public struct InfoAction: Sendable, Equatable {
     public let secondary: InfoSecondaryCta?
 }
 
+/// One ID-type option for the id_number capture step (e.g. NIN / BVN).
+public struct IdTypeSpec: Sendable, Equatable {
+    public let value: String
+    public let label: String
+    public let hint: String?
+    public let field: String
+    public let maxLength: Int?
+    public let numeric: Bool
+
+    static func decode(_ raw: [String: Any]) -> IdTypeSpec? {
+        guard let value = raw["value"] as? String,
+              let label = raw["label"] as? String,
+              let field = raw["field"] as? String else { return nil }
+        return IdTypeSpec(
+            value: value,
+            label: label,
+            hint: raw["hint"] as? String,
+            field: field,
+            maxLength: raw["maxLength"] as? Int,
+            numeric: (raw["numeric"] as? Bool) ?? false
+        )
+    }
+}
+
 /// The action the server parked at. The runner reads it and renders the
 /// matching native surface; unknown kinds surface as FlowError.unsupportedAction.
 /// See guides/flows/action-contract.mdx.
@@ -158,6 +182,7 @@ public enum PendingAction: Sendable, Equatable {
     case captureFace(toolId: String?)
     case captureDocument(category: String, documentTypes: [String], issuingCountries: [String], camera: String?, captureMethods: [String])
     case captureForm(fields: [FormField])
+    case captureIdNumber(idTypes: [IdTypeSpec])
     case info(InfoAction)
     case redirectToConsent(url: URL)
 
@@ -187,6 +212,9 @@ public enum PendingAction: Sendable, Equatable {
             case "form":
                 let rawFields = raw["fields"] as? [Any] ?? []
                 return .captureForm(fields: rawFields.map(FormField.decode))
+            case "id_number":
+                let rawTypes = raw["idTypes"] as? [[String: Any]] ?? []
+                return .captureIdNumber(idTypes: rawTypes.compactMap(IdTypeSpec.decode))
             default:
                 throw FlowError(code: .unsupportedAction, message: "Unknown capture variant: \(capture)")
             }
