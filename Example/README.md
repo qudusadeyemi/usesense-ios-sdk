@@ -1,4 +1,4 @@
-# UseSense iOS Example App
+# Sense iOS Example App
 
 Demonstrates SDK initialization, enrollment, authentication, event listening, and error handling.
 

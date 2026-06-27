@@ -4,7 +4,7 @@ import SwiftUI
 // MARK: - USBrandingHeader
 //
 // Top-of-screen org lockup matching the hosted page: optional org logo + display
-// name, with a "Secured by UseSense" trust line.
+// name, with a "Secured by Sense" trust line.
 
 public struct USBrandingHeader: View {
     private let displayName: String?
@@ -30,7 +30,7 @@ public struct USBrandingHeader: View {
                 if let displayName {
                     Text(displayName).font(.usBody(15, .semibold)).foregroundColor(USColors.foreground)
                 }
-                Text("Secured by UseSense")
+                Text("Secured by Sense")
                     .font(.usBody(11, .medium))
                     .foregroundColor(USColors.mutedForeground)
             }

@@ -59,7 +59,7 @@ struct HostedPageHeader: View {
     }
 }
 
-// MARK: - Hosted Page Footer ("Powered by UseSense")
+// MARK: - Hosted Page Footer ("Powered by Sense")
 
 struct HostedPageFooter: View {
     var body: some View {
@@ -76,7 +76,7 @@ struct HostedPageFooter: View {
                 }
                 #endif
             }) {
-                Text("Powered by UseSense")
+                Text("Powered by Sense")
                     .font(.system(size: 12))
                     .foregroundColor(Color(red: 0.392, green: 0.455, blue: 0.545)) // Slate 500
             }

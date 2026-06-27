@@ -25,7 +25,7 @@ public struct EffectiveBranding: Sendable {
     public let redirectUrl: String?
 
     public init(
-        displayName: String = "UseSense",
+        displayName: String = "Sense",
         logoUrl: String? = nil,
         primaryColor: String = "#4f46e5",
         redirectUrl: String? = nil
@@ -39,7 +39,7 @@ public struct EffectiveBranding: Sendable {
     /// Merge SDK-level branding > server branding > defaults
     public static func merge(sdk: UseSenseBranding?, server: ServerBranding?) -> EffectiveBranding {
         EffectiveBranding(
-            displayName: sdk?.displayName ?? server?.displayName ?? "UseSense",
+            displayName: sdk?.displayName ?? server?.displayName ?? "Sense",
             logoUrl: sdk?.logoUrl ?? server?.logoUrl,
             primaryColor: sdk?.primaryColor ?? server?.primaryColor ?? "#4f46e5",
             redirectUrl: sdk?.redirectUrl ?? server?.redirectUrl

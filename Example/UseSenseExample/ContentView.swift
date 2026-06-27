@@ -69,7 +69,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .navigationTitle("UseSense Example")
+            .navigationTitle("Sense Example")
             .fullScreenCover(item: $activeSession) { wrapper in
                 UseSenseView(
                     session: wrapper.session,

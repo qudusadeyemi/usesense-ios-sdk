@@ -1,4 +1,4 @@
-# UseSense iOS Integration Guide
+# Sense iOS Integration Guide
 
 ## How Verification Works
 
@@ -7,7 +7,7 @@
 3. Present the session using `UseSenseView` (SwiftUI) or `UseSenseViewController` (UIKit)
 4. The SDK presents a full-screen camera UI over your app
 5. The user completes a short challenge (5-15 seconds): following a dot on screen, turning their head, or speaking a phrase
-6. The SDK captures frames, motion sensor data, and optional audio, then uploads everything encrypted to UseSense servers
+6. The SDK captures frames, motion sensor data, and optional audio, then uploads everything encrypted to Sense servers
 7. Server-side analysis runs three independent pillars (DeepSense, LiveSense, MatchSense) in parallel
 8. The SDK receives a preliminary result -- use this for UI feedback (show success/failure screen)
 9. The definitive verdict is delivered to **your backend** via HMAC-signed webhook -- this is what you use for access-control decisions
@@ -15,7 +15,7 @@
 
 ```
 ┌──────────┐     ┌──────────────┐     ┌─────────────┐     ┌──────────────┐
-│ Your App │     │ UseSense SDK │     │ UseSense API│     │ Your Backend │
+│ Your App │     │ Sense SDK    │     │ Sense API   │     │ Your Backend │
 └────┬─────┘     └──────┬───────┘     └──────┬──────┘     └──────┬───────┘
      │ UseSense(config) │                     │                   │
      │─────────────────>│                     │                   │
@@ -53,7 +53,7 @@
 
 Most verification providers return one confidence number. This creates a fundamental problem: if channel integrity fails but liveness passes, a single composite score hides the risk.
 
-UseSense scores each dimension independently:
+Sense scores each dimension independently:
 
 - **DeepSense** (Channel & Device Integrity): Is the device trustworthy? App attestation, runtime integrity checks, capture pipeline analysis, motion-sensor correlation. Produces a `channelTrustScore` (0-100).
 
@@ -202,7 +202,7 @@ func startVerification() {
 - **No biometric data is stored on the user's device.** Frames are held in memory during the session and discarded immediately after upload.
 - Face templates are stored server-side in your organization's isolated collection.
 - Sessions have configurable data retention policies (set in the dashboard).
-- UseSense supports GDPR/CCPA privacy requests:
+- Sense supports GDPR/CCPA privacy requests:
   - **Access**: Users can request their stored biometric data.
   - **Deletion**: Users can request deletion of their face template and session data.
   - **Portability**: Users can request an export of their data.
@@ -215,7 +215,7 @@ func startVerification() {
 
 1. **Switch API key**: Replace your sandbox key (`sk_` prefix) with your production key (`pk_` prefix) in `UseSenseConfig`.
 2. **Verify environment**: Confirm the SDK is targeting production (auto-detected from `pk_` prefix, or set explicitly).
-3. **Purchase credits**: Production sessions consume one credit each. Purchase credits in the [UseSense dashboard](https://watchtower.usesense.ai).
+3. **Purchase credits**: Production sessions consume one credit each. Purchase credits in the [Sense dashboard](https://watchtower.usesense.ai).
 4. **Configure webhook endpoint**: Set your production webhook URL in the dashboard. Ensure your backend is handling HMAC signature verification.
 5. **Test end-to-end**: Run the full flow on a physical device in production. Simulators do not have cameras.
 6. **Handle all decision types**: Ensure your backend handles `approved`, `rejected`, and `manual_review`.
