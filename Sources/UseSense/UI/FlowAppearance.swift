@@ -120,6 +120,81 @@ public struct AppearanceBackground: Codable, Equatable, Sendable {
     }
 }
 
+/// Custom illustration/icon overrides (image URLs replacing built-in glyphs).
+///
+/// Mirrors the web `AppearanceIcons`: named result slots (`success` / `review` /
+/// `notVerified`) plus any other arbitrary slot id, each mapping to an image URL.
+/// Backed by a string dictionary so unknown slots round-trip through Codable.
+public struct AppearanceIcons: Codable, Equatable, Sendable {
+    /// Slot id -> image URL. Known slots: "success", "review", "notVerified".
+    public var slots: [String: String]
+
+    /// Success result screen illustration URL.
+    public var success: String? { slots["success"] }
+    /// Under-review result screen illustration URL.
+    public var review: String? { slots["review"] }
+    /// Not-verified result screen illustration URL.
+    public var notVerified: String? { slots["notVerified"] }
+
+    /// Look up an arbitrary named slot's URL.
+    public subscript(slot: String) -> String? { slots[slot] }
+
+    public init(_ slots: [String: String] = [:]) { self.slots = slots }
+
+    public init(
+        success: String? = nil, review: String? = nil, notVerified: String? = nil,
+        extra: [String: String] = [:]
+    ) {
+        var s = extra
+        if let success { s["success"] = success }
+        if let review { s["review"] = review }
+        if let notVerified { s["notVerified"] = notVerified }
+        self.slots = s
+    }
+
+    // Encode/decode as a flat string->string map (the wire shape), dropping any
+    // non-string entries so a malformed payload degrades gracefully.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DynamicKey.self)
+        var s: [String: String] = [:]
+        for key in container.allKeys {
+            if let value = try? container.decode(String.self, forKey: key) {
+                s[key.stringValue] = value
+            }
+        }
+        self.slots = s
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: DynamicKey.self)
+        for (key, value) in slots {
+            try container.encode(value, forKey: DynamicKey(stringValue: key))
+        }
+    }
+
+    private struct DynamicKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+}
+
+/// Loading animation: a built-in preset or a custom asset URL.
+public struct AppearanceLoader: Codable, Equatable, Sendable {
+    /// Built-in preset. Default `.spinner`.
+    public var style: Style?
+    /// Custom loader asset URL (GIF / animated image / static image); overrides `style`.
+    public var imageUrl: String?
+
+    public enum Style: String, Codable, Equatable, Sendable { case spinner, dots, bar }
+
+    public init(style: Style? = nil, imageUrl: String? = nil) {
+        self.style = style
+        self.imageUrl = imageUrl
+    }
+}
+
 /// Force a palette or follow the OS (default `.auto`).
 public enum AppearanceMode: String, Codable, Equatable, Sendable { case light, dark, auto }
 
@@ -130,6 +205,10 @@ public struct FlowAppearance: Codable, Equatable, Sendable {
     public var shape: AppearanceShape?
     public var logo: AppearanceLogo?
     public var background: AppearanceBackground?
+    /// Custom illustrations for result screens / icon slots.
+    public var icons: AppearanceIcons?
+    /// Loading-animation preset or custom asset.
+    public var loader: AppearanceLoader?
     /// Force a palette or follow the OS (default `.auto`).
     public var mode: AppearanceMode?
 
@@ -139,6 +218,8 @@ public struct FlowAppearance: Codable, Equatable, Sendable {
         shape: AppearanceShape? = nil,
         logo: AppearanceLogo? = nil,
         background: AppearanceBackground? = nil,
+        icons: AppearanceIcons? = nil,
+        loader: AppearanceLoader? = nil,
         mode: AppearanceMode? = nil
     ) {
         self.colors = colors
@@ -146,6 +227,8 @@ public struct FlowAppearance: Codable, Equatable, Sendable {
         self.shape = shape
         self.logo = logo
         self.background = background
+        self.icons = icons
+        self.loader = loader
         self.mode = mode
     }
 }
@@ -178,8 +261,22 @@ public extension FlowAppearance {
                 color: high.background?.color ?? low.background?.color,
                 imageUrl: high.background?.imageUrl ?? low.background?.imageUrl
             ),
+            icons: mergeIcons(high: high.icons, low: low.icons),
+            loader: AppearanceLoader(
+                style: high.loader?.style ?? low.loader?.style,
+                imageUrl: high.loader?.imageUrl ?? low.loader?.imageUrl
+            ),
             mode: high.mode ?? low.mode
         )
+    }
+
+    private static func mergeIcons(high: AppearanceIcons?, low: AppearanceIcons?) -> AppearanceIcons? {
+        guard let high else { return low }
+        guard let low else { return high }
+        // Per-slot: high's URLs win, low's slots show through where unset.
+        var merged = low.slots
+        for (slot, url) in high.slots { merged[slot] = url }
+        return AppearanceIcons(merged)
     }
 
     private static func mergeColors(high: AppearanceColors?, low: AppearanceColors?) -> AppearanceColors? {

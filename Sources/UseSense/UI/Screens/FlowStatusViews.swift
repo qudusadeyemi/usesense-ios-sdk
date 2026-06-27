@@ -19,13 +19,28 @@ public struct FlowLoadingView: View {
         USScreenScaffold(branding: branding) {
             VStack(spacing: 18) {
                 Spacer()
-                USBrandSpinner()
+                loader
                 Text(title)
                     .font(.usDisplay(20, .bold))
                     .foregroundColor(USColors.foreground)
                 Spacer()
             }
             .frame(maxWidth: .infinity)
+        }
+    }
+
+    /// A custom `loader.imageUrl` asset when the appearance sets one, else the
+    /// built-in brand spinner. Presentation-only white-label override (Phase 5).
+    @ViewBuilder private var loader: some View {
+        if let url = FlowAppearanceResolver.loaderImageURL {
+            AsyncImage(url: url) { image in
+                image.resizable().scaledToFit()
+            } placeholder: {
+                USBrandSpinner()
+            }
+            .frame(width: 64, height: 64)
+        } else {
+            USBrandSpinner()
         }
     }
 }

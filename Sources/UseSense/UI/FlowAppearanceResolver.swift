@@ -137,6 +137,28 @@ public enum FlowAppearanceResolver {
     static var logoURL: URL? { current?.logo?.url.flatMap { URL(string: $0) } }
     static var logoPlacement: AppearanceLogo.Placement? { current?.logo?.placement }
     static var logoHeight: CGFloat? { current?.logo?.height }
+
+    // MARK: Loader
+
+    /// Custom loader asset URL (`loader.imageUrl`), if set. When present the
+    /// branded loading view renders this image in place of the built-in spinner.
+    static var loaderImageURL: URL? {
+        current?.loader?.imageUrl.flatMap { URL(string: $0) }
+    }
+
+    /// The built-in loader preset (`loader.style`), defaulting to `.spinner`.
+    static var loaderStyle: AppearanceLoader.Style {
+        current?.loader?.style ?? .spinner
+    }
+
+    // MARK: Icons / illustrations
+
+    /// Custom illustration URL for a named slot (`icons.<slot>`), if set. Used by
+    /// result screens to override the built-in glyph (slots: "success", "review",
+    /// "notVerified").
+    static func icon(for slot: String) -> URL? {
+        current?.icons?[slot].flatMap { URL(string: $0) }
+    }
 }
 
 // Sugar so `constantColor` can reach the matching dark-override slot by name.
