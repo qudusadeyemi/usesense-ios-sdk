@@ -20,7 +20,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     private let completion: (Result<FlowRunResult, FlowError>) -> Void
 
     private var view_: FlowRunView?
-    private var spinner: UIActivityIndicatorView?
+    /// Branded between-steps loader (FlowLoadingView), hosted over the runner.
+    private var loadingHost: UIViewController?
     private var contentContainer: UIView!
     private var safari: SFSafariViewController?
     /// Per-field server validation errors from the last advance(). Keyed on
@@ -35,6 +36,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     private weak var formHost: UIViewController?
     /// Guards re-presenting the id_number surface on a re-render.
     private var idNumberPresented = false
+    /// Guards re-presenting the terminal result surface on a re-render.
+    private var resultPresented = false
 
     init(options: RunFlowOptions, completion: @escaping (Result<FlowRunResult, FlowError>) -> Void) {
         self.options = options
@@ -112,10 +115,15 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     private func render() {
         guard let view = view_ else { return }
         hideSpinner()
-        // Terminal: deliver the result and dismiss.
+        // Terminal: show the branded result screen, then deliver the result when
+        // the subject taps Continue. Subject-initiated exits (cancel / abandon)
+        // close immediately with no result screen.
         switch view.state {
-        case .completed, .errored, .cancelled, .abandoned:
+        case .cancelled, .abandoned:
             finish(.success(FlowRunResult(flowRunId: view.id, state: view.state, outcome: view.outcome)))
+            return
+        case .completed, .errored:
+            presentResult(for: view)
             return
         default: break
         }
@@ -143,6 +151,29 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         case .redirectToConsent(let url):
             presentConsent(url: url)
         }
+    }
+
+    /// Presents the branded terminal result screen (success / under review /
+    /// not verified) mapped from the run outcome, and reports the result only
+    /// once the subject taps Continue — mirroring the hosted run page.
+    private func presentResult(for view: FlowRunView) {
+        if resultPresented { return }
+        resultPresented = true
+        let kind: FlowResultView.Kind
+        switch view.outcome {
+        case .approve:      kind = .success
+        case .reject:       kind = .notVerified
+        case .manualReview: kind = .review
+        case .none:         kind = view.state == .errored ? .notVerified : .success
+        }
+        let result = FlowRunResult(flowRunId: view.id, state: view.state, outcome: view.outcome)
+        let host = UIHostingController(rootView: FlowResultView(kind: kind, continueTitle: "Done") { [weak self] in
+            guard let self else { return }
+            // Tear down the result surface, then the runner, then report.
+            self.dismiss(animated: true) { self.finish(.success(result)) }
+        })
+        host.modalPresentationStyle = .fullScreen
+        present(host, animated: true)
     }
 
     private func finish(_ result: Result<FlowRunResult, FlowError>) {
@@ -633,23 +664,27 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     private func showSpinner() {
-        if spinner == nil {
-            let s = UIActivityIndicatorView(style: .medium)
-            s.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(s)
-            NSLayoutConstraint.activate([
-                s.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-                s.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            ])
-            spinner = s
-        }
-        spinner?.startAnimating()
+        if loadingHost != nil { return }
+        let host = UIHostingController(rootView: FlowLoadingView())
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        addChild(host)
+        view.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.topAnchor.constraint(equalTo: view.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        host.didMove(toParent: self)
+        loadingHost = host
     }
 
     private func hideSpinner() {
-        spinner?.stopAnimating()
-        spinner?.removeFromSuperview()
-        spinner = nil
+        guard let host = loadingHost else { return }
+        host.willMove(toParent: nil)
+        host.view.removeFromSuperview()
+        host.removeFromParent()
+        loadingHost = nil
     }
 }
 
