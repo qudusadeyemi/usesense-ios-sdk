@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'UseSenseSDK'
-  s.version          = '4.4.1'
+  s.version          = '4.5.0'
   s.summary          = 'Human presence verification SDK for iOS.'
   s.description      = <<-DESC
     Native iOS SDK for human presence verification. Verify real humans,
