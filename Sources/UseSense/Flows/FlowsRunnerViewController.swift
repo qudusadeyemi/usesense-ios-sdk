@@ -20,8 +20,9 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     private let completion: (Result<FlowRunResult, FlowError>) -> Void
 
     private var view_: FlowRunView?
-    /// Branded between-steps loader (FlowLoadingView), hosted over the runner.
-    private var loadingHost: UIViewController?
+    /// Branded loader (FlowLoadingView) hosted over the runner: between steps and
+    /// during document upload. Typed so its message can be updated in place.
+    private var loadingHost: UIHostingController<FlowLoadingView>?
     private var contentContainer: UIView!
     private var safari: SFSafariViewController?
     /// Per-field server validation errors from the last advance(). Keyed on
@@ -611,6 +612,10 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             if case .captureDocument(let cat, _, _, _, _) = view_?.pendingAction { return cat }
             return "identity"
         }()
+        // The confirm sheet has been dismissed; show the branded loader so the
+        // subject sees upload progress instead of a blank runner (mirrors the
+        // hosted page's "Submitting your document…").
+        showSpinner(message: "Submitting your document…")
         Task {
             do {
                 let response = try await client.uploadDocument(data: base64, mimeType: "image/jpeg", side: "single", documentType: category)
@@ -663,9 +668,14 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         Task { await cancelRun() }
     }
 
-    private func showSpinner() {
-        if loadingHost != nil { return }
-        let host = UIHostingController(rootView: FlowLoadingView())
+    private func showSpinner(message: String = "Loading") {
+        // Already showing: just update the message (e.g. "Loading" -> "Submitting
+        // your document…") instead of stacking a second loader.
+        if let host = loadingHost {
+            host.rootView = FlowLoadingView(title: message)
+            return
+        }
+        let host = UIHostingController(rootView: FlowLoadingView(title: message))
         host.view.translatesAutoresizingMaskIntoConstraints = false
         addChild(host)
         view.addSubview(host.view)
