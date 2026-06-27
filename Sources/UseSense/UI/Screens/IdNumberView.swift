@@ -163,4 +163,9 @@ public struct IdNumberView: View {
         onSubmit(selected.value, selected.field, value.trimmingCharacters(in: .whitespaces))
     }
 }
+
+#if DEBUG
+#Preview("ID number — Light") { IdNumberView(idTypes: PreviewSamples.idTypes, onSubmit: { _, _, _ in }) }
+#Preview("ID number — Dark") { IdNumberView(idTypes: PreviewSamples.idTypes, onSubmit: { _, _, _ in }).preferredColorScheme(.dark) }
+#endif
 #endif

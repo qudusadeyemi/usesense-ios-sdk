@@ -163,4 +163,11 @@ public struct DocumentPrimerView: View {
         return "Accepted issuing \(label): \(list)\(ellipsis)."
     }
 }
+
+#if DEBUG
+#Preview("Doc type select — Light") { DocumentTypeSelectView(documentTypes: PreviewSamples.docTypes, onContinue: { _ in }) }
+#Preview("Doc type select — Dark") { DocumentTypeSelectView(documentTypes: PreviewSamples.docTypes, onContinue: { _ in }).preferredColorScheme(.dark) }
+#Preview("Doc primer — Light") { DocumentPrimerView(documentType: "Passport", issuingCountries: ["NG", "GH"], onPrimary: {}, onSecondary: {}) }
+#Preview("Doc primer — Dark") { DocumentPrimerView(documentType: "Passport", issuingCountries: ["NG", "GH"], onPrimary: {}, onSecondary: {}).preferredColorScheme(.dark) }
+#endif
 #endif
