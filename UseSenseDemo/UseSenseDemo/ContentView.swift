@@ -13,7 +13,7 @@ struct ContentView: View {
                         .font(.system(size: 48))
                         .foregroundColor(.blue)
 
-                    Text("UseSense Demo")
+                    Text("Sense Demo")
                         .font(.system(size: 28, weight: .bold))
 
                     Text("Human Presence Verification SDK")

@@ -310,7 +310,7 @@ public struct FlowRunView {
         let action: PendingAction? = try (run["pendingAction"] as? [String: Any]).map { try PendingAction.decode($0) }
         let branding = (root["branding"] as? [String: Any]).map { b -> FlowRunView.Branding in
             Branding(
-                displayName: (b["display_name"] as? String) ?? "UseSense",
+                displayName: (b["display_name"] as? String) ?? "Sense",
                 logoURL: (b["logo_url"] as? String).flatMap { URL(string: $0) },
                 primaryColor: (b["primary_color"] as? String) ?? "#4F7CFF",
                 redirectURL: (b["redirect_url"] as? String).flatMap { URL(string: $0) },

@@ -1,4 +1,4 @@
-# UseSense iOS SDK
+# Sense iOS SDK
 
 Native iOS SDK for human presence verification. Verify real humans, detect deepfakes, and prevent identity fraud with three independent verification pillars.
 
@@ -162,7 +162,7 @@ present(viewController, animated: true)
 The verification flow UI is fully customizable through two optional inputs you pass
 on a flow run: `appearance` (`FlowAppearance`) and `copy` (`FlowCopy`). Values are
 merged **SDK-init > dashboard (org settings) > built-in default**. Every field is
-optional; anything you omit keeps the UseSense default.
+optional; anything you omit keeps the Sense default.
 
 You can set this two ways: in code (below), or no-code via the dashboard's
 **Flows → Appearance** tab (saved on your org, delivered to every SDK and the hosted
@@ -199,7 +199,7 @@ Full reference: [`docs/WHITE_LABEL.md` in the web SDK](https://github.com/qudusa
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `apiKey` | `String` | Required | Your API key from the [UseSense dashboard](https://watchtower.usesense.ai). `sk_prod_*`/`pk_prod_*` = production, `sk_sandbox_*`/`pk_sandbox_*` = sandbox. |
+| `apiKey` | `String` | Required | Your API key from the [Sense dashboard](https://watchtower.usesense.ai). `sk_prod_*`/`pk_prod_*` = production, `sk_sandbox_*`/`pk_sandbox_*` = sandbox. |
 | `apiEndpoint` | `String` | `api.usesense.ai/v1` | API endpoint URL. Override only for on-premise deployments. |
 | `environment` | `Environment?` | Auto-detected | `.sandbox`, `.production`, or `.auto`. Auto-detection uses the API key prefix. |
 | `branding` | `BrandingConfig?` | `nil` | Customize the verification UI appearance. |
@@ -403,16 +403,16 @@ useSense.reset()
 | `CAMERA_UNAVAILABLE` | No suitable front-facing camera found | Inform user they need a device with a front camera. |
 | `CAMERA_PERMISSION_DENIED` | Camera access not granted by user | Prompt user to enable in Settings. Show deep link to app settings. |
 | `MIC_PERMISSION_DENIED` | Microphone access not granted (audio enabled) | Prompt user to enable in Settings or disable audio. |
-| `NETWORK_ERROR` | UseSense API is unreachable | Check device connectivity. Retry with exponential backoff. |
+| `NETWORK_ERROR` | Sense API is unreachable | Check device connectivity. Retry with exponential backoff. |
 | `NETWORK_TIMEOUT` | Request timed out | Retry the session. Check if device is on a restricted network. |
 | `SESSION_EXPIRED` | 15-minute server-side session expiry reached | Start a new session. This is a hard server limit. |
-| `UNAUTHORIZED` | API key rejected by server | Verify the key in your UseSense dashboard. Check environment (sandbox vs production). |
+| `UNAUTHORIZED` | API key rejected by server | Verify the key in your Sense dashboard. Check environment (sandbox vs production). |
 | `INVALID_TOKEN` | Session token is invalid | Start a new session. |
 | `SESSION_NOT_FOUND` | Session does not exist on the server | Start a new session. |
 | `IDENTITY_NOT_FOUND` | `identityId` does not exist (authentication session) | Verify the identity was previously enrolled successfully. |
 | `INVALID_REQUEST` | Invalid request parameters | Check request parameters. |
 | `INVALID_CONFIG` | Missing or invalid configuration | Check `apiKey` and required fields. |
-| `QUOTA_EXCEEDED` | Rate limit or credit balance exhausted | Check rate limits. Purchase credits in the UseSense dashboard. |
+| `QUOTA_EXCEEDED` | Rate limit or credit balance exhausted | Check rate limits. Purchase credits in the Sense dashboard. |
 | `USER_CANCELLED` | Session cancelled by user | Handle gracefully -- show previous screen. |
 | `CAPTURE_FAILED` | Frame capture pipeline error | Retry the session. Check camera hardware. |
 | `ENCODING_FAILED` | JPEG frame encoding failed | Retry the session. |
@@ -420,11 +420,11 @@ useSense.reset()
 | `FACE_NOT_DETECTED` | No face detected in captured frames | Ask user to position face in frame and retry. |
 | `LOW_LIGHT` | Lighting conditions too poor | Ask user to move to a brighter area. |
 | `TIMEOUT` | Session exceeded configured timeout | Retry with a new session. |
-| `SERVER_ERROR` | UseSense API returned a 5xx error | Retry after a short delay. Contact support if persistent. |
-| `SERVICE_UNAVAILABLE` | UseSense service is temporarily unavailable | Retry after a short delay. |
+| `SERVER_ERROR` | Sense API returned a 5xx error | Retry after a short delay. Contact support if persistent. |
+| `SERVICE_UNAVAILABLE` | Sense service is temporarily unavailable | Retry after a short delay. |
 | `TOKEN_EXPIRED` | Server-init client token expired (10-min TTL) | Request a new `client_token` from your backend. |
 | `TOKEN_ALREADY_USED` | Server-init client token already exchanged | Request a new `client_token`. Tokens are single-use. |
-| `INSUFFICIENT_CREDITS` | Organization out of verification credits | Purchase credits in the UseSense dashboard. |
+| `INSUFFICIENT_CREDITS` | Organization out of verification credits | Purchase credits in the Sense dashboard. |
 | `NONCE_MISMATCH` | Session nonce doesn't match server | Start a new session. Do not reuse nonces. |
 | `UNKNOWN_ERROR` | Unexpected error | Retry the session. Contact support with the session ID. |
 
@@ -486,13 +486,13 @@ UseSenseView(
 
 ```xml
 <key>NSCameraUsageDescription</key>
-<string>UseSense needs camera access to verify your identity.</string>
+<string>Sense needs camera access to verify your identity.</string>
 
 <key>NSMicrophoneUsageDescription</key>
-<string>UseSense needs microphone access for voice verification.</string>
+<string>Sense needs microphone access for voice verification.</string>
 
 <key>NSMotionUsageDescription</key>
-<string>UseSense uses motion data to improve verification accuracy.</string>
+<string>Sense uses motion data to improve verification accuracy.</string>
 ```
 
 **Notes:**
@@ -629,7 +629,7 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 ## Sandbox vs Production
 
 - **Sandbox is free and unlimited.** Use it for all development and testing.
-- Sandbox and production use **separate API keys**. Generate both in the [UseSense dashboard](https://watchtower.usesense.ai).
+- Sandbox and production use **separate API keys**. Generate both in the [Sense dashboard](https://watchtower.usesense.ai).
 - Sandbox keys: `sk_sandbox_*` (secret) or `pk_sandbox_*` (publishable). Production keys: `sk_prod_*` (secret) or `pk_prod_*` (publishable).
 - **Secret keys (`sk_*`)** are for server-to-server calls only. **Never embed them in client apps.**
 - **Publishable keys (`pk_*`)** can be embedded in client apps for quick prototyping.
@@ -647,7 +647,7 @@ Check your API key, check network connectivity, and ensure the `UseSense` instan
 `NSCameraUsageDescription` is missing from `Info.plist`, camera is in use by another app, or the privacy permission was not granted. Check `AVCaptureDevice.authorizationStatus(for: .video)`.
 
 **Session always times out**
-Check network connectivity, increase the `captureDurationMs` value in `SDKOptions`, and check if the device is on a restricted network that blocks the UseSense API.
+Check network connectivity, increase the `captureDurationMs` value in `SDKOptions`, and check if the device is on a restricted network that blocks the Sense API.
 
 **Deduplication always returns high risk on sandbox**
 Sandbox uses a shared face collection across all sandbox integrators. This is expected behavior. Production uses isolated collections per organization.
