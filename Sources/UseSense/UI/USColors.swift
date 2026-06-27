@@ -24,8 +24,15 @@ public enum USColors {
 
     // Surfaces — sourced from appearance.colors (with dark overrides)
     public static var background: Color {
-        FlowAppearanceResolver.backgroundColorOverride
-            ?? FlowAppearanceResolver.color(\.background, darkSlot: \.background, lightDefault: 0xFDFCFA, darkDefault: 0x1C1A17)
+        // `appearance.background.color` is a single LIGHT background color, so it
+        // is applied light-mode-only (passed as the lightOverride). In dark mode it
+        // is ignored and resolution falls through to colors.dark.background → the
+        // dark default. (`background.imageUrl` still applies in both modes elsewhere.)
+        FlowAppearanceResolver.color(
+            \.background, darkSlot: \.background,
+            lightDefault: 0xFDFCFA, darkDefault: 0x1C1A17,
+            lightOverride: FlowAppearanceResolver.backgroundColorOverrideHex
+        )
     }
     public static var foreground: Color {
         FlowAppearanceResolver.color(\.foreground, darkSlot: \.foreground, lightDefault: 0x1C1A17, darkDefault: 0xF5F3EF)
