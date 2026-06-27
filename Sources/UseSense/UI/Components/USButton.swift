@@ -41,6 +41,11 @@ public struct USButton: View {
         self.action = action
     }
 
+    /// Resolved corner radius — appearance.shape.buttonRadius/radius, else 10pt.
+    private var radius: CGFloat { FlowAppearanceResolver.buttonRadius }
+    /// Whether the operator chose the outline button style for primary CTAs.
+    private var primaryOutlined: Bool { FlowAppearanceResolver.buttonOutlined }
+
     public var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
@@ -57,30 +62,38 @@ public struct USButton: View {
             .padding(.horizontal, size.hPadding)
             .background(background)
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(borderColor, lineWidth: variant == .secondary ? 1 : 0)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(borderColor, lineWidth: hasBorder ? 1 : 0)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         }
         .buttonStyle(USPressStyle())
         .disabled(isLoading)
     }
 
+    /// In `outline` button style a primary CTA renders as an outlined chip
+    /// (transparent fill, brand-tinted border + label) instead of a solid fill.
+    private var isOutlinePrimary: Bool { variant == .primary && primaryOutlined }
+
     private var background: Color {
         switch variant {
-        case .primary:   return USColors.primary
+        case .primary:   return isOutlinePrimary ? .clear : USColors.primary
         case .secondary: return USColors.secondary
         case .ghost:     return .clear
         }
     }
     private var foreground: Color {
         switch variant {
-        case .primary:   return .white
+        case .primary:   return isOutlinePrimary ? USColors.primary : USColors.primaryForeground
         case .secondary: return USColors.foreground
         case .ghost:     return USColors.primary
         }
     }
-    private var borderColor: Color { variant == .secondary ? USColors.border : .clear }
+    private var hasBorder: Bool { variant == .secondary || isOutlinePrimary }
+    private var borderColor: Color {
+        if isOutlinePrimary { return USColors.primary }
+        return variant == .secondary ? USColors.border : .clear
+    }
 }
 
 /// Press feedback shared by brand controls — subtle scale + dim on the brand spring.

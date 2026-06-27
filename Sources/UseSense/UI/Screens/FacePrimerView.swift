@@ -117,16 +117,18 @@ public struct FacePrimerView: View {
 public struct FacePrimerContainer: View {
     @ObservedObject private var model: FacePrimerModel
     private let brandColor: Color
+    private let branding: USBrandingHeader?
     private let onStart: () -> Void
 
-    public init(model: FacePrimerModel, brandColor: Color = USColors.primary, onStart: @escaping () -> Void) {
+    public init(model: FacePrimerModel, brandColor: Color = USColors.primary, branding: USBrandingHeader? = nil, onStart: @escaping () -> Void) {
         self.model = model
         self.brandColor = brandColor
+        self.branding = branding
         self.onStart = onStart
     }
 
     public var body: some View {
-        FacePrimerView(brandColor: brandColor, isBusy: model.isBusy, onStart: onStart)
+        FacePrimerView(brandColor: brandColor, isBusy: model.isBusy, branding: branding, onStart: onStart)
     }
 }
 

@@ -78,12 +78,38 @@ public struct BrandingConfig: Sendable {
     public var primaryColor: String
     public var buttonRadius: CGFloat
     public var fontFamily: String?
+    /// Full white-label customization passed by the developer at SDK init. This
+    /// is the highest-priority layer in the Flow appearance merge:
+    ///   appearance > server(branding.appearance) > legacy primaryColor/buttonRadius/logoUrl/fontFamily > built-in default.
+    /// When nil, the legacy `primaryColor` / `buttonRadius` / `logoUrl` /
+    /// `fontFamily` fields above still apply (projected into the lowest layer).
+    public var appearance: FlowAppearance?
 
-    public init(logoUrl: String? = nil, primaryColor: String = "#4F7CFF", buttonRadius: CGFloat = 10, fontFamily: String? = nil) {
+    public init(
+        logoUrl: String? = nil,
+        primaryColor: String = "#4F7CFF",
+        buttonRadius: CGFloat = 10,
+        fontFamily: String? = nil,
+        appearance: FlowAppearance? = nil
+    ) {
         self.logoUrl = logoUrl
         self.primaryColor = primaryColor
         self.buttonRadius = buttonRadius
         self.fontFamily = fontFamily
+        self.appearance = appearance
+    }
+
+    /// The developer-supplied appearance, with the legacy scalar fields folded in
+    /// as a lower-priority fallback layer (so existing integrations that only set
+    /// `primaryColor` / `buttonRadius` keep working under the new resolver).
+    public var resolvedAppearance: FlowAppearance? {
+        let legacy = FlowAppearance.fromLegacy(
+            primaryColor: primaryColor,
+            buttonRadius: buttonRadius,
+            logoUrl: logoUrl,
+            fontFamily: fontFamily
+        )
+        return FlowAppearance.merge(high: appearance, low: legacy)
     }
 }
 

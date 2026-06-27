@@ -35,7 +35,23 @@ public struct USScreenScaffold<Content: View, Footer: View>: View {
                 .padding(.top, 12)
                 .padding(.bottom, 8)
         }
-        .background(USColors.background.ignoresSafeArea())
+        .background(backgroundLayer.ignoresSafeArea())
+    }
+
+    /// The brand background, with an optional appearance background image painted
+    /// over the resolved background color (white-label Phase 1c). The image is
+    /// scaled to fill; the color shows while it loads and as a fallback.
+    @ViewBuilder private var backgroundLayer: some View {
+        ZStack {
+            USColors.background
+            if let url = FlowAppearanceResolver.backgroundImageURL {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    Color.clear
+                }
+            }
+        }
     }
 }
 #endif

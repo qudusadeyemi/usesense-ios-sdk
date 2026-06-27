@@ -284,6 +284,11 @@ public struct FlowRunView {
         public let logoURL: URL?
         public let primaryColor: String
         public let redirectURL: URL?
+        /// Operator-configured white-label customization delivered with the run.
+        /// Sits below the SDK-init appearance and above the legacy
+        /// primaryColor/logo fields in the merge. Optional; absent on legacy
+        /// payloads.
+        public let appearance: FlowAppearance?
     }
 
     static func decode(_ json: Any) throws -> FlowRunView {
@@ -304,7 +309,8 @@ public struct FlowRunView {
                 displayName: (b["display_name"] as? String) ?? "UseSense",
                 logoURL: (b["logo_url"] as? String).flatMap { URL(string: $0) },
                 primaryColor: (b["primary_color"] as? String) ?? "#4F7CFF",
-                redirectURL: (b["redirect_url"] as? String).flatMap { URL(string: $0) }
+                redirectURL: (b["redirect_url"] as? String).flatMap { URL(string: $0) },
+                appearance: (b["appearance"] as? [String: Any]).flatMap(FlowAppearance.decodeFromJSONObject)
             )
         }
         return FlowRunView(id: id, state: state, outcome: outcome, cursorStepId: cursor, environment: environment, pendingAction: action, branding: branding)
@@ -325,9 +331,18 @@ public struct RunFlowOptions: Sendable {
     public let flowRunId: String
     public let sdkToken: String
     public let apiBaseURL: URL
-    public init(flowRunId: String, sdkToken: String, apiBaseURL: URL = URL(string: "https://api.usesense.ai")!) {
+    /// Developer-supplied white-label appearance (SDK-init layer). Highest
+    /// priority in the merge; nil falls through to the server / built-in tokens.
+    public let appearance: FlowAppearance?
+    public init(
+        flowRunId: String,
+        sdkToken: String,
+        apiBaseURL: URL = URL(string: "https://api.usesense.ai")!,
+        appearance: FlowAppearance? = nil
+    ) {
         self.flowRunId = flowRunId
         self.sdkToken = sdkToken
         self.apiBaseURL = apiBaseURL
+        self.appearance = appearance
     }
 }
