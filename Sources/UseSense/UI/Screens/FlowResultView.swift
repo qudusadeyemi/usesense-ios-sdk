@@ -73,4 +73,11 @@ public struct FlowResultView: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Result success — Light") { FlowResultView(kind: .success, continueTitle: "Continue", onContinue: {}) }
+#Preview("Result success — Dark") { FlowResultView(kind: .success, continueTitle: "Continue", onContinue: {}).preferredColorScheme(.dark) }
+#Preview("Result review") { FlowResultView(kind: .review) }
+#Preview("Result not verified") { FlowResultView(kind: .notVerified) }
+#endif
 #endif

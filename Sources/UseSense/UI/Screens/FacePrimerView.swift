@@ -129,4 +129,9 @@ public struct FacePrimerContainer: View {
         FacePrimerView(brandColor: brandColor, isBusy: model.isBusy, onStart: onStart)
     }
 }
+
+#if DEBUG
+#Preview("Face primer — Light") { FacePrimerView(onStart: {}) }
+#Preview("Face primer — Dark") { FacePrimerView(onStart: {}).preferredColorScheme(.dark) }
+#endif
 #endif
