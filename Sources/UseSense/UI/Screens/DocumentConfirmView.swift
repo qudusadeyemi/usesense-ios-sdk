@@ -124,4 +124,9 @@ public struct DocumentConfirmView: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Doc confirm — Light") { DocumentConfirmView(image: PreviewSamples.placeholderImage, onUse: {}, onRetake: {}, onUploadInstead: {}) }
+#Preview("Doc confirm — Dark") { DocumentConfirmView(image: PreviewSamples.placeholderImage, onUse: {}, onRetake: {}, onUploadInstead: {}).preferredColorScheme(.dark) }
+#endif
 #endif

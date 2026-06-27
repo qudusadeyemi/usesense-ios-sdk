@@ -202,4 +202,9 @@ public struct FormScreen: View {
         key.replacingOccurrences(of: "_", with: " ").capitalized
     }
 }
+
+#if DEBUG
+#Preview("Form — Light") { FormScreen(model: PreviewSamples.formModel(), onContinue: {}) }
+#Preview("Form — Dark") { FormScreen(model: PreviewSamples.formModel(), onContinue: {}).preferredColorScheme(.dark) }
+#endif
 #endif

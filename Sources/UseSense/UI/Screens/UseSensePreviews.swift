@@ -1,12 +1,13 @@
 #if DEBUG && canImport(UIKit) && canImport(SwiftUI)
 import SwiftUI
 
-// MARK: - SwiftUI Previews for the UI-parity screens
+// MARK: - Shared sample data for the per-screen SwiftUI previews
 //
-// Lets every parity surface be eyeballed in the Xcode canvas (light + dark)
-// without a live flow, device, or camera. DEBUG-only; never shipped in release.
+// Each parity screen file has its own #Preview (light + dark) at the bottom, so
+// opening any of them in Xcode renders it in the canvas — no live flow, device,
+// or camera needed. They share this sample data. DEBUG-only; never shipped.
 
-private enum PreviewSamples {
+enum PreviewSamples {
     static let docTypes = ["Passport", "Driver's License", "National ID card"]
 
     static let idTypes: [IdTypeOption] = [
@@ -33,44 +34,4 @@ private enum PreviewSamples {
         }
     }
 }
-
-// FacePrimer
-#Preview("Face primer — Light") { FacePrimerView(onStart: {}) }
-#Preview("Face primer — Dark") { FacePrimerView(onStart: {}).preferredColorScheme(.dark) }
-
-// Document primer
-#Preview("Doc primer — Light") {
-    DocumentPrimerView(documentType: "Passport", issuingCountries: ["NG", "GH"], onPrimary: {}, onSecondary: {})
-}
-#Preview("Doc primer — Dark") {
-    DocumentPrimerView(documentType: "Passport", issuingCountries: ["NG", "GH"], onPrimary: {}, onSecondary: {}).preferredColorScheme(.dark)
-}
-
-// Document type select
-#Preview("Doc type select — Light") { DocumentTypeSelectView(documentTypes: PreviewSamples.docTypes, onContinue: { _ in }) }
-#Preview("Doc type select — Dark") { DocumentTypeSelectView(documentTypes: PreviewSamples.docTypes, onContinue: { _ in }).preferredColorScheme(.dark) }
-
-// Document confirm
-#Preview("Doc confirm — Light") { DocumentConfirmView(image: PreviewSamples.placeholderImage, onUse: {}, onRetake: {}, onUploadInstead: {}) }
-#Preview("Doc confirm — Dark") { DocumentConfirmView(image: PreviewSamples.placeholderImage, onUse: {}, onRetake: {}, onUploadInstead: {}).preferredColorScheme(.dark) }
-
-// ID number
-#Preview("ID number — Light") { IdNumberView(idTypes: PreviewSamples.idTypes, onSubmit: { _, _, _ in }) }
-#Preview("ID number — Dark") { IdNumberView(idTypes: PreviewSamples.idTypes, onSubmit: { _, _, _ in }).preferredColorScheme(.dark) }
-
-// Form
-#Preview("Form — Light") { FormScreen(model: PreviewSamples.formModel(), onContinue: {}) }
-#Preview("Form — Dark") { FormScreen(model: PreviewSamples.formModel(), onContinue: {}).preferredColorScheme(.dark) }
-
-// Results
-#Preview("Result success — Light") { FlowResultView(kind: .success, continueTitle: "Continue", onContinue: {}) }
-#Preview("Result success — Dark") { FlowResultView(kind: .success, continueTitle: "Continue", onContinue: {}).preferredColorScheme(.dark) }
-#Preview("Result review") { FlowResultView(kind: .review) }
-#Preview("Result not verified") { FlowResultView(kind: .notVerified) }
-
-// Loading / error
-#Preview("Loading — Light") { FlowLoadingView() }
-#Preview("Loading — Dark") { FlowLoadingView().preferredColorScheme(.dark) }
-#Preview("Error — Light") { FlowErrorView(message: "This link is invalid or has expired.", retryTitle: "Try again", onRetry: {}) }
-#Preview("Error — Dark") { FlowErrorView(message: "This link is invalid or has expired.", retryTitle: "Try again", onRetry: {}).preferredColorScheme(.dark) }
 #endif

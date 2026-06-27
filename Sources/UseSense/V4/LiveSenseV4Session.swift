@@ -225,7 +225,7 @@ extension LiveSenseV4Session: AVCaptureVideoDataOutputSampleBufferDelegate {
         guard let faceRequest = faceRequest else { return }
         let handler = VNImageRequestHandler(cvPixelBuffer: pixel, orientation: .leftMirrored, options: [:])
         try? handler.perform([faceRequest])
-        if let obs = (faceRequest.results as? [VNFaceObservation])?.first {
+        if let obs = faceRequest.results?.first {
             let rect = obs.boundingBox
             let timestampMs = CACurrentMediaTime() * 1000.0
             let yaw = (obs.yaw?.doubleValue ?? 0) * 180.0 / .pi
