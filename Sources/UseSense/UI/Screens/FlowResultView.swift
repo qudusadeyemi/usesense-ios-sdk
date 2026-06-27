@@ -30,7 +30,7 @@ public struct FlowResultView: View {
         USScreenScaffold(branding: branding) {
             VStack(spacing: 16) {
                 Spacer()
-                USResultIcon(iconKind)
+                resultIllustration
                 Text(title)
                     .font(.usDisplay(24, .bold))
                     .foregroundColor(USColors.foreground)
@@ -51,6 +51,29 @@ public struct FlowResultView: View {
         }
     }
 
+    /// A custom result illustration (`icons.success`/`.review`/`.notVerified`)
+    /// when the appearance sets one for this kind, else the built-in result glyph.
+    /// Presentation-only white-label override (Phase 5).
+    @ViewBuilder private var resultIllustration: some View {
+        if let url = FlowAppearanceResolver.icon(for: iconSlot) {
+            AsyncImage(url: url) { image in
+                image.resizable().scaledToFit()
+            } placeholder: {
+                USResultIcon(iconKind)
+            }
+            .frame(width: 104, height: 104)
+        } else {
+            USResultIcon(iconKind)
+        }
+    }
+
+    private var iconSlot: String {
+        switch kind {
+        case .success: return "success"
+        case .review: return "review"
+        case .notVerified: return "notVerified"
+        }
+    }
     private var iconKind: USResultIcon.Kind {
         switch kind {
         case .success: return .success
