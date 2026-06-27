@@ -52,9 +52,28 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // Seed the appearance resolver with the SDK-init layer immediately so the
+        // first loading surface is already themed; the server layer is merged in
+        // once the run loads (see applyResolvedAppearance).
+        applyResolvedAppearance(server: nil)
         view.backgroundColor = .systemBackground
         installScaffold()
         Task { await refreshAndDrive() }
+    }
+
+    /// Merge the SDK-init appearance (options.appearance, highest priority) over
+    /// the server-delivered branding.appearance and publish it to the resolver,
+    /// which re-themes USColors / the brand font ramp / button shape for every
+    /// surface. Also forces the runner's interface style when the appearance
+    /// pins `mode` to light or dark.
+    private func applyResolvedAppearance(server: FlowAppearance?) {
+        let merged = FlowAppearance.merge(high: options.appearance, low: server)
+        FlowAppearanceResolver.set(merged)
+        switch merged?.mode ?? .auto {
+        case .light: overrideUserInterfaceStyle = .light
+        case .dark:  overrideUserInterfaceStyle = .dark
+        case .auto:  overrideUserInterfaceStyle = .unspecified
+        }
     }
 
     // MARK: - Driver
@@ -73,6 +92,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         do {
             let next = try await client.get()
             view_ = next
+            applyResolvedAppearance(server: next.branding?.appearance)
             render()
         } catch let e as FlowError {
             finish(.failure(e))
@@ -86,6 +106,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         do {
             let next = try await client.advance(inputs: inputs)
             view_ = next
+            applyResolvedAppearance(server: next.branding?.appearance)
             fieldErrors = [:]
             render()
         } catch let e as FlowError where e.code == .invalidInput {
@@ -168,11 +189,11 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         case .none:         kind = view.state == .errored ? .notVerified : .success
         }
         let result = FlowRunResult(flowRunId: view.id, state: view.state, outcome: view.outcome)
-        let host = UIHostingController(rootView: FlowResultView(kind: kind, continueTitle: "Done") { [weak self] in
+        let host = UIHostingController(rootView: FlowResultView(kind: kind, continueTitle: "Done", onContinue: { [weak self] in
             guard let self else { return }
             // Tear down the result surface, then the runner, then report.
             self.dismiss(animated: true) { self.finish(.success(result)) }
-        })
+        }, branding: brandingHeader))
         host.modalPresentationStyle = .fullScreen
         present(host, animated: true)
     }
@@ -181,9 +202,25 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         // Guard against double-callback if a network error and a terminal
         // state both fire — the first wins, subsequent calls are no-ops.
         let cb = completion
+        // Clear the per-run appearance so a subsequent run (or any other SDK
+        // surface) starts from the built-in tokens rather than this run's theme.
+        FlowAppearanceResolver.reset()
         dismiss(animated: true) {
             cb(result)
         }
+    }
+
+    /// The org lockup shown at the top of each surface, honouring the resolved
+    /// appearance: the logo URL (appearance.logo.url, else server branding) and
+    /// placement (`none` suppresses the header). Returns nil when there is no
+    /// branding to show or placement is `none`.
+    private var brandingHeader: USBrandingHeader? {
+        let placement = FlowAppearanceResolver.logoPlacement
+        if placement == AppearanceLogo.Placement.none { return nil }
+        let logoURL = FlowAppearanceResolver.logoURL ?? view_?.branding?.logoURL
+        let displayName = view_?.branding?.displayName
+        if logoURL == nil && displayName == nil { return nil }
+        return USBrandingHeader(displayName: displayName, logoURL: logoURL)
     }
 
     // MARK: - Surfaces
@@ -197,7 +234,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         let options = idTypes.map {
             IdTypeOption(value: $0.value, label: $0.label, hint: $0.hint, field: $0.field, maxLength: $0.maxLength, numeric: $0.numeric)
         }
-        let host = UIHostingController(rootView: IdNumberView(idTypes: options, brandColor: USColors.primary) { [weak self] idType, field, value in
+        let host = UIHostingController(rootView: IdNumberView(idTypes: options, brandColor: USColors.primary, branding: brandingHeader) { [weak self] idType, field, value in
             guard let self else { return }
             self.idNumberPresented = false
             // Mirror the hosted page: advance({ id_type, [field]: value }).
@@ -221,7 +258,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         }
         let model = FormModel(fields: fields, serverErrors: fieldErrors)
         formModel = model
-        let host = UIHostingController(rootView: FormScreen(model: model, brandColor: USColors.primary) { [weak self] in
+        let host = UIHostingController(rootView: FormScreen(model: model, brandColor: USColors.primary, branding: brandingHeader) { [weak self] in
             self?.submitForm()
         })
         host.modalPresentationStyle = .fullScreen
@@ -425,7 +462,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         // capture UI. The CTA shows progress while init-session is in flight.
         let model = FacePrimerModel()
         let primer = UIHostingController(
-            rootView: FacePrimerContainer(model: model, brandColor: USColors.primary) { [weak self] in
+            rootView: FacePrimerContainer(model: model, brandColor: USColors.primary, branding: brandingHeader) { [weak self] in
                 guard let self else { return }
                 model.isBusy = true
                 Task {
@@ -504,6 +541,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
                 allowCamera: canScan,
                 allowUpload: canUpload,
                 brandColor: USColors.primary,
+                branding: brandingHeader,
                 onPrimary: { [weak self] in
                     self?.dismiss(animated: true) {
                         if canScan { self?.launchDocumentScanner() } else { self?.presentUploadPicker() }
@@ -521,6 +559,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             let typeHost = UIHostingController(rootView: DocumentTypeSelectView(
                 documentTypes: documentTypes,
                 brandColor: USColors.primary,
+                branding: brandingHeader,
                 onContinue: { [weak self] selected in
                     self?.dismiss(animated: false) { showPrimer(docType: selected) }
                 }
@@ -585,6 +624,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         let host = UIHostingController(rootView: DocumentConfirmView(
             image: image,
             brandColor: USColors.primary,
+            branding: brandingHeader,
             onUse: { [weak self] in
                 self?.dismiss(animated: false) {
                     let base64 = image.jpegData(compressionQuality: 0.85)?.base64EncodedString() ?? ""

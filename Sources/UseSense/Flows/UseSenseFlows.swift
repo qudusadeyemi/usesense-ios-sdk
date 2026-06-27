@@ -27,13 +27,34 @@ public enum UseSenseFlows {
         flowRunId: String,
         sdkToken: String,
         apiBaseURL: URL = URL(string: "https://api.usesense.ai")!,
+        appearance: FlowAppearance? = nil,
         from presentingViewController: UIViewController,
         completion: @escaping (Result<FlowRunResult, FlowError>) -> Void
     ) {
-        let options = RunFlowOptions(flowRunId: flowRunId, sdkToken: sdkToken, apiBaseURL: apiBaseURL)
+        let options = RunFlowOptions(flowRunId: flowRunId, sdkToken: sdkToken, apiBaseURL: apiBaseURL, appearance: appearance)
         let runner = FlowsRunnerViewController(options: options, completion: completion)
         runner.modalPresentationStyle = .fullScreen
         presentingViewController.present(runner, animated: true)
+    }
+
+    /// Convenience overload that takes a `BrandingConfig` (legacy fields +
+    /// `appearance`) as the SDK-init customization layer.
+    public static func run(
+        flowRunId: String,
+        sdkToken: String,
+        apiBaseURL: URL = URL(string: "https://api.usesense.ai")!,
+        branding: BrandingConfig?,
+        from presentingViewController: UIViewController,
+        completion: @escaping (Result<FlowRunResult, FlowError>) -> Void
+    ) {
+        run(
+            flowRunId: flowRunId,
+            sdkToken: sdkToken,
+            apiBaseURL: apiBaseURL,
+            appearance: branding?.resolvedAppearance,
+            from: presentingViewController,
+            completion: completion
+        )
     }
 }
 #endif

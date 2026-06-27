@@ -46,14 +46,34 @@ public enum USFontWeightBody { case regular, medium, semibold }
 
 public extension Font {
     /// Outfit — display / headings. Auto-registers bundled fonts on first use.
+    /// When the resolved FlowAppearance sets `typography.displayFamily`, that
+    /// family is used instead (the SwiftUI weight is applied on top), so a
+    /// white-label run renders headings in the operator's font.
     static func usDisplay(_ size: CGFloat, _ weight: USFontWeightDisplay = .bold) -> Font {
         UseSenseFonts.registerIfNeeded()
+        #if canImport(UIKit)
+        if let family = FlowAppearanceResolver.displayFamily {
+            return .custom(family, size: size).weight(weight == .extraBold ? .heavy : .bold)
+        }
+        #endif
         return .custom(weight == .extraBold ? "Outfit-ExtraBold" : "Outfit-Bold", size: size)
     }
 
-    /// DM Sans — body, buttons, inputs.
+    /// DM Sans — body, buttons, inputs. When the resolved FlowAppearance sets
+    /// `typography.fontFamily`, that family is used instead.
     static func usBody(_ size: CGFloat, _ weight: USFontWeightBody = .regular) -> Font {
         UseSenseFonts.registerIfNeeded()
+        #if canImport(UIKit)
+        if let family = FlowAppearanceResolver.bodyFamily {
+            let w: Font.Weight
+            switch weight {
+            case .regular:  w = .regular
+            case .medium:   w = .medium
+            case .semibold: w = .semibold
+            }
+            return .custom(family, size: size).weight(w)
+        }
+        #endif
         let name: String
         switch weight {
         case .regular:  name = "DMSans-Regular"
