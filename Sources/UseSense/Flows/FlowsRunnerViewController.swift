@@ -235,137 +235,6 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         formHost = nil
     }
 
-    private func installForm(fields: [FormField]) {
-        contentContainer.subviews.forEach { $0.removeFromSuperview() }
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        let title = UILabel()
-        title.text = "A few details"
-        title.font = .preferredFont(forTextStyle: .title2)
-        stack.addArrangedSubview(title)
-
-        // One row per field. Inputs and error labels are kept in dictionaries
-        // keyed on field.key so a 422 invalid_input response can flip the
-        // matching error label visible without rebuilding the form.
-        var inputs: [String: FieldInputBinding] = [:]
-        var errorLabels: [String: UILabel] = [:]
-        for field in fields {
-            let (row, binding, errorLabel) = makeFieldRow(field, serverError: fieldErrors[field.key])
-            inputs[field.key] = binding
-            errorLabels[field.key] = errorLabel
-            stack.addArrangedSubview(row)
-        }
-
-        let submit = UIButton(type: .system)
-        submit.setTitle("Continue", for: .normal)
-        submit.contentEdgeInsets = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
-        submit.backgroundColor = UIColor(red: 0.31, green: 0.49, blue: 1.0, alpha: 1.0)
-        submit.tintColor = .white
-        submit.layer.cornerRadius = 8
-        submit.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            // Client-side echo of modules/flows/form-validation.ts. The server
-            // is still authoritative; this is just inline feedback before the
-            // round-trip.
-            var clientErrors: [String: String] = [:]
-            var values: [String: Any] = [:]
-            for field in fields {
-                let raw = inputs[field.key]?.value() ?? ""
-                if let err = self.validate(field: field, raw: raw) {
-                    clientErrors[field.key] = err
-                } else {
-                    values[field.key] = self.coerce(field: field, raw: raw)
-                }
-            }
-            if !clientErrors.isEmpty {
-                for (k, msg) in clientErrors {
-                    errorLabels[k]?.text = msg
-                    errorLabels[k]?.isHidden = false
-                }
-                return
-            }
-            Task { await self.advance(inputs: values) }
-        }, for: .touchUpInside)
-        stack.addArrangedSubview(submit)
-
-        contentContainer.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: contentContainer.topAnchor, constant: 24),
-            stack.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -24),
-        ])
-    }
-
-    // MARK: - Form rendering helpers
-
-    /// Bound to a single field's input control so the submit handler can read
-    /// its value without caring about the concrete UIKit class underneath.
-    private struct FieldInputBinding {
-        let value: () -> Any
-    }
-
-    private func makeFieldRow(_ field: FormField, serverError: String?) -> (UIView, FieldInputBinding, UILabel) {
-        let container = UIStackView()
-        container.axis = .vertical
-        container.spacing = 4
-
-        let label = UILabel()
-        label.text = (field.label ?? humanise(field.key)) + (field.required ? " *" : "")
-        label.font = .preferredFont(forTextStyle: .subheadline)
-        container.addArrangedSubview(label)
-
-        let binding: FieldInputBinding
-        switch field.type {
-        case .select, .country:
-            let options: [(String, String)] = field.type == .country
-                ? (field.allowedCountries ?? []).map { ($0, $0) }
-                : (field.options ?? []).map { ($0.value, $0.label) }
-            let picker = OptionButton(title: field.placeholder ?? "Select…", options: options,
-                                      initial: field.initial?.value as? String)
-            container.addArrangedSubview(picker)
-            binding = FieldInputBinding(value: { picker.selectedValue ?? "" })
-        case .checkbox:
-            let sw = UISwitch()
-            sw.isOn = (field.initial?.value as? Bool) ?? false
-            let row = UIStackView(arrangedSubviews: [sw, UILabel.makeBody(field.hint ?? "")])
-            row.axis = .horizontal
-            row.spacing = 12
-            container.addArrangedSubview(row)
-            binding = FieldInputBinding(value: { sw.isOn })
-        default:
-            let tf = UITextField()
-            tf.borderStyle = .roundedRect
-            tf.placeholder = field.placeholder
-            tf.text = field.initial?.value as? String
-            switch field.type {
-            case .email: tf.keyboardType = .emailAddress; tf.autocapitalizationType = .none
-            case .tel:   tf.keyboardType = .phonePad
-            case .number: tf.keyboardType = .decimalPad
-            case .date:  tf.placeholder = field.placeholder ?? "YYYY-MM-DD"
-            default: break
-            }
-            container.addArrangedSubview(tf)
-            binding = FieldInputBinding(value: { tf.text ?? "" })
-        }
-
-        if let hint = field.hint, !hint.isEmpty, field.type != .checkbox {
-            container.addArrangedSubview(UILabel.makeHint(hint))
-        }
-
-        let errorLabel = UILabel()
-        errorLabel.font = .preferredFont(forTextStyle: .caption1)
-        errorLabel.textColor = .systemRed
-        errorLabel.numberOfLines = 0
-        errorLabel.text = serverError
-        errorLabel.isHidden = serverError == nil
-        container.addArrangedSubview(errorLabel)
-
-        return (container, binding, errorLabel)
-    }
-
     private func validate(field: FormField, raw: Any) -> String? {
         let v = field.validators
         let isBlank: Bool = {
@@ -437,11 +306,13 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             if infoOpenURLPresented && info.primary.openURL != nil { return "I'm back, continue" }
             return info.primary.label
         }()
-        primary.setTitle(primaryTitle, for: .normal)
-        primary.contentEdgeInsets = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
-        primary.backgroundColor = UIColor(red: 0.31, green: 0.49, blue: 1.0, alpha: 1.0)
-        primary.tintColor = .white
-        primary.layer.cornerRadius = 8
+        var primaryConfig = UIButton.Configuration.filled()
+        primaryConfig.title = primaryTitle
+        primaryConfig.baseBackgroundColor = UIColor(red: 0.31, green: 0.49, blue: 1.0, alpha: 1.0)
+        primaryConfig.baseForegroundColor = .white
+        primaryConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16)
+        primaryConfig.background.cornerRadius = 8
+        primary.configuration = primaryConfig
         primary.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             // Open the external URL in SFSafariViewController first; advance
@@ -459,11 +330,13 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
 
         if let secondary = info.secondary {
             let s = UIButton(type: .system)
-            s.setTitle(secondary.label, for: .normal)
-            s.contentEdgeInsets = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
-            s.backgroundColor = .secondarySystemBackground
-            s.setTitleColor(.label, for: .normal)
-            s.layer.cornerRadius = 8
+            var sConfig = UIButton.Configuration.filled()
+            sConfig.title = secondary.label
+            sConfig.baseBackgroundColor = .secondarySystemBackground
+            sConfig.baseForegroundColor = .label
+            sConfig.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16)
+            sConfig.background.cornerRadius = 8
+            s.configuration = sConfig
             s.addAction(UIAction { [weak self] _ in
                 guard let self else { return }
                 switch secondary.action {
@@ -794,53 +667,4 @@ private func humanise(_ s: String) -> String {
         .joined(separator: " ")
 }
 
-/// Minimal UIMenu-backed picker so we don't pull in UIKit pickers for a
-/// single-choice select. Holds the chosen value; the title shows the chosen
-/// label or the placeholder.
-private final class OptionButton: UIButton {
-    private let placeholderTitle: String
-    private(set) var selectedValue: String?
-    init(title: String, options: [(value: String, label: String)], initial: String?) {
-        self.placeholderTitle = title
-        super.init(frame: .zero)
-        setTitleColor(.label, for: .normal)
-        contentHorizontalAlignment = .leading
-        backgroundColor = .secondarySystemBackground
-        layer.cornerRadius = 8
-        contentEdgeInsets = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
-        let actions = options.map { opt in
-            UIAction(title: opt.label) { [weak self] _ in
-                self?.selectedValue = opt.value
-                self?.setTitle(opt.label, for: .normal)
-            }
-        }
-        menu = UIMenu(children: actions)
-        showsMenuAsPrimaryAction = true
-        if let initial, let match = options.first(where: { $0.value == initial }) {
-            selectedValue = match.value
-            setTitle(match.label, for: .normal)
-        } else {
-            setTitle(title, for: .normal)
-        }
-    }
-    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
-}
-
-private extension UILabel {
-    static func makeHint(_ text: String) -> UILabel {
-        let l = UILabel()
-        l.text = text
-        l.font = .preferredFont(forTextStyle: .caption1)
-        l.textColor = .secondaryLabel
-        l.numberOfLines = 0
-        return l
-    }
-    static func makeBody(_ text: String) -> UILabel {
-        let l = UILabel()
-        l.text = text
-        l.font = .preferredFont(forTextStyle: .body)
-        l.numberOfLines = 0
-        return l
-    }
-}
 #endif
