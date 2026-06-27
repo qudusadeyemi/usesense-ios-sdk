@@ -65,7 +65,8 @@ public enum FlowAppearanceResolver {
         _ slot: KeyPath<AppearanceColors, String?>,
         darkSlot: KeyPath<AppearanceColors.DarkOverrides, String?>?,
         lightDefault: UInt32,
-        darkDefault: UInt32
+        darkDefault: UInt32,
+        lightOverride: String? = nil
     ) -> Color {
         Color(UIColor { traits in
             let dark = isDark(for: traits)
@@ -74,6 +75,11 @@ public enum FlowAppearanceResolver {
             // built-in default for the resolved scheme.
             if dark, let darkSlot, let raw = colors?.dark?[keyPath: darkSlot],
                let c = Self.uiColor(fromHex: raw) {
+                return c
+            }
+            // A light-only override (e.g. `background.color`) applies in light mode
+            // only; in dark mode it is skipped so the dark palette / default wins.
+            if !dark, let raw = lightOverride, let c = Self.uiColor(fromHex: raw) {
                 return c
             }
             if let raw = colors?[keyPath: slot], let c = Self.uiColor(fromHex: raw) {
@@ -101,11 +107,13 @@ public enum FlowAppearanceResolver {
 
     // MARK: Background
 
-    /// Explicit background color from `background.color`, if set (overrides the
-    /// palette background). Returns nil to fall through to USColors.background.
-    static var backgroundColorOverride: Color? {
-        guard let raw = current?.background?.color, let c = uiColor(fromHex: raw) else { return nil }
-        return Color(c)
+    /// Explicit background color from `background.color`, if set. This is a single
+    /// LIGHT background color and must be applied in light mode only — USColors
+    /// passes it as `color(..., lightOverride:)` so dark mode falls through to the
+    /// dark palette. Returns the raw hex (not a resolved Color) so the dynamic
+    /// UIColor resolver can gate it on the resolved trait. nil = no override.
+    static var backgroundColorOverrideHex: String? {
+        current?.background?.color
     }
 
     /// Background image URL, if the operator/developer set one.

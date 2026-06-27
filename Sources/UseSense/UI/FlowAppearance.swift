@@ -73,10 +73,17 @@ public struct AppearanceTypography: Codable, Equatable, Sendable {
     public var fontFamily: String?
     /// Heading/display font family; defaults to `fontFamily` when omitted.
     public var displayFamily: String?
+    /// Raw CSS `@font-face` block from the web contract. Declared only so the
+    /// field round-trips through the contract and isn't silently dropped; native
+    /// intentionally does NOT use it (the `@font-face` mechanism is web-only —
+    /// native maps the font family NAMES above to system fonts instead). Do not
+    /// wire this to any rendering.
+    public var fontCss: String?
 
-    public init(fontFamily: String? = nil, displayFamily: String? = nil) {
+    public init(fontFamily: String? = nil, displayFamily: String? = nil, fontCss: String? = nil) {
         self.fontFamily = fontFamily
         self.displayFamily = displayFamily
+        self.fontCss = fontCss
     }
 }
 

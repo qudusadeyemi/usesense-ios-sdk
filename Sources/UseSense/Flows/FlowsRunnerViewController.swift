@@ -63,12 +63,36 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     /// Merge the SDK-init appearance (options.appearance, highest priority) over
-    /// the server-delivered branding.appearance and publish it to the resolver,
-    /// which re-themes USColors / the brand font ramp / button shape for every
-    /// surface. Also forces the runner's interface style when the appearance
-    /// pins `mode` to light or dark.
+    /// the server-delivered branding.appearance, with the server's flat
+    /// `branding.primary_color` folded in as the lowest-priority colour, and
+    /// publish the result to the resolver, which re-themes USColors / the brand
+    /// font ramp / button shape for every surface. Also forces the runner's
+    /// interface style when the appearance pins `mode` to light or dark.
+    ///
+    /// Precedence (mirrors web FlowRunner.tsx + Android FlowsActivity.mergedAppearance):
+    ///   SDK-init appearance
+    ///     > server appearance (branding.appearance)
+    ///       > server flat primary_color (branding.primary_color)
+    ///         > built-in default
+    /// The flat colour is GUARDED: it only folds in when neither the SDK-init
+    /// layer nor the server appearance already set `colors.primary`, so an
+    /// operator who configures a full appearance keeps that exact palette.
     private func applyResolvedAppearance(server: FlowAppearance?) {
-        let merged = FlowAppearance.merge(high: options.appearance, low: server)
+        // Lowest-priority colour layer from the server's flat primary_color.
+        // Web guards on `branding.primary_color` being truthy; on iOS the field
+        // is non-optional and defaults to the built-in `#4F7CFF`, so folding the
+        // default is a no-op anyway. The load-bearing guard is the one matching
+        // web/Android: only apply when no higher layer pinned `colors.primary`.
+        let legacyServerColor: FlowAppearance? = {
+            guard options.appearance?.colors?.primary == nil,
+                  server?.colors?.primary == nil,
+                  let flat = view_?.branding?.primaryColor,
+                  !flat.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return nil }
+            return FlowAppearance(colors: AppearanceColors(primary: flat))
+        }()
+        let serverLayer = FlowAppearance.merge(high: server, low: legacyServerColor)
+        let merged = FlowAppearance.merge(high: options.appearance, low: serverLayer)
         FlowAppearanceResolver.set(merged)
         switch merged?.mode ?? .auto {
         case .light: overrideUserInterfaceStyle = .light
