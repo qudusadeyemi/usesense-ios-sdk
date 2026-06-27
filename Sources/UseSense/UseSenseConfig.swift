@@ -74,10 +74,23 @@ public struct VerificationRequest: Sendable {
 }
 
 public struct BrandingConfig: Sendable {
+    /// The built-in legacy brand color. Kept as the non-nil default of
+    /// `primaryColor` so the legacy session UI (which reads `primaryColor` as a
+    /// plain `String`) always has a concrete color, but treated as "not set" by
+    /// the Flow appearance resolver so it never beats the operator's dashboard
+    /// color (see `resolvedAppearance`).
+    public static let defaultPrimaryColor = "#4F7CFF"
+
     public var logoUrl: String?
     public var primaryColor: String
     public var buttonRadius: CGFloat
     public var fontFamily: String?
+    /// Whether the developer explicitly supplied `primaryColor` at init. When
+    /// false (the field still holds `defaultPrimaryColor`), the Flow appearance
+    /// resolver does NOT fold the legacy color into the merge, so the server's
+    /// dashboard color wins. Existing non-Flows surfaces that read `primaryColor`
+    /// directly are unaffected — they still see the concrete default.
+    private let primaryColorWasSet: Bool
     /// Full white-label customization passed by the developer at SDK init. This
     /// is the highest-priority layer in the Flow appearance merge:
     ///   appearance > server(branding.appearance) > legacy primaryColor/buttonRadius/logoUrl/fontFamily > built-in default.
@@ -92,14 +105,15 @@ public struct BrandingConfig: Sendable {
 
     public init(
         logoUrl: String? = nil,
-        primaryColor: String = "#4F7CFF",
+        primaryColor: String? = nil,
         buttonRadius: CGFloat = 10,
         fontFamily: String? = nil,
         appearance: FlowAppearance? = nil,
         copy: FlowCopy? = nil
     ) {
         self.logoUrl = logoUrl
-        self.primaryColor = primaryColor
+        self.primaryColor = primaryColor ?? Self.defaultPrimaryColor
+        self.primaryColorWasSet = primaryColor != nil
         self.buttonRadius = buttonRadius
         self.fontFamily = fontFamily
         self.appearance = appearance
@@ -109,9 +123,15 @@ public struct BrandingConfig: Sendable {
     /// The developer-supplied appearance, with the legacy scalar fields folded in
     /// as a lower-priority fallback layer (so existing integrations that only set
     /// `primaryColor` / `buttonRadius` keep working under the new resolver).
+    ///
+    /// The legacy `primaryColor` is folded ONLY when the developer explicitly set
+    /// it. When it still holds the built-in default, it is passed as `nil` so it
+    /// does not occupy the SDK-init color layer and beat the operator's
+    /// server-side dashboard color. This mirrors web/Android, where the SDK-init
+    /// `colors.primary` is simply absent unless the developer supplies it.
     public var resolvedAppearance: FlowAppearance? {
         let legacy = FlowAppearance.fromLegacy(
-            primaryColor: primaryColor,
+            primaryColor: primaryColorWasSet ? primaryColor : nil,
             buttonRadius: buttonRadius,
             logoUrl: logoUrl,
             fontFamily: fontFamily
