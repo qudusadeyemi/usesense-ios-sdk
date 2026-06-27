@@ -1,7 +1,9 @@
 import Foundation
 
 final class UseSenseAPIClient: @unchecked Sendable {
-    static let sdkVersion = "4.4.1"
+    // Single source of truth: track UseSense.version so the SDK version can never
+    // drift between the public constant, the User-Agent, and request metadata.
+    static let sdkVersion = UseSense.version
     private static let userAgent = "UseSense-iOS-SDK/\(sdkVersion)"
 
     /// Retry delays per spec: network errors 3 retries (1s, 2s, 4s), 5xx 2 retries (2s, 2s)
