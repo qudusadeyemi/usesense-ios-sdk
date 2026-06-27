@@ -38,7 +38,7 @@ public struct DocumentConfirmView: View {
     public var body: some View {
         USScreenScaffold(branding: branding) {
             VStack(spacing: 14) {
-                Text("Check your document is clear")
+                Text(FlowCopyResolver.text(\.document?.confirmTitle, default: "Check your document is clear"))
                     .font(.usBody(15, .medium))
                     .foregroundColor(USColors.foreground)
                     .frame(maxWidth: .infinity)
@@ -62,7 +62,7 @@ public struct DocumentConfirmView: View {
                             RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color.black.opacity(0.4))
                             VStack(spacing: 8) {
                                 ProgressView().tint(.white)
-                                Text("Checking image quality…").font(.usBody(13)).foregroundColor(.white)
+                                Text(FlowCopyResolver.text(\.loading?.checkingQuality, default: "Checking image quality…")).font(.usBody(13)).foregroundColor(.white)
                             }
                         }
                         .aspectRatio(3.0 / 2.0, contentMode: .fit)
@@ -74,15 +74,15 @@ public struct DocumentConfirmView: View {
         } footer: {
             VStack(spacing: 12) {
                 if issue != nil {
-                    USButton("Retake", variant: .primary, size: .large, action: onRetake)
+                    USButton(FlowCopyResolver.text(\.buttons?.retake, default: "Retake"), variant: .primary, size: .large, action: onRetake)
                     USButton("Use anyway", variant: .secondary, size: .large, action: onUse)
                 } else {
-                    USButton("Use this photo", variant: .primary, size: .large, isLoading: checking, action: onUse)
-                    USButton("Retake", variant: .secondary, size: .large, action: onRetake)
+                    USButton(FlowCopyResolver.text(\.buttons?.useThisPhoto, default: "Use this photo"), variant: .primary, size: .large, isLoading: checking, action: onUse)
+                    USButton(FlowCopyResolver.text(\.buttons?.retake, default: "Retake"), variant: .secondary, size: .large, action: onRetake)
                 }
                 if let onUploadInstead {
                     Button(action: onUploadInstead) {
-                        Text("Upload a different file")
+                        Text(FlowCopyResolver.text(\.buttons?.uploadInstead, default: "Upload a different file"))
                             .font(.usBody(12))
                             .foregroundColor(USColors.mutedForeground)
                             .frame(maxWidth: .infinity)

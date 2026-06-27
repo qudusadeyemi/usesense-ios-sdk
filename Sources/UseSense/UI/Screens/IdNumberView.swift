@@ -61,10 +61,10 @@ public struct IdNumberView: View {
     public var body: some View {
         USScreenScaffold(branding: branding) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Select an option")
+                Text(FlowCopyResolver.text(\.idNumber?.title, default: "Select an option"))
                     .font(.usDisplay(24, .bold))
                     .foregroundColor(USColors.foreground)
-                Text("Choose the type of ID to validate.")
+                Text(FlowCopyResolver.text(\.idNumber?.body, default: "Choose the type of ID to validate."))
                     .font(USType.body)
                     .foregroundColor(USColors.mutedForeground)
                     .padding(.top, 6)
@@ -94,7 +94,7 @@ public struct IdNumberView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 4)
         } footer: {
-            USButton("Continue", variant: .primary, size: .large, isLoading: isBusy) {
+            USButton(FlowCopyResolver.text(\.buttons?.continue, default: "Continue"), variant: .primary, size: .large, isLoading: isBusy) {
                 submit()
             }
         }

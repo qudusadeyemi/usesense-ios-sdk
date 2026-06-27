@@ -289,6 +289,10 @@ public struct FlowRunView {
         /// primaryColor/logo fields in the merge. Optional; absent on legacy
         /// payloads.
         public let appearance: FlowAppearance?
+        /// Operator-configured copy/messaging overrides delivered with the run.
+        /// Sits below the SDK-init copy in the merge. Optional; absent on legacy
+        /// payloads.
+        public let copy: FlowCopy?
     }
 
     static func decode(_ json: Any) throws -> FlowRunView {
@@ -310,7 +314,8 @@ public struct FlowRunView {
                 logoURL: (b["logo_url"] as? String).flatMap { URL(string: $0) },
                 primaryColor: (b["primary_color"] as? String) ?? "#4F7CFF",
                 redirectURL: (b["redirect_url"] as? String).flatMap { URL(string: $0) },
-                appearance: (b["appearance"] as? [String: Any]).flatMap(FlowAppearance.decodeFromJSONObject)
+                appearance: (b["appearance"] as? [String: Any]).flatMap(FlowAppearance.decodeFromJSONObject),
+                copy: (b["copy"] as? [String: Any]).flatMap(FlowCopy.decodeFromJSONObject)
             )
         }
         return FlowRunView(id: id, state: state, outcome: outcome, cursorStepId: cursor, environment: environment, pendingAction: action, branding: branding)
@@ -334,15 +339,20 @@ public struct RunFlowOptions: Sendable {
     /// Developer-supplied white-label appearance (SDK-init layer). Highest
     /// priority in the merge; nil falls through to the server / built-in tokens.
     public let appearance: FlowAppearance?
+    /// Developer-supplied copy/messaging overrides (SDK-init layer). Highest
+    /// priority in the merge; nil falls through to the server / built-in copy.
+    public let copy: FlowCopy?
     public init(
         flowRunId: String,
         sdkToken: String,
         apiBaseURL: URL = URL(string: "https://api.usesense.ai")!,
-        appearance: FlowAppearance? = nil
+        appearance: FlowAppearance? = nil,
+        copy: FlowCopy? = nil
     ) {
         self.flowRunId = flowRunId
         self.sdkToken = sdkToken
         self.apiBaseURL = apiBaseURL
         self.appearance = appearance
+        self.copy = copy
     }
 }

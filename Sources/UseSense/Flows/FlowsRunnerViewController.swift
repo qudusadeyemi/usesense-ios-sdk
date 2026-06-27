@@ -52,10 +52,11 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // Seed the appearance resolver with the SDK-init layer immediately so the
-        // first loading surface is already themed; the server layer is merged in
-        // once the run loads (see applyResolvedAppearance).
+        // Seed the appearance + copy resolvers with the SDK-init layer immediately
+        // so the first loading surface is already themed and worded; the server
+        // layer is merged in once the run loads (see applyResolved*).
         applyResolvedAppearance(server: nil)
+        applyResolvedCopy(server: nil)
         view.backgroundColor = .systemBackground
         installScaffold()
         Task { await refreshAndDrive() }
@@ -76,6 +77,15 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         }
     }
 
+    /// Merge the SDK-init copy (options.copy, highest priority) over the
+    /// server-delivered branding.copy and publish it to the resolver, which the
+    /// parity screens read for every subject-facing string. Mirrors
+    /// applyResolvedAppearance; presentation only.
+    private func applyResolvedCopy(server: FlowCopy?) {
+        let merged = FlowCopy.merge(high: options.copy, low: server)
+        FlowCopyResolver.set(merged)
+    }
+
     // MARK: - Driver
 
     private func refreshAndDrive() async {
@@ -93,6 +103,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             let next = try await client.get()
             view_ = next
             applyResolvedAppearance(server: next.branding?.appearance)
+            applyResolvedCopy(server: next.branding?.copy)
             render()
         } catch let e as FlowError {
             finish(.failure(e))
@@ -107,6 +118,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             let next = try await client.advance(inputs: inputs)
             view_ = next
             applyResolvedAppearance(server: next.branding?.appearance)
+            applyResolvedCopy(server: next.branding?.copy)
             fieldErrors = [:]
             render()
         } catch let e as FlowError where e.code == .invalidInput {
@@ -189,7 +201,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         case .none:         kind = view.state == .errored ? .notVerified : .success
         }
         let result = FlowRunResult(flowRunId: view.id, state: view.state, outcome: view.outcome)
-        let host = UIHostingController(rootView: FlowResultView(kind: kind, continueTitle: "Done", onContinue: { [weak self] in
+        let doneTitle = FlowCopyResolver.text(\.buttons?.continue, default: "Done")
+        let host = UIHostingController(rootView: FlowResultView(kind: kind, continueTitle: doneTitle, onContinue: { [weak self] in
             guard let self else { return }
             // Tear down the result surface, then the runner, then report.
             self.dismiss(animated: true) { self.finish(.success(result)) }
@@ -202,9 +215,11 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         // Guard against double-callback if a network error and a terminal
         // state both fire — the first wins, subsequent calls are no-ops.
         let cb = completion
-        // Clear the per-run appearance so a subsequent run (or any other SDK
-        // surface) starts from the built-in tokens rather than this run's theme.
+        // Clear the per-run appearance + copy so a subsequent run (or any other
+        // SDK surface) starts from the built-in tokens / copy rather than this
+        // run's theme.
         FlowAppearanceResolver.reset()
+        FlowCopyResolver.reset()
         dismiss(animated: true) {
             cb(result)
         }
@@ -655,15 +670,16 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         // The confirm sheet has been dismissed; show the branded loader so the
         // subject sees upload progress instead of a blank runner (mirrors the
         // hosted page's "Submitting your document…").
-        showSpinner(message: "Submitting your document…")
+        showSpinner(message: FlowCopyResolver.text(\.loading?.submittingDocument, default: "Submitting your document…"))
         Task {
             do {
                 let response = try await client.uploadDocument(data: base64, mimeType: "image/jpeg", side: "single", documentType: category)
                 if response.status == "failed" {
                     let code: FlowError.Code = response.reason == "provider" ? .providerUnavailable : .unknown
-                    finish(.failure(FlowError(code: code, message: response.reason == "provider"
-                                              ? "Verification is temporarily unavailable."
-                                              : "We couldn't read that document. Please retake it.")))
+                    let message = response.reason == "provider"
+                        ? FlowCopyResolver.text(\.errors?.providerUnavailable, default: "Verification is temporarily unavailable.")
+                        : FlowCopyResolver.text(\.errors?.documentUnreadable, default: "We couldn't read that document. Please retake it.")
+                    finish(.failure(FlowError(code: code, message: message)))
                     return
                 }
                 await advance(inputs: ["document_id": response.documentId])
@@ -700,7 +716,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             contentContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
-        let cancel = UIBarButtonItem(title: "Cancel", style: .plain, target: self, action: #selector(onCancelTapped))
+        let cancelTitle = FlowCopyResolver.text(\.buttons?.cancel, default: "Cancel")
+        let cancel = UIBarButtonItem(title: cancelTitle, style: .plain, target: self, action: #selector(onCancelTapped))
         navigationItem.leftBarButtonItem = cancel
     }
 
@@ -708,7 +725,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         Task { await cancelRun() }
     }
 
-    private func showSpinner(message: String = "Loading") {
+    private func showSpinner(message: String? = nil) {
+        let message = message ?? FlowCopyResolver.text(\.loading?.default, default: "Loading")
         // Already showing: just update the message (e.g. "Loading" -> "Submitting
         // your document…") instead of stacking a second loader.
         if let host = loadingHost {
