@@ -84,19 +84,26 @@ public struct BrandingConfig: Sendable {
     /// When nil, the legacy `primaryColor` / `buttonRadius` / `logoUrl` /
     /// `fontFamily` fields above still apply (projected into the lowest layer).
     public var appearance: FlowAppearance?
+    /// Full white-label copy/messaging override passed by the developer at SDK
+    /// init. Highest-priority layer in the Flow copy merge:
+    ///   copy > server(branding.copy) > built-in default.
+    /// When nil, the built-in hosted-page copy applies.
+    public var copy: FlowCopy?
 
     public init(
         logoUrl: String? = nil,
         primaryColor: String = "#4F7CFF",
         buttonRadius: CGFloat = 10,
         fontFamily: String? = nil,
-        appearance: FlowAppearance? = nil
+        appearance: FlowAppearance? = nil,
+        copy: FlowCopy? = nil
     ) {
         self.logoUrl = logoUrl
         self.primaryColor = primaryColor
         self.buttonRadius = buttonRadius
         self.fontFamily = fontFamily
         self.appearance = appearance
+        self.copy = copy
     }
 
     /// The developer-supplied appearance, with the legacy scalar fields folded in

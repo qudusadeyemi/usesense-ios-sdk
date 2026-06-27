@@ -50,7 +50,7 @@ public struct FormScreen: View {
         USScreenScaffold(branding: branding) {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("A few details")
+                    Text(FlowCopyResolver.text(\.form?.title, default: "A few details"))
                         .font(.usDisplay(24, .bold))
                         .foregroundColor(USColors.foreground)
                     ForEach(model.fields, id: \.key) { field in
@@ -61,7 +61,7 @@ public struct FormScreen: View {
                 .padding(.bottom, 16)
             }
         } footer: {
-            USButton("Continue", variant: .primary, size: .large, isLoading: model.isBusy) {
+            USButton(FlowCopyResolver.text(\.buttons?.continue, default: "Continue"), variant: .primary, size: .large, isLoading: model.isBusy) {
                 onContinue()
             }
         }

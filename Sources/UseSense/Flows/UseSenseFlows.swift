@@ -28,10 +28,11 @@ public enum UseSenseFlows {
         sdkToken: String,
         apiBaseURL: URL = URL(string: "https://api.usesense.ai")!,
         appearance: FlowAppearance? = nil,
+        copy: FlowCopy? = nil,
         from presentingViewController: UIViewController,
         completion: @escaping (Result<FlowRunResult, FlowError>) -> Void
     ) {
-        let options = RunFlowOptions(flowRunId: flowRunId, sdkToken: sdkToken, apiBaseURL: apiBaseURL, appearance: appearance)
+        let options = RunFlowOptions(flowRunId: flowRunId, sdkToken: sdkToken, apiBaseURL: apiBaseURL, appearance: appearance, copy: copy)
         let runner = FlowsRunnerViewController(options: options, completion: completion)
         runner.modalPresentationStyle = .fullScreen
         presentingViewController.present(runner, animated: true)
@@ -52,6 +53,7 @@ public enum UseSenseFlows {
             sdkToken: sdkToken,
             apiBaseURL: apiBaseURL,
             appearance: branding?.resolvedAppearance,
+            copy: branding?.copy,
             from: presentingViewController,
             completion: completion
         )

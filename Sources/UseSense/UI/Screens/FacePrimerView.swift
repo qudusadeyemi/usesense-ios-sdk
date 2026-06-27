@@ -41,11 +41,11 @@ public struct FacePrimerView: View {
                 }
                 .padding(.bottom, 20)
 
-                Text("Take a selfie")
+                Text(FlowCopyResolver.text(\.face?.title, default: "Take a selfie"))
                     .font(.usDisplay(24, .bold))
                     .foregroundColor(USColors.foreground)
 
-                Text("A quick, secure face scan confirms you're a real, live person.")
+                Text(FlowCopyResolver.text(\.face?.body, default: "A quick, secure face scan confirms you're a real, live person."))
                     .font(USType.body)
                     .foregroundColor(USColors.mutedForeground)
                     .fixedSize(horizontal: false, vertical: true)
@@ -67,7 +67,7 @@ public struct FacePrimerView: View {
                     Image(systemName: "checkmark.shield")
                         .font(.system(size: 14))
                         .foregroundColor(USColors.mutedForeground)
-                    Text("Your face and surroundings are captured during this check and processed securely.")
+                    Text(FlowCopyResolver.text(\.privacy?.disclosure, default: "Your face and surroundings are captured during this check and processed securely."))
                         .font(.usBody(12))
                         .foregroundColor(USColors.mutedForeground)
                         .fixedSize(horizontal: false, vertical: true)
@@ -82,7 +82,7 @@ public struct FacePrimerView: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                USButton("Start face scan", variant: .primary, size: .large, isLoading: isBusy, action: onStart)
+                USButton(FlowCopyResolver.text(\.face?.start, default: "Start face scan"), variant: .primary, size: .large, isLoading: isBusy, action: onStart)
             }
         }
     }

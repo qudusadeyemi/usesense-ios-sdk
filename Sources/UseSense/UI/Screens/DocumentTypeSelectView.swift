@@ -29,10 +29,10 @@ public struct DocumentTypeSelectView: View {
     public var body: some View {
         USScreenScaffold(branding: branding) {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Pick a document")
+                Text(FlowCopyResolver.text(\.document?.selectTitle, default: "Pick a document"))
                     .font(.usDisplay(24, .bold))
                     .foregroundColor(USColors.foreground)
-                Text("Choose a document to verify your identity. We don't accept scans or copies.")
+                Text(FlowCopyResolver.text(\.document?.selectBody, default: "Choose a document to verify your identity. We don't accept scans or copies."))
                     .font(USType.body)
                     .foregroundColor(USColors.mutedForeground)
                     .fixedSize(horizontal: false, vertical: true)
@@ -50,7 +50,7 @@ public struct DocumentTypeSelectView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 4)
         } footer: {
-            USButton("Continue", variant: .primary, size: .large) {
+            USButton(FlowCopyResolver.text(\.buttons?.continue, default: "Continue"), variant: .primary, size: .large) {
                 if !selected.isEmpty { onContinue(selected) }
             }
         }
@@ -138,16 +138,21 @@ public struct DocumentPrimerView: View {
     public var body: some View {
         PrimerView(
             iconSystemName: "doc.text",
-            title: documentType.map { "Get your \($0.lowercased()) ready" } ?? "Get your \(categoryLabel) ready",
-            subtitle: "We'll capture it and check it's clear and readable.",
+            title: FlowCopyResolver.text(
+                \.document?.primerTitle,
+                default: documentType.map { "Get your \($0.lowercased()) ready" } ?? "Get your \(categoryLabel) ready"
+            ),
+            subtitle: FlowCopyResolver.text(\.document?.primerBody, default: "We'll capture it and check it's clear and readable."),
             points: [
                 PrimerPoint(icon: "camera", text: "Place it on a flat, dark surface in good light."),
                 PrimerPoint(icon: "sparkles", text: "Make sure all four corners are visible and details are sharp."),
             ],
             note: noteText,
-            primaryTitle: allowCamera ? "Take a photo" : "Upload a file",
+            primaryTitle: allowCamera
+                ? FlowCopyResolver.text(\.buttons?.scan, default: "Take a photo")
+                : FlowCopyResolver.text(\.buttons?.upload, default: "Upload a file"),
             primaryAction: onPrimary,
-            secondaryTitle: (allowCamera && allowUpload) ? "Upload a file instead" : nil,
+            secondaryTitle: (allowCamera && allowUpload) ? FlowCopyResolver.text(\.buttons?.uploadInstead, default: "Upload a file instead") : nil,
             secondaryAction: (allowCamera && allowUpload) ? onSecondary : nil,
             isBusy: isBusy,
             brandColor: brandColor,

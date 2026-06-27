@@ -60,16 +60,16 @@ public struct FlowResultView: View {
     }
     private var title: String {
         switch kind {
-        case .success: return "Verification complete"
-        case .review: return "Under review"
-        case .notVerified: return "Not verified"
+        case .success: return FlowCopyResolver.text(\.result?.successTitle, default: "Verification complete")
+        case .review: return FlowCopyResolver.text(\.result?.reviewTitle, default: "Under review")
+        case .notVerified: return FlowCopyResolver.text(\.result?.notVerifiedTitle, default: "Not verified")
         }
     }
     private var subtitle: String {
         switch kind {
-        case .success: return "Thank you. You can close this page."
-        case .review: return "Your details are being reviewed."
-        case .notVerified: return "We could not complete your verification."
+        case .success: return FlowCopyResolver.text(\.result?.successBody, default: "Thank you. You can close this page.")
+        case .review: return FlowCopyResolver.text(\.result?.reviewBody, default: "Your details are being reviewed.")
+        case .notVerified: return FlowCopyResolver.text(\.result?.notVerifiedBody, default: "We could not complete your verification.")
         }
     }
 }
