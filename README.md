@@ -157,6 +157,42 @@ let viewController = UseSenseViewController(
 present(viewController, animated: true)
 ```
 
+## White-labeling (Appearance & Copy)
+
+The verification flow UI is fully customizable through two optional inputs you pass
+on a flow run: `appearance` (`FlowAppearance`) and `copy` (`FlowCopy`). Values are
+merged **SDK-init > dashboard (org settings) > built-in default**. Every field is
+optional; anything you omit keeps the UseSense default.
+
+You can set this two ways: in code (below), or no-code via the dashboard's
+**Flows → Appearance** tab (saved on your org, delivered to every SDK and the hosted
+pages, no redeploy).
+
+Customizable surfaces: colors (plus dark-mode overrides), typography, shape and
+button style, logo, background, icons/illustrations, the loader, and every
+subject-facing string plus privacy copy.
+
+```swift
+let appearance = FlowAppearance(
+    colors: .init(primary: "#E4002B"),
+    shape: .init(buttonStyle: .outline)
+)
+let copy = FlowCopy(
+    result: .init(successTitle: "You're verified")
+)
+
+UseSenseFlows.run(
+    flowRunId: flowRunId,
+    sdkToken: sdkToken,
+    appearance: appearance,
+    copy: copy,
+    from: self,
+    completion: { result in /* handle result */ }
+)
+```
+
+Full reference: [`docs/WHITE_LABEL.md` in the web SDK](https://github.com/qudusadeyemi/usesense-web-sdk/blob/main/docs/WHITE_LABEL.md).
+
 ## Configuration
 
 ### UseSenseConfig
