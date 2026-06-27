@@ -17,14 +17,14 @@
 
 /* Begin PBXFileReference section */
 		238F2E75211EB74819DEFCED /* Pods-UseSenseExample.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-UseSenseExample.debug.xcconfig"; path = "Target Support Files/Pods-UseSenseExample/Pods-UseSenseExample.debug.xcconfig"; sourceTree = "<group>"; };
-		A2000010 /* Signing.debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.debug.xcconfig; sourceTree = "<group>"; };
-		A2000011 /* Signing.release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.release.xcconfig; sourceTree = "<group>"; };
 		A2000001 /* UseSenseExampleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UseSenseExampleApp.swift; sourceTree = "<group>"; };
 		A2000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A2000003 /* VerificationResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerificationResultView.swift; sourceTree = "<group>"; };
 		A2000004 /* EventLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventLogView.swift; sourceTree = "<group>"; };
 		A2000005 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2000010 /* Signing.debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.debug.xcconfig; sourceTree = "<group>"; };
+		A2000011 /* Signing.release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.release.xcconfig; sourceTree = "<group>"; };
 		A3000001 /* UseSenseExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = UseSenseExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C47B4AFF0DD16E81596014EF /* Pods-UseSenseExample.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-UseSenseExample.release.xcconfig"; path = "Target Support Files/Pods-UseSenseExample/Pods-UseSenseExample.release.xcconfig"; sourceTree = "<group>"; };
 		E9A5AFD019B4DCCFD4CB236A /* Pods_UseSenseExample.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_UseSenseExample.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -70,15 +70,6 @@
 			);
 			sourceTree = "<group>";
 		};
-		A5000004 /* Config */ = {
-			isa = PBXGroup;
-			children = (
-				A2000010 /* Signing.debug.xcconfig */,
-				A2000011 /* Signing.release.xcconfig */,
-			);
-			name = Config;
-			sourceTree = "<group>";
-		};
 		A5000002 /* UseSenseExample */ = {
 			isa = PBXGroup;
 			children = (
@@ -98,6 +89,15 @@
 				A3000001 /* UseSenseExample.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A5000004 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A2000010 /* Signing.debug.xcconfig */,
+				A2000011 /* Signing.release.xcconfig */,
+			);
+			name = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -356,6 +356,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H24W6BH3T;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = UseSenseExample/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "UseSense Example";
@@ -385,6 +386,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2H24W6BH3T;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = UseSenseExample/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "UseSense Example";
