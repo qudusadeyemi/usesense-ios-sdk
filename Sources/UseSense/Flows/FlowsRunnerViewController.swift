@@ -657,6 +657,51 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         }
     }
 
+    /// Largest decoded upload the documents endpoint accepts (5MB). Encoding
+    /// targets a margin below it so the multipart/JSON envelope cannot tip a
+    /// borderline capture over the edge.
+    private static let documentUploadByteLimit = 5 * 1024 * 1024
+    private static let documentUploadByteTarget = 4 * 1024 * 1024
+
+    /// Longest edge kept for an uploaded document. Modern iPhone captures run
+    /// 4000px+, which costs upload seconds on a mobile network without helping
+    /// OCR: 2000px comfortably resolves MRZ and licence text.
+    private static let documentMaxEdge: CGFloat = 2000
+
+    /// JPEG-encode a captured document small enough for the endpoint to accept.
+    ///
+    /// A full-resolution VisionKit scan at quality 0.85 can exceed 5MB and be
+    /// rejected outright (`payload_too_large`), which the subject experiences as
+    /// an unexplained failure after they have already done the work. Downscale
+    /// first, then step quality down until it fits.
+    private static func encodeDocumentForUpload(_ image: UIImage) -> String? {
+        let scaled = downscale(image, maxEdge: documentMaxEdge)
+        for quality in [CGFloat(0.85), 0.7, 0.55, 0.4] {
+            guard let data = scaled.jpegData(compressionQuality: quality) else { continue }
+            if data.count <= documentUploadByteTarget {
+                return data.base64EncodedString()
+            }
+        }
+        // Last resort: accept anything under the hard limit rather than fail.
+        guard let fallback = scaled.jpegData(compressionQuality: 0.3),
+              fallback.count <= documentUploadByteLimit else { return nil }
+        return fallback.base64EncodedString()
+    }
+
+    /// Aspect-preserving downscale. Returns the original when already smaller,
+    /// so an upload picked from a low-resolution file is never upscaled.
+    private static func downscale(_ image: UIImage, maxEdge: CGFloat) -> UIImage {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > maxEdge, longest > 0 else { return image }
+        let ratio = maxEdge / longest
+        let target = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
+    }
+
     /// Hosted parity: confirm the captured document (preview + Use / Retake)
     /// before uploading.
     private func presentDocumentConfirm(image: UIImage, retake: @escaping () -> Void) {
@@ -666,7 +711,18 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             branding: brandingHeader,
             onUse: { [weak self] in
                 self?.dismiss(animated: false) {
-                    let base64 = image.jpegData(compressionQuality: 0.85)?.base64EncodedString() ?? ""
+                    guard let base64 = Self.encodeDocumentForUpload(image) else {
+                        // Encoding cannot fail for a real capture, but uploading
+                        // "" would have the server reject an empty document and
+                        // read to the subject as a mysterious rejection.
+                        self?.presentDocumentRetry(
+                            message: FlowCopyResolver.text(
+                                \.errors?.documentUnreadable,
+                                default: "We couldn't read that document. Please retake it."
+                            )
+                        )
+                        return
+                    }
                     self?.uploadDocument(base64: base64)
                 }
             },
@@ -678,7 +734,10 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     func documentCameraViewControllerDidCancel(_ controller: VNDocumentCameraViewController) {
-        controller.dismiss(animated: true) { [weak self] in Task { await self?.cancelRun() } }
+        // As with the photo picker: dismissing the scanner means "not this way",
+        // not "abandon the verification". Fall back to the document primer so
+        // the subject can pick the other capture method or try the scan again.
+        controller.dismiss(animated: true) { [weak self] in self?.restartDocumentCapture() }
     }
 
     func documentCameraViewController(_ controller: VNDocumentCameraViewController, didFailWithError error: Error) {
@@ -699,11 +758,16 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             do {
                 let response = try await client.uploadDocument(data: base64, mimeType: "image/jpeg", side: "single", documentType: category)
                 if response.status == "failed" {
-                    let code: FlowError.Code = response.reason == "provider" ? .providerUnavailable : .unknown
+                    // Recoverable by definition: the subject still holds the
+                    // document. Tearing the runner down here (as this used to)
+                    // ejected them mid-flow with a half-finished run, and the
+                    // host app's only move was to cancel and start over, which
+                    // is what turned an upstream OCR timeout into an abandoned
+                    // verification. Offer a retake inside the flow instead.
                     let message = response.reason == "provider"
                         ? FlowCopyResolver.text(\.errors?.providerUnavailable, default: "Verification is temporarily unavailable.")
                         : FlowCopyResolver.text(\.errors?.documentUnreadable, default: "We couldn't read that document. Please retake it.")
-                    finish(.failure(FlowError(code: code, message: message)))
+                    presentDocumentRetry(message: message)
                     return
                 }
                 await advance(inputs: ["document_id": response.documentId])
@@ -716,9 +780,50 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        // Backing out of the OS photo picker is a change of mind about *how* to
+        // supply the document, not about the verification. Returning to the
+        // document primer keeps the run alive; cancelling it here used to make
+        // a single mis-tap unrecoverable, and the restart then risked being
+        // rejected as a duplicate of the subject's own abandoned attempt.
         picker.dismiss(animated: true) { [weak self] in
-            Task { await self?.cancelRun() }
+            self?.restartDocumentCapture()
         }
+    }
+
+    /// Re-present the document step from its current pending action. Used when
+    /// a capture surface is dismissed or an upload fails: the step is still
+    /// parked server-side, so the subject can simply try again.
+    private func restartDocumentCapture() {
+        guard case .captureDocument(let category, let documentTypes, let issuingCountries, let camera, let methods) = view_?.pendingAction else {
+            // The step moved on underneath us (or the run ended); re-render
+            // against whatever the server now says rather than guessing.
+            render()
+            return
+        }
+        presentDocumentFlow(
+            category: category,
+            documentTypes: documentTypes,
+            issuingCountries: issuingCountries,
+            camera: camera,
+            methods: methods
+        )
+    }
+
+    /// Branded, in-flow document failure with a retake CTA. Keeps the run open
+    /// so an upstream extraction failure costs the subject one retry rather
+    /// than the whole verification.
+    private func presentDocumentRetry(message: String) {
+        let host = UIHostingController(rootView: FlowErrorView(
+            title: FlowCopyResolver.text(\.errors?.generic, default: "Try that again"),
+            message: message,
+            retryTitle: FlowCopyResolver.text(\.buttons?.retake, default: "Retake"),
+            onRetry: { [weak self] in
+                self?.dismiss(animated: true) { self?.restartDocumentCapture() }
+            },
+            branding: brandingHeader
+        ))
+        host.modalPresentationStyle = .fullScreen
+        present(host, animated: true)
     }
 
     private func presentConsent(url: URL) {
