@@ -3,7 +3,7 @@ import Foundation
 /// Main entry point for the UseSense SDK.
 /// UseSense is human presence infrastructure for the AI era.
 public final class UseSense: @unchecked Sendable {
-    public static let version = "4.6.0"
+    public static let version = "4.6.1"
 
     private let config: UseSenseConfig
     private let globalEventEmitter = EventEmitter()
