@@ -154,9 +154,18 @@ public struct FlowCopy: Codable, Equatable, Sendable {
         public var generic: String?
         public var providerUnavailable: String?
         public var documentUnreadable: String?
-        public init(generic: String? = nil, providerUnavailable: String? = nil, documentUnreadable: String? = nil) {
+        /// Distinct from `documentUnreadable`: the document was fine, the
+        /// transfer was not, so this copy asks for a resend and never a retake.
+        public var documentIncomplete: String?
+        public init(
+            generic: String? = nil,
+            providerUnavailable: String? = nil,
+            documentUnreadable: String? = nil,
+            documentIncomplete: String? = nil
+        ) {
             self.generic = generic; self.providerUnavailable = providerUnavailable
             self.documentUnreadable = documentUnreadable
+            self.documentIncomplete = documentIncomplete
         }
     }
 
@@ -270,7 +279,8 @@ public extension FlowCopy {
             errors: Errors(
                 generic: pick(high.errors?.generic, low.errors?.generic),
                 providerUnavailable: pick(high.errors?.providerUnavailable, low.errors?.providerUnavailable),
-                documentUnreadable: pick(high.errors?.documentUnreadable, low.errors?.documentUnreadable)
+                documentUnreadable: pick(high.errors?.documentUnreadable, low.errors?.documentUnreadable),
+                documentIncomplete: pick(high.errors?.documentIncomplete, low.errors?.documentIncomplete)
             ),
             privacy: Privacy(
                 disclosure: pick(high.privacy?.disclosure, low.privacy?.disclosure),

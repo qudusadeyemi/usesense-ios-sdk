@@ -764,9 +764,29 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
                     // host app's only move was to cancel and start over, which
                     // is what turned an upstream OCR timeout into an abandoned
                     // verification. Offer a retake inside the flow instead.
-                    let message = response.reason == "provider"
-                        ? FlowCopyResolver.text(\.errors?.providerUnavailable, default: "Verification is temporarily unavailable.")
-                        : FlowCopyResolver.text(\.errors?.documentUnreadable, default: "We couldn't read that document. Please retake it.")
+                    // 'incomplete' is neither branch: the bytes arrived cut
+                    // short, so nothing upstream is wrong and the photo was
+                    // never the problem. Sending the same file again is the
+                    // remedy; a retake is not. Before this existed the case
+                    // arrived as 'provider' and told the subject to wait out an
+                    // outage that was not happening.
+                    let message: String
+                    switch response.reason {
+                    case "provider":
+                        message = FlowCopyResolver.text(\.errors?.providerUnavailable, default: "Verification is temporarily unavailable.")
+                    case "incomplete":
+                        message = response.message ?? FlowCopyResolver.text(
+                            \.errors?.documentIncomplete,
+                            default: "That image did not upload completely. Check your connection and send it again."
+                        )
+                    case "too_large":
+                        message = response.message ?? FlowCopyResolver.text(
+                            \.errors?.documentUnreadable,
+                            default: "That image is too large. Please use a smaller file."
+                        )
+                    default:
+                        message = FlowCopyResolver.text(\.errors?.documentUnreadable, default: "We couldn't read that document. Please retake it.")
+                    }
                     presentDocumentRetry(message: message)
                     return
                 }
