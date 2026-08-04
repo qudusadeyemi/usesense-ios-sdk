@@ -561,12 +561,23 @@ final class UseSenseEntryPointTests: XCTestCase {
         XCTAssertFalse(UseSense.version.isEmpty)
     }
 
-    func testSDKVersionIs4_4() {
-        XCTAssertEqual(UseSense.version, "4.6.1")
+    /// The version must look like a release, not merely be non-empty. Pinning
+    /// the literal here (as `testSDKVersionIs4_4` did, still asserting 4.6.1
+    /// three minor versions later) fails every release for no signal: the
+    /// number is declared in UseSense.swift and the podspec, and neither is
+    /// verified by repeating it in a test.
+    func testSDKVersionIsSemver() {
+        XCTAssertNotNil(
+            UseSense.version.range(of: #"^\d+\.\d+\.\d+$"#, options: .regularExpression),
+            "UseSense.version must be x.y.z, got \(UseSense.version)"
+        )
     }
 
-    func testAPIClientVersion() {
-        XCTAssertEqual(UseSenseAPIClient.sdkVersion, "4.6.1")
+    /// What actually matters: every surface reports the SAME version. A release
+    /// that bumps one constant and forgets another misattributes enrolments,
+    /// because this is what reaches identities.sdk_version via the User-Agent.
+    func testAPIClientVersionMatchesSDKVersion() {
+        XCTAssertEqual(UseSenseAPIClient.sdkVersion, UseSense.version)
     }
 
     func testCreateSDK() {
@@ -605,7 +616,7 @@ final class MetadataBuilderTests: XCTestCase {
         let builder = MetadataBuilder()
         let channelIntegrity: [String: Any] = [
             "platform": "ios",
-            "sdk_version": "4.6.1",
+            "sdk_version": UseSense.version,
             "device_model": "iPhone15,2"
         ]
         let deviceTelemetry: [String: Any] = [
@@ -628,7 +639,7 @@ final class MetadataBuilderTests: XCTestCase {
 
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
 
-        XCTAssertEqual(json["sdk_version"] as? String, "4.6.1")
+        XCTAssertEqual(json["sdk_version"] as? String, UseSense.version)
         XCTAssertEqual(json["platform"] as? String, "ios")
         XCTAssertNotNil(json["channel_integrity"])
         XCTAssertNotNil(json["device_telemetry"])
