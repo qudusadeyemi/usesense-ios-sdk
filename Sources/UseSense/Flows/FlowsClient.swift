@@ -144,6 +144,10 @@ public final class FlowsClient: @unchecked Sendable {
         public let documentId: String
         public let status: String
         public let reason: String?
+        /// The server's instruction for the reasons where our built-in copy
+        /// would be wrong ("too_large", "incomplete"): only the server knows
+        /// the limit that was exceeded, or that the bytes arrived cut short.
+        public let message: String?
     }
 
     public func uploadDocument(data: String, mimeType: String, side: String, documentType: String?) async throws -> UploadDocumentResponse {
@@ -155,6 +159,11 @@ public final class FlowsClient: @unchecked Sendable {
               let status = json["status"] as? String else {
             throw FlowError(code: .unknown, message: "Malformed documents response")
         }
-        return UploadDocumentResponse(documentId: documentId, status: status, reason: json["reason"] as? String)
+        return UploadDocumentResponse(
+            documentId: documentId,
+            status: status,
+            reason: json["reason"] as? String,
+            message: json["message"] as? String
+        )
     }
 }
