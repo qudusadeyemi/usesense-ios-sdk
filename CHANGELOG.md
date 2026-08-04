@@ -17,6 +17,26 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   and captured frames. The gate now also honours `on_device_3dmm_required`, so
   mesh is produced whenever the server asks for it on either path.
 
+## [4.6.2] - 2026-08-04
+
+Patch release: an upload that arrives incomplete is no longer reported as an outage.
+
+### Fixed
+
+- **"Verification is temporarily unavailable" for a document that was fine.**
+  The upload branch had two outcomes: `provider` -> "temporarily unavailable",
+  everything else -> "please retake it". A file that arrived cut short took the
+  first path, so a subject holding a perfectly good licence was told to wait out
+  an outage that was not happening, and the retry re-sent identical bytes. The
+  server now reports `reason: "incomplete"` and carries the instruction in
+  `message`; neither old branch fits it, since nothing upstream is wrong and a
+  retake changes nothing. Adds the third branch and a `documentIncomplete` copy
+  key. `too_large` now also prefers the server's message, which is the only
+  place the exceeded limit is known.
+
+  Note: the corruption that produced this in production was server-side and is
+  already fixed. This release only changes what the subject is told.
+
 ## [4.4.1] - 2026-06-23
 
 Patch release: the Flows client now identifies its platform to the server.

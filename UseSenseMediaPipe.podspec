@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'UseSenseMediaPipe'
-  s.version          = '4.6.1'
+  s.version          = '4.6.2'
   s.summary          = 'Patched MediaPipe Tasks xcframeworks vendored for UseSenseSDK on-device face mesh.'
   s.description      = <<-DESC
     Redistributes Google's MediaPipeTasksVision + MediaPipeTasksCommon
