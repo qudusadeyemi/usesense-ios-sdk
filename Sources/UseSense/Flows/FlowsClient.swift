@@ -150,9 +150,22 @@ public final class FlowsClient: @unchecked Sendable {
         public let message: String?
     }
 
-    public func uploadDocument(data: String, mimeType: String, side: String, documentType: String?) async throws -> UploadDocumentResponse {
+    /// - Parameter captureMethod: how the subject supplied the document --
+    ///   `"camera"` for a live scan, `"upload"` for a file they chose. The
+    ///   server tailors failure guidance to it: "hold the document still and
+    ///   wait for the camera to focus" is right for a scan and meaningless for
+    ///   someone who picked an existing file. Optional; omitting it makes the
+    ///   server fall back to the step's configured capture methods.
+    public func uploadDocument(
+        data: String,
+        mimeType: String,
+        side: String,
+        documentType: String?,
+        captureMethod: String? = nil
+    ) async throws -> UploadDocumentResponse {
         var body: [String: Any] = ["data": data, "mimeType": mimeType, "side": side]
         if let documentType { body["documentType"] = documentType }
+        if let captureMethod { body["captureMethod"] = captureMethod }
         let request = try makeRequest(method: "POST", suffix: "/documents", body: body)
         guard let json = try await send(request) as? [String: Any],
               let documentId = json["document_id"] as? String,
