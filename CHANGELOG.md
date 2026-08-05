@@ -17,6 +17,23 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   and captured frames. The gate now also honours `on_device_3dmm_required`, so
   mesh is produced whenever the server asks for it on either path.
 
+## [4.6.3] - 2026-08-05
+
+Patch release: the runner now tells the server how the document was supplied.
+
+### Changed
+
+- **Report the document capture route.** The server tailors failure guidance to
+  it: "hold the document still and wait for the camera to focus" is the right
+  instruction for a live scan and meaningless to someone who chose a file, since
+  the photo already exists and there is nothing left to hold. VisionKit's
+  document scanner is reported as `camera`, the photo-library picker as
+  `upload`. The runner already distinguished them for its own UI; it just never
+  told the server.
+- `captureMethod` is optional on the wire, so an older server ignores it and a
+  runner that omits it makes the server fall back to the step's configured
+  capture methods. No coordinated release required.
+
 ## [4.6.2] - 2026-08-04
 
 Patch release: an upload that arrives incomplete is no longer reported as an outage.
