@@ -643,7 +643,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         let image = info[.originalImage] as? UIImage
         picker.dismiss(animated: true) { [weak self] in
             guard let self, let image else { return }
-            self.presentDocumentConfirm(image: image) { [weak self] in self?.presentUploadPicker() }
+            self.presentDocumentConfirm(image: image, captureMethod: "upload") { [weak self] in self?.presentUploadPicker() }
         }
     }
 
@@ -653,7 +653,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         let image = scan.pageCount > 0 ? scan.imageOfPage(at: 0) : nil
         controller.dismiss(animated: true) { [weak self] in
             guard let self, let image else { return }
-            self.presentDocumentConfirm(image: image) { [weak self] in self?.launchDocumentScanner() }
+            self.presentDocumentConfirm(image: image, captureMethod: "camera") { [weak self] in self?.launchDocumentScanner() }
         }
     }
 
@@ -704,7 +704,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
 
     /// Hosted parity: confirm the captured document (preview + Use / Retake)
     /// before uploading.
-    private func presentDocumentConfirm(image: UIImage, retake: @escaping () -> Void) {
+    private func presentDocumentConfirm(image: UIImage, captureMethod: String, retake: @escaping () -> Void) {
         let host = UIHostingController(rootView: DocumentConfirmView(
             image: image,
             brandColor: USColors.primary,
@@ -723,7 +723,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
                         )
                         return
                     }
-                    self?.uploadDocument(base64: base64)
+                    self?.uploadDocument(base64: base64, captureMethod: captureMethod)
                 }
             },
             onRetake: { [weak self] in self?.dismiss(animated: true) { retake() } },
@@ -745,7 +745,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     /// Upload a document (scanned or picked) and advance the run.
-    private func uploadDocument(base64: String) {
+    private func uploadDocument(base64: String, captureMethod: String) {
         let category: String = {
             if case .captureDocument(let cat, _, _, _, _) = view_?.pendingAction { return cat }
             return "identity"
@@ -756,7 +756,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         showSpinner(message: FlowCopyResolver.text(\.loading?.submittingDocument, default: "Submitting your document…"))
         Task {
             do {
-                let response = try await client.uploadDocument(data: base64, mimeType: "image/jpeg", side: "single", documentType: category)
+                let response = try await client.uploadDocument(data: base64, mimeType: "image/jpeg", side: "single", documentType: category, captureMethod: captureMethod)
                 if response.status == "failed" {
                     // Recoverable by definition: the subject still holds the
                     // document. Tearing the runner down here (as this used to)
