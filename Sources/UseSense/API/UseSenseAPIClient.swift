@@ -1,5 +1,33 @@
 import Foundation
 
+/// Reports body-upload progress for the signals request.
+///
+/// `UseSenseEventType.uploadProgress` existed as an enum case that nothing ever
+/// emitted, so a multi-megabyte upload was an indeterminate spinner the subject
+/// could not tell apart from a hang. Gated on the request path so the small
+/// JSON calls sharing this URLSession stay silent.
+final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _onProgress: ((Int64, Int64) -> Void)?
+
+    var onProgress: ((Int64, Int64) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return _onProgress }
+        set { lock.lock(); _onProgress = newValue; lock.unlock() }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didSendBodyData bytesSent: Int64,
+        totalBytesSent: Int64,
+        totalBytesExpectedToSend: Int64
+    ) {
+        guard task.originalRequest?.url?.path.hasSuffix("/signals") == true else { return }
+        guard totalBytesExpectedToSend > 0 else { return }
+        onProgress?(totalBytesSent, totalBytesExpectedToSend)
+    }
+}
+
 final class UseSenseAPIClient: @unchecked Sendable {
     // Single source of truth: track UseSense.version so the SDK version can never
     // drift between the public constant, the User-Agent, and request metadata.
@@ -10,8 +38,13 @@ final class UseSenseAPIClient: @unchecked Sendable {
     private static let networkRetryDelays: [TimeInterval] = [1.0, 2.0, 4.0]
     private static let serverRetryDelays: [TimeInterval] = [2.0, 2.0]
 
+    /// Ceiling for the signals upload, the one request that carries megabytes.
+    /// Everything else keeps its own much shorter timeout.
+    static let uploadTimeout: TimeInterval = 300
+
     private let config: UseSenseConfig
     private let session: URLSession
+    private let uploadDelegate = UploadProgressDelegate()
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
@@ -19,12 +52,25 @@ final class UseSenseAPIClient: @unchecked Sendable {
     var sessionToken: String?
     var nonce: String?
 
+    /// Fires as the signals body goes out: (bytesSent, totalBytes).
+    var onUploadProgress: ((Int64, Int64) -> Void)? {
+        get { uploadDelegate.onProgress }
+        set { uploadDelegate.onProgress = newValue }
+    }
+
     init(config: UseSenseConfig) {
         self.config = config
 
         let sessionConfig = URLSessionConfiguration.default
-        sessionConfig.timeoutIntervalForResource = 120
-        self.session = URLSession(configuration: sessionConfig)
+        // Resource timeout bounds the WHOLE transfer, so it has to clear the
+        // signals upload too -- at 120s it silently capped every slow uplink
+        // no matter what the per-request timeout said.
+        sessionConfig.timeoutIntervalForResource = Self.uploadTimeout
+        self.session = URLSession(
+            configuration: sessionConfig,
+            delegate: uploadDelegate,
+            delegateQueue: nil
+        )
     }
 
     func clearSession() {
@@ -137,7 +183,18 @@ final class UseSenseAPIClient: @unchecked Sendable {
         for (i, frame) in frames.enumerated() {
             multipart.appendFile(name: "frames[]", filename: "frame_\(i).jpg", contentType: "image/jpeg", data: frame)
         }
-        multipart.appendFile(name: "metadata", filename: "metadata.json", contentType: "application/json", data: metadata)
+
+        // gzip the metadata. The server sniffs the gzip magic bytes, so an old
+        // server (or a nil return here) still reads the plain JSON.
+        let gzippedMetadata = Gzip.compress(metadata)
+        if let gz = gzippedMetadata {
+            multipart.appendFile(name: "metadata", filename: "metadata.json.gz",
+                                 contentType: "application/gzip", data: gz)
+        } else {
+            multipart.appendFile(name: "metadata", filename: "metadata.json",
+                                 contentType: "application/json", data: metadata)
+        }
+
         if let audio = audio {
             multipart.appendFile(name: "audio", filename: "audio.m4a", contentType: "audio/mp4", data: audio)
         }
@@ -148,8 +205,16 @@ final class UseSenseAPIClient: @unchecked Sendable {
         request.setValue(multipart.contentType, forHTTPHeaderField: "Content-Type")
         applyHeaders(&request, includeSession: true)
         request.setValue("\(sessionId)_\(Int(Date().timeIntervalSince1970 * 1000))", forHTTPHeaderField: "X-Idempotency-Key")
+        request.setValue(gzippedMetadata != nil ? "gzip" : "identity",
+                         forHTTPHeaderField: "x-usesense-metadata-encoding")
         request.httpBody = body
-        request.timeoutInterval = 30
+
+        // This is the only request in the SDK that sends megabytes, and it was
+        // capped at 30s. Clearing that needed ~430 KB/s of uplink; a measured
+        // production session managed 14.6 KB/s, so on a real mobile connection
+        // the upload could not finish before it was cancelled. Sized instead
+        // for a slow uplink to complete.
+        request.timeoutInterval = Self.uploadTimeout
 
         return try await performWithRetry(request)
     }

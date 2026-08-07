@@ -100,6 +100,19 @@ public final class UseSenseSession: @unchecked Sendable {
         self.apiClient = UseSenseAPIClient(config: config)
         self.eventEmitter = eventEmitter
 
+        // Surface real upload progress. The signals request is the only one
+        // that carries megabytes, and on a slow uplink it is minutes long;
+        // without this the host has no way to tell slow from stuck.
+        self.apiClient.onUploadProgress = { [weak eventEmitter] sent, total in
+            guard total > 0 else { return }
+            let percent = Int((Double(sent) / Double(total)) * 100)
+            eventEmitter?.emit(.uploadProgress, data: [
+                "bytes_sent": String(sent),
+                "bytes_total": String(total),
+                "percent": String(percent)
+            ])
+        }
+
         let maxFrames = config.options?.maxFrames ?? 30
         let targetFps = config.options?.targetFps ?? 3
         self.frameBuffer = FrameBuffer(maxFrames: maxFrames, targetFps: targetFps)
@@ -723,14 +736,20 @@ public final class UseSenseSession: @unchecked Sendable {
             "maxFrames": session.upload.maxFrames
         ]
 
-        // Build frames manifest
+        // Build frames manifest.
+        //
+        // The resolution was hardcoded to 1280x720 here regardless of what the
+        // camera produced or what was actually encoded. The server scales its
+        // sharpness thresholds off these values (captureLongEdgeFrom in
+        // screen-replay-detector.tsx), so it now reports the real encoded size.
         let timestamps = frameBuffer.getTimestamps()
+        let resolutions = frameBuffer.getResolutions()
         let framesManifest: [[String: Any]] = (0..<frames.count).map { i in
             [
                 "frame_index": i,
                 "capture_timestamp_ms": i < timestamps.count ? Int(timestamps[i] * 1000) : 0,
-                "resolution_w": 1280,
-                "resolution_h": 720
+                "resolution_w": i < resolutions.count ? resolutions[i].width : 0,
+                "resolution_h": i < resolutions.count ? resolutions[i].height : 0
             ]
         }
 
