@@ -6,7 +6,45 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Frames upload at 960px instead of the camera's native 1080p.** The capture
+  session runs at `.high` and frames were JPEG-encoded at that full size with no
+  downscale, so 30 frames measured **12.9 MB per production session** — roughly
+  five times the web SDK. On a mobile uplink that cannot finish inside any sane
+  timeout. Frames are now capped at 960 on the longest edge using a Lanczos
+  resample, which cuts the payload ~5x.
+
+  960 matches the web SDK's cap and the server's sharpness calibration table.
+  It was chosen by measuring 198 real frames through the pipeline: Rekognition
+  face matching is unaffected, and the binding constraint is the sharpness score
+  the server's screen-replay detector reads, which stays clear of the "possible
+  screen" ceiling at 960 but not below it.
+
+- **`metadata.json` is gzipped.** Adds RFC 1952 framing over the Compression
+  framework's DEFLATE, since the server detects compression from the gzip magic
+  bytes. Falls back to plain JSON if compression fails or would not help.
+
+  **Requires a server that accepts gzipped metadata** — deploy that first.
+
 ### Fixed
+
+- **The signals upload could not complete on a slow connection.** It carried two
+  stacked caps: a 30s `timeoutInterval` on the request and a 120s
+  `timeoutIntervalForResource` on the URLSession. Clearing the first needed
+  ~430 KB/s of uplink and the second ~107 KB/s; a measured production session
+  managed **14.6 KB/s**. Both now allow 300s, so a slow uplink finishes instead
+  of being cancelled mid-transfer.
+
+- **`frames_manifest` reported a hardcoded 1280x720** regardless of what was
+  captured or sent — while frames were actually 1080x1920. The server scales its
+  screen-replay sharpness thresholds off these values, so it was scoring frames
+  against the wrong ruler. It now reports the real encoded size.
+
+- **`UseSenseEventType.uploadProgress` was never emitted.** The event case
+  existed but nothing fired it, so a multi-megabyte upload was an indeterminate
+  spinner the subject could not tell apart from a hang. It now reports
+  `bytes_sent`, `bytes_total` and `percent` as the body goes out.
 
 - **Mesh verification_package skipped on flow runs (mesh decoupled from
   dual-path).** The capture engine only built and uploaded the Geometric
