@@ -4,6 +4,28 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.7.1] - 2026-08-13
+
+### Fixed
+
+- **The Flows runner did not pass its white-label down to the capture screens.**
+  `FlowsRunnerViewController.presentCaptureViewController` built the capture
+  engine's `UseSenseConfig` with only an endpoint, a placeholder api key and an
+  environment -- no `branding` -- so `BrandingConfig.primaryColor` fell back to
+  the built-in `#4F7CFF`. The runner's own surfaces read
+  `FlowAppearanceResolver`, which is already seeded, but the capture screens
+  colour from the flat `branding.primaryColor` (`EnrollmentIntroductionView`
+  and friends). A subject saw the org's brand colour on the step primer and
+  default blue on the consent, loading and capture screens either side of it.
+
+  The resolved appearance, its primary colour and the merged copy are now
+  handed through. Android carried the identical gap and is fixed in its 4.7.1.
+
+  Note the preview-mirroring defect fixed in Android 4.7.1 does NOT apply here:
+  iOS renders through `AVCaptureVideoPreviewLayer` with no explicit mirroring,
+  so it takes `automaticallyAdjustsVideoMirroring`, which mirrors the front
+  camera correctly. Checked rather than assumed.
+
 ## [Unreleased]
 
 ### Changed
