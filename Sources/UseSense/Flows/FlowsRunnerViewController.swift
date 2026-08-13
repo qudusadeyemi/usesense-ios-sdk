@@ -533,7 +533,25 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         guard let view = view_ else { return }
         let endpoint = options.apiBaseURL.appendingPathComponent("v1").absoluteString
         let environment: Environment = view.environment == "sandbox" ? .sandbox : .production
-        let config = UseSenseConfig(apiEndpoint: endpoint, apiKey: "flow_runner", environment: environment)
+        // Hand the resolved white-label down with the config. The runner's own
+        // surfaces read FlowAppearanceResolver, which applyResolvedAppearance
+        // has already seeded -- but the capture screens are a separate
+        // presentation that colours from the flat `branding.primaryColor`
+        // (EnrollmentIntroductionView and friends), and it was being handed
+        // none. The subject saw the org's colour on the step primer and the
+        // built-in default on the consent/loading/capture screens either side.
+        // Android had the identical gap; keep the two in step.
+        let resolved = FlowAppearanceResolver.current
+        let config = UseSenseConfig(
+            apiEndpoint: endpoint,
+            apiKey: "flow_runner",
+            environment: environment,
+            branding: BrandingConfig(
+                primaryColor: resolved?.colors?.primary,
+                appearance: resolved,
+                copy: FlowCopyResolver.current
+            )
+        )
         let session = UseSenseSession(config: config, sessionType: .enrollment)
         session.injectHostedSessionData(response)
         let captureVC = UseSenseViewController(session: session) { [weak self] result in
