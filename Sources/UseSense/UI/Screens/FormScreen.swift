@@ -15,6 +15,11 @@ import Combine
     @Published public var booleans: [String: Bool] = [:]
     @Published public var errors: [String: String] = [:]
     @Published public var isBusy: Bool = false
+    /// Optional status line rendered above the fields. Used by location
+    /// capture to report position acquisition without blocking the form.
+    @Published public var statusLine: String?
+    /// True when the status reports success rather than a recoverable problem.
+    @Published public var statusIsGood: Bool = false
 
     public init(fields: [FormField], serverErrors: [String: String] = [:]) {
         self.fields = fields
@@ -53,6 +58,23 @@ public struct FormScreen: View {
                     Text(FlowCopyResolver.text(\.form?.title, default: "A few details"))
                         .font(.usDisplay(24, .bold))
                         .foregroundColor(USColors.foreground)
+                    if let status = model.statusLine {
+                        HStack(spacing: 8) {
+                            Text(model.statusIsGood ? "\u{2713}" : "\u{2022}")
+                                .foregroundColor(model.statusIsGood ? brandColor : USColors.mutedForeground)
+                            Text(status)
+                                .font(.usBody(13.5))
+                                .foregroundColor(USColors.mutedForeground)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(USColors.card)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(USColors.border, lineWidth: 1))
+                        .cornerRadius(12)
+                        .accessibilityElement(children: .combine)
+                    }
                     ForEach(model.fields, id: \.key) { field in
                         fieldView(field)
                     }
