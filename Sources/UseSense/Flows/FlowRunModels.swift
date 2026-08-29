@@ -178,10 +178,72 @@ public struct IdTypeSpec: Sendable, Equatable {
 /// The action the server parked at. The runner reads it and renders the
 /// matching native surface; unknown kinds surface as FlowError.unsupportedAction.
 /// See guides/flows/action-contract.mdx.
+/// Everything a location capture step asks for.
+///
+/// Every field is optional and decoding never throws: a client that meets an
+/// unknown field must ignore it and render sensible defaults, because the
+/// alternative on a frozen contract is a crash mid-verification.
+public struct LocationCaptureSpec: Sendable, Equatable {
+    public let toolId: String?
+    /// Which rung to attempt. We may achieve a lower one and report it; we
+    /// must never report a higher one than we performed.
+    public let rung: CaptureRung?
+    /// Advisory, never a gate. We take the best fix inside the wait budget and
+    /// report the accuracy actually achieved. Treating it as a requirement
+    /// would hang in exactly the markets this exists for, where positioning
+    /// error from wireless and cell sources runs 20 to 50 m.
+    public let accuracyTargetM: Double?
+    public let maxWaitMs: Int
+    public let requireFrontagePhoto: Bool
+    public let requireAttestation: Bool
+    /// Descriptors collected alongside the position. Same shape as a form
+    /// capture's fields.
+    public let descriptorFields: [FormField]
+
+    public init(
+        toolId: String? = nil,
+        rung: CaptureRung? = nil,
+        accuracyTargetM: Double? = nil,
+        maxWaitMs: Int = 20_000,
+        requireFrontagePhoto: Bool = false,
+        requireAttestation: Bool = false,
+        descriptorFields: [FormField] = []
+    ) {
+        self.toolId = toolId
+        self.rung = rung
+        self.accuracyTargetM = accuracyTargetM
+        self.maxWaitMs = maxWaitMs
+        self.requireFrontagePhoto = requireFrontagePhoto
+        self.requireAttestation = requireAttestation
+        self.descriptorFields = descriptorFields
+    }
+
+    static func decode(_ raw: [String: Any]) -> LocationCaptureSpec {
+        let rungRaw = raw["locationRung"] as? String
+        let fields = (raw["descriptorFields"] as? [Any] ?? []).map(FormField.decode)
+        return LocationCaptureSpec(
+            toolId: raw["toolId"] as? String,
+            // An unrecognised rung is ignored rather than fatal. The server
+            // takes the weaker of its own ceiling and whatever we report, so
+            // falling back to nil here costs nothing and cannot overstate.
+            rung: rungRaw.flatMap(CaptureRung.init(rawValue:)),
+            accuracyTargetM: (raw["locationAccuracyTargetM"] as? NSNumber)?.doubleValue,
+            maxWaitMs: (raw["locationMaxWaitMs"] as? NSNumber)?.intValue ?? 20_000,
+            requireFrontagePhoto: (raw["requireFrontagePhoto"] as? Bool) ?? false,
+            requireAttestation: (raw["requireAttestation"] as? Bool) ?? false,
+            descriptorFields: fields
+        )
+    }
+}
+
 public enum PendingAction: Sendable, Equatable {
     case captureFace(toolId: String?)
     case captureDocument(category: String, documentTypes: [String], issuingCountries: [String], camera: String?, captureMethods: [String])
     case captureForm(fields: [FormField])
+    /// Address capture. Only ever received by a build the server has recorded
+    /// as location-capable; every other build is served an ordinary `form`
+    /// capture instead, which is why the `default:` below can stay a throw.
+    case captureLocation(spec: LocationCaptureSpec)
     case captureIdNumber(idTypes: [IdTypeSpec])
     case info(InfoAction)
     case redirectToConsent(url: URL)
@@ -212,6 +274,8 @@ public enum PendingAction: Sendable, Equatable {
             case "form":
                 let rawFields = raw["fields"] as? [Any] ?? []
                 return .captureForm(fields: rawFields.map(FormField.decode))
+            case "location":
+                return .captureLocation(spec: LocationCaptureSpec.decode(raw))
             case "id_number":
                 let rawTypes = raw["idTypes"] as? [[String: Any]] ?? []
                 return .captureIdNumber(idTypes: rawTypes.compactMap(IdTypeSpec.decode))

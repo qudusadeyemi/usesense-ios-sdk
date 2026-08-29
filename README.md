@@ -10,6 +10,24 @@ Native iOS SDK for human presence verification. Verify real humans, detect deepf
 - Device with front-facing camera (required)
 - Device with motion sensors (recommended, improves DeepSense accuracy)
 
+### Info.plist keys
+
+| Key | When it is needed |
+|---|---|
+| `NSCameraUsageDescription` | Always. Face and document capture. |
+| `NSLocationWhenInUseUsageDescription` | Only if your Flow contains an address step. |
+
+`NSLocationWhenInUseUsageDescription` is **not optional if you use address
+capture**: iOS terminates the app the moment location authorization is
+requested without it. Write it for the person reading it, naming address
+verification rather than the SDK, for example:
+
+> "Confirms the address you gave us, so we can verify your account."
+
+The SDK requests **when in use** only. It never asks for background or always
+authorization, and an address step that cannot get a position still completes
+using the address details the subject typed.
+
 ## Installation
 
 ### CocoaPods

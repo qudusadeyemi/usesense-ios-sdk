@@ -34,6 +34,19 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     /// The branded form surface, while a captureForm step is on screen. Reused
     /// across server invalid_input re-renders so the subject's input is preserved.
     private var formModel: FormModel?
+    /// Location capture state. Held on the controller rather than in the form
+    /// model so the position and the descriptors stay separable: they are
+    /// different evidence classes and the scorer weighs them apart.
+    private var locationSpec: LocationCaptureSpec?
+    private var locationFix: LocationFix?
+    /// The uploaded frontage photo, if the subject provided one.
+    private var frontageDocumentId: String?
+    /// True while the shared image picker is serving the frontage photo rather
+    /// than a document capture, so the delegate knows not to advance the run.
+    private var pickingFrontagePhoto = false
+    #if canImport(CoreLocation)
+    private var locationFixer: LocationFixer?
+    #endif
     private weak var formHost: UIViewController?
     /// Guards re-presenting the id_number surface on a re-render.
     private var idNumberPresented = false
@@ -202,6 +215,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             )
         case .captureForm(let fields):
             presentForm(fields: fields)
+        case .captureLocation(let spec):
+            presentLocation(spec: spec)
         case .captureIdNumber(let idTypes):
             presentIdNumber(idTypes: idTypes)
         case .info(let info):
@@ -283,6 +298,107 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         })
         host.modalPresentationStyle = .fullScreen
         present(host, animated: true)
+    }
+
+    // MARK: - Location surface (address ladder rung 0)
+
+    /// Presents the descriptor form and acquires a position alongside it.
+    ///
+    /// The two run concurrently on purpose. Making the subject watch a spinner
+    /// while CoreLocation settles wastes the time they could spend typing, and
+    /// the position is not required to continue: this surface never terminates
+    /// the step in failure. A denied permission, Location Services switched
+    /// off, or a fix that never arrives all still submit the descriptors and
+    /// advance, at a lower rung, because a low-confidence record that can be
+    /// upgraded is worth more than an abandoned onboarding.
+    private func presentLocation(spec: LocationCaptureSpec) {
+        if let model = formModel {
+            model.errors = fieldErrors
+            model.isBusy = false
+            return
+        }
+        locationSpec = spec
+        locationFix = nil
+
+        let model = FormModel(fields: spec.descriptorFields, serverErrors: fieldErrors)
+        model.statusLine = LocationCapture.statusText(for: .acquiring)
+        // Offered, never required. The continue button is not held by it.
+        if spec.requireFrontagePhoto {
+            model.secondaryAction = FormModel.SecondaryAction(
+                title: "Add a photo of the building",
+                hint: "Optional. Helps us recognise the place later."
+            ) { [weak self] in self?.presentFrontagePicker() }
+        }
+        formModel = model
+        frontageDocumentId = nil
+
+        let host = UIHostingController(rootView: FormScreen(model: model, brandColor: USColors.primary, branding: brandingHeader) { [weak self] in
+            self?.submitLocation()
+        })
+        host.modalPresentationStyle = .fullScreen
+        formHost = host
+        present(host, animated: true)
+
+        #if canImport(CoreLocation)
+        let fixer = LocationFixer()
+        locationFixer = fixer
+        fixer.start(timeoutMs: spec.maxWaitMs) { [weak self] fix, state in
+            guard let self else { return }
+            self.locationFix = fix
+            self.formModel?.statusLine = LocationCapture.statusText(for: state, accuracyM: fix?.accuracyM)
+            self.formModel?.statusIsGood = (state == .ready)
+        }
+        #else
+        model.statusLine = LocationCapture.statusText(for: .unavailable)
+        #endif
+    }
+
+    private func submitLocation() {
+        guard let model = formModel, let spec = locationSpec else { return }
+        var clientErrors: [String: String] = [:]
+        var descriptors: [String: Any] = [:]
+        for field in model.fields {
+            let raw = model.rawValue(for: field)
+            if let err = validate(field: field, raw: raw) {
+                clientErrors[field.key] = err
+            } else {
+                descriptors[field.key] = coerce(field: field, raw: raw)
+            }
+        }
+        if !clientErrors.isEmpty {
+            model.errors = clientErrors
+            return
+        }
+        model.errors = [:]
+        model.isBusy = true
+
+        // Whatever the position state is at this moment is what we send. We do
+        // not wait for a pending fix: the subject has decided they are ready,
+        // and holding them for CoreLocation would be the blocking behaviour
+        // this surface exists to avoid. A fix that arrives later simply misses
+        // this submit, and the record can be upgraded afterwards.
+        let inputs = LocationCapture.buildInputs(
+            fix: locationFix,
+            descriptors: descriptors,
+            requestedRung: spec.rung,
+            frontageDocumentId: frontageDocumentId
+        )
+
+        Task {
+            await advance(inputs: inputs)
+            if let action = view_?.pendingAction, case .captureLocation = action {
+                model.isBusy = false
+            } else {
+                #if canImport(CoreLocation)
+                locationFixer?.cancel()
+                locationFixer = nil
+                #endif
+                locationSpec = nil
+                locationFix = nil
+                frontageDocumentId = nil
+                dismissForm()
+            }
+        }
     }
 
     // MARK: - Form surface (branded)
@@ -659,9 +775,65 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
 
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
         let image = info[.originalImage] as? UIImage
+        let forFrontage = pickingFrontagePhoto
+        pickingFrontagePhoto = false
         picker.dismiss(animated: true) { [weak self] in
             guard let self, let image else { return }
+            if forFrontage {
+                // No confirm screen and no advance. The frontage photo is one
+                // input among several on the same form, so the run must not
+                // move until the subject presses continue.
+                self.uploadFrontagePhoto(image)
+                return
+            }
             self.presentDocumentConfirm(image: image, captureMethod: "upload") { [weak self] in self?.presentUploadPicker() }
+        }
+    }
+
+    /// Presents the picker for a frontage photo and uploads whatever comes back.
+    private func presentFrontagePicker() {
+        pickingFrontagePhoto = true
+        let picker = UIImagePickerController()
+        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
+        // The dwelling, not the subject.
+        if picker.sourceType == .camera { picker.cameraDevice = .rear }
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    /// Uploads a frontage photo and records its id for the pending submit.
+    ///
+    /// Every failure path leaves the subject able to continue. A photo that
+    /// will not upload is one piece of evidence lighter, never a failed step:
+    /// failing here would throw away a completed position capture to protect a
+    /// supporting artefact.
+    private func uploadFrontagePhoto(_ image: UIImage) {
+        guard let encoded = Self.encodeDocumentForUpload(image) else {
+            formModel?.statusLine = "That photo could not be prepared. You can continue without it."
+            formModel?.statusIsGood = false
+            return
+        }
+        formModel?.statusLine = "Adding your photo..."
+        formModel?.statusIsGood = false
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await self.client.uploadDocument(
+                    data: encoded, mimeType: "image/jpeg", side: "single",
+                    documentType: "frontage", captureMethod: "camera"
+                )
+                if response.status == "failed" {
+                    self.formModel?.statusLine = "That photo did not upload. You can continue without it."
+                    self.formModel?.statusIsGood = false
+                    return
+                }
+                self.frontageDocumentId = response.documentId
+                self.formModel?.statusLine = "Photo added."
+                self.formModel?.statusIsGood = true
+            } catch {
+                self.formModel?.statusLine = "That photo did not upload. You can continue without it."
+                self.formModel?.statusIsGood = false
+            }
         }
     }
 
