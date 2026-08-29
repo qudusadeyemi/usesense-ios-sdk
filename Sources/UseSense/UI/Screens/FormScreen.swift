@@ -21,6 +21,20 @@ import Combine
     /// True when the status reports success rather than a recoverable problem.
     @Published public var statusIsGood: Bool = false
 
+    /// An optional extra action offered below the fields, used by location
+    /// capture to offer a frontage photo. Never gates the continue button.
+    public struct SecondaryAction {
+        public let title: String
+        public let hint: String?
+        public let perform: () -> Void
+        public init(title: String, hint: String? = nil, perform: @escaping () -> Void) {
+            self.title = title
+            self.hint = hint
+            self.perform = perform
+        }
+    }
+    @Published public var secondaryAction: SecondaryAction?
+
     public init(fields: [FormField], serverErrors: [String: String] = [:]) {
         self.fields = fields
         self.errors = serverErrors
@@ -77,6 +91,28 @@ public struct FormScreen: View {
                     }
                     ForEach(model.fields, id: \.key) { field in
                         fieldView(field)
+                    }
+                    if let secondary = model.secondaryAction {
+                        Button(action: secondary.perform) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(secondary.title)
+                                    .font(.usBody(15))
+                                    .foregroundColor(brandColor)
+                                if let hint = secondary.hint {
+                                    Text(hint)
+                                        .font(.usBody(12))
+                                        .foregroundColor(USColors.mutedForeground)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 14)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .strokeBorder(USColors.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.top, 4)
