@@ -28,14 +28,15 @@ public final class FlowsClient: @unchecked Sendable {
         self.fetcher = fetcher
     }
 
-    private func url(_ suffix: String) -> URL {
+    private func url(_ suffix: String, query: [URLQueryItem] = []) -> URL {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         components.path = "/v1/sdk/flow-runs/\(flowRunId)\(suffix)"
+        if !query.isEmpty { components.queryItems = query }
         return components.url!
     }
 
-    private func makeRequest(method: String, suffix: String, body: [String: Any]? = nil) throws -> URLRequest {
-        var request = URLRequest(url: url(suffix))
+    private func makeRequest(method: String, suffix: String, query: [URLQueryItem] = [], body: [String: Any]? = nil) throws -> URLRequest {
+        var request = URLRequest(url: url(suffix, query: query))
         request.httpMethod = method
         request.setValue("Bearer \(sdkToken)", forHTTPHeaderField: "Authorization")
         // Identify the platform to the server at the first device contact
@@ -101,13 +102,32 @@ public final class FlowsClient: @unchecked Sendable {
 
     // MARK: - Public methods
 
+    /// Declares device_signals_v1 so a Device Trust step is served as a device
+    /// capture rather than settled from the network alone.
     public func get() async throws -> FlowRunView {
-        let request = try makeRequest(method: "GET", suffix: "")
+        let caps = DeviceSignalsCapability.all.joined(separator: ",")
+        let request = try makeRequest(method: "GET", suffix: "", query: [URLQueryItem(name: "caps", value: caps)])
         return try FlowRunView.decode(try await send(request))
     }
 
     public func advance(inputs: [String: Any]) async throws -> FlowRunView {
-        let request = try makeRequest(method: "POST", suffix: "/advance", body: ["inputs": inputs])
+        let body: [String: Any] = [
+            "inputs": inputs,
+            "client": ["capabilities": DeviceSignalsCapability.all],
+        ]
+        let request = try makeRequest(method: "POST", suffix: "/advance", body: body)
+        return try FlowRunView.decode(try await send(request))
+    }
+
+    /// Settle a parked Device Trust step with the device's signals (no camera).
+    /// `nonce` is the parked action's single-use nonce.
+    public func submitDeviceSignals(nonce: String, channelIntegrity: [String: Any]) async throws -> FlowRunView {
+        let body: [String: Any] = [
+            "nonce": nonce,
+            "channel_integrity": channelIntegrity,
+            "client": ["capabilities": DeviceSignalsCapability.all],
+        ]
+        let request = try makeRequest(method: "POST", suffix: "/device-signals", body: body)
         return try FlowRunView.decode(try await send(request))
     }
 
