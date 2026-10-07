@@ -152,3 +152,96 @@ final class LockedBox<T>: @unchecked Sendable {
     func set(_ value: T) { lock.lock(); stored = value; lock.unlock() }
     var value: T? { lock.lock(); defer { lock.unlock() }; return stored }
 }
+
+/// Camera-free Device Trust: capability declaration, the device-signals call,
+/// server-code passthrough and tolerant decoding of the device action.
+final class FlowsDeviceTrustTests: XCTestCase {
+    private let baseURL = URL(string: "https://api.usesense.ai")!
+
+    private func view(pendingAction: Any = NSNull()) -> [String: Any] {
+        return [
+            "flowRun": [
+                "id": "fr_1", "state": "in_progress", "outcome": NSNull(), "cursorStepId": "device",
+                "environment": "production", "pendingAction": pendingAction,
+            ],
+            "definitionSteps": [], "stepRuns": [], "branding": NSNull(),
+        ]
+    }
+
+    private func client(status: Int = 200, body: [String: Any]? = nil, capture: LockedBox<URLRequest>) -> FlowsClient {
+        let payload = body ?? view()
+        return FlowsClient(flowRunId: "fr_1", sdkToken: "t", apiBaseURL: baseURL) { request in
+            capture.set(request)
+            let data = try JSONSerialization.data(withJSONObject: payload)
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
+            return (data, response)
+        }
+    }
+
+    func test_get_declaresDeviceSignalsCapability() async throws {
+        let captured = LockedBox<URLRequest>()
+        _ = try await client(capture: captured).get()
+        let url = captured.value!.url!
+        XCTAssertEqual(url.path, "/v1/sdk/flow-runs/fr_1")
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertEqual(items?.first(where: { $0.name == "caps" })?.value, "device_signals_v1")
+    }
+
+    func test_advance_declaresDeviceSignalsCapability() async throws {
+        let captured = LockedBox<URLRequest>()
+        _ = try await client(capture: captured).advance(inputs: [:])
+        let parsed = try JSONSerialization.jsonObject(with: captured.value!.httpBody!) as? [String: Any]
+        let clientInfo = parsed?["client"] as? [String: Any]
+        XCTAssertEqual(clientInfo?["capabilities"] as? [String], ["device_signals_v1"])
+        XCTAssertNotNil(parsed?["inputs"] as? [String: Any])
+    }
+
+    func test_submitDeviceSignals_postsNonceAndChannelIntegrity() async throws {
+        let captured = LockedBox<URLRequest>()
+        _ = try await client(capture: captured).submitDeviceSignals(nonce: "dn_1", channelIntegrity: ["is_jailbroken": false])
+        let req = captured.value!
+        XCTAssertEqual(req.httpMethod, "POST")
+        XCTAssertEqual(req.url?.path, "/v1/sdk/flow-runs/fr_1/device-signals")
+        let parsed = try JSONSerialization.jsonObject(with: req.httpBody!) as? [String: Any]
+        XCTAssertEqual(parsed?["nonce"] as? String, "dn_1")
+        XCTAssertEqual((parsed?["channel_integrity"] as? [String: Any])?["is_jailbroken"] as? Bool, false)
+        XCTAssertEqual((parsed?["client"] as? [String: Any])?["capabilities"] as? [String], ["device_signals_v1"])
+    }
+
+    func test_staleNonce_keepsServerCode_andIsReloadable() async {
+        let captured = LockedBox<URLRequest>()
+        let c = client(status: 400, body: ["error": "Nonce does not match", "code": "nonce_mismatch"], capture: captured)
+        do {
+            _ = try await c.submitDeviceSignals(nonce: "dn_old", channelIntegrity: [:])
+            XCTFail("expected throw")
+        } catch let e as FlowError {
+            XCTAssertEqual(e.serverCode, "nonce_mismatch")
+            XCTAssertTrue(DeviceSignalsCapability.needsReload(serverCode: e.serverCode))
+        } catch {
+            XCTFail("wrong error type")
+        }
+        XCTAssertTrue(DeviceSignalsCapability.needsReload(serverCode: "device_step_not_pending"))
+        XCTAssertFalse(DeviceSignalsCapability.needsReload(serverCode: "invalid_input"))
+    }
+
+    func test_deviceAction_decodes() async throws {
+        let captured = LockedBox<URLRequest>()
+        let body = view(pendingAction: ["kind": "capture", "capture": "device", "toolId": "device_trust_check", "nonce": "dn_9"])
+        let v = try await client(body: body, capture: captured).get()
+        XCTAssertEqual(v.pendingAction, .captureDevice(toolId: "device_trust_check", nonce: "dn_9"))
+    }
+
+    func test_deviceAction_withoutNonce_stillDecodes() throws {
+        let action = try PendingAction.decode(["kind": "capture", "capture": "device"])
+        XCTAssertEqual(action, .captureDevice(toolId: nil, nonce: nil))
+    }
+
+    #if canImport(UIKit)
+    func test_deviceSignals_dropCameraAndMicrophoneFields() {
+        XCTAssertTrue(DeviceTrustSignals.captureOnlyKeys.contains("camera_permission_granted"))
+        XCTAssertTrue(DeviceTrustSignals.captureOnlyKeys.contains("microphone_permission_granted"))
+        XCTAssertTrue(DeviceTrustSignals.captureOnlyKeys.contains("camera_resolution"))
+        XCTAssertFalse(DeviceTrustSignals.captureOnlyKeys.contains("is_jailbroken"))
+    }
+    #endif
+}

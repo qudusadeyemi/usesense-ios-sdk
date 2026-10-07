@@ -39,6 +39,11 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     private var idNumberPresented = false
     /// Guards re-presenting the terminal result surface on a re-render.
     private var resultPresented = false
+    /// The nonce of the Device Trust step already submitted, so a re-render
+    /// never posts the same step twice.
+    private var submittedDeviceNonce: String?
+    /// One re-read for a device step that arrived without a nonce.
+    private var reloadedForDeviceNonce = false
 
     init(options: RunFlowOptions, completion: @escaping (Result<FlowRunResult, FlowError>) -> Void) {
         self.options = options
@@ -204,6 +209,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             presentForm(fields: fields)
         case .captureIdNumber(let idTypes):
             presentIdNumber(idTypes: idTypes)
+        case .captureDevice(_, let nonce):
+            runDeviceStep(nonce: nonce)
         case .info(let info):
             installInfo(info)
         case .redirectToConsent(let url):
@@ -492,6 +499,39 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         case .camera: return "📷"
         case .warning: return "!"
         case .info, .none: return "i"
+        }
+    }
+
+    /// Device Trust: no camera, no prompt, nothing to ask the subject. Collect
+    /// the device's signals and post them with the step's nonce, once per
+    /// nonce. A stale nonce or an already-settled step re-reads the run.
+    private func runDeviceStep(nonce: String?) {
+        showSpinner(message: "Checking your device")
+        guard let nonce else {
+            // The server mints the nonce when the client declares the
+            // capability; one re-read picks it up.
+            guard !reloadedForDeviceNonce else { return }
+            reloadedForDeviceNonce = true
+            Task { await load() }
+            return
+        }
+        guard submittedDeviceNonce != nonce else { return }
+        submittedDeviceNonce = nonce
+        Task {
+            let signals = await DeviceTrustSignals.collect(nonce: nonce)
+            do {
+                let next = try await client.submitDeviceSignals(nonce: nonce, channelIntegrity: signals)
+                view_ = next
+                applyResolvedAppearance(server: next.branding?.appearance)
+                applyResolvedCopy(server: next.branding?.copy)
+                render()
+            } catch let e as FlowError where DeviceSignalsCapability.needsReload(serverCode: e.serverCode) {
+                await load()
+            } catch let e as FlowError {
+                finish(.failure(e))
+            } catch {
+                finish(.failure(FlowError(code: .unknown, message: error.localizedDescription)))
+            }
         }
     }
 

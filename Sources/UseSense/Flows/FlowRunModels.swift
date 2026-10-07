@@ -183,6 +183,8 @@ public enum PendingAction: Sendable, Equatable {
     case captureDocument(category: String, documentTypes: [String], issuingCountries: [String], camera: String?, captureMethods: [String])
     case captureForm(fields: [FormField])
     case captureIdNumber(idTypes: [IdTypeSpec])
+    /// Device Trust with no camera: post the device's signals with `nonce`.
+    case captureDevice(toolId: String?, nonce: String?)
     case info(InfoAction)
     case redirectToConsent(url: URL)
 
@@ -215,6 +217,8 @@ public enum PendingAction: Sendable, Equatable {
             case "id_number":
                 let rawTypes = raw["idTypes"] as? [[String: Any]] ?? []
                 return .captureIdNumber(idTypes: rawTypes.compactMap(IdTypeSpec.decode))
+            case "device":
+                return .captureDevice(toolId: raw["toolId"] as? String, nonce: raw["nonce"] as? String)
             default:
                 throw FlowError(code: .unsupportedAction, message: "Unknown capture variant: \(capture)")
             }

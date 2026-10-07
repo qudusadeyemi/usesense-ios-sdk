@@ -8,6 +8,15 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Camera-free Device Trust.** The Flows runner declares `device_signals_v1`
+  (`?caps=` on load, `client.capabilities` on advance). A Device Trust step
+  then arrives as `PendingAction.captureDevice(toolId:nonce:)`: the runner
+  shows "Checking your device", collects the same channel integrity as a face
+  capture minus the camera and microphone fields (no camera, no prompt), signs
+  an App Attest assertion over the step's nonce (bounded at 5 s), and posts it
+  to `/v1/sdk/flow-runs/:id/device-signals`. A stale nonce or an already-settled
+  step re-reads the run. `PendingAction` gains a case, so an exhaustive
+  `switch` over it in host code needs a new branch.
 - **Server step-up (round 2).** When a server Step-up rule matches the uploaded
   capture, the `/signals` response now carries a `step_up` instruction. The
   session restarts the camera behind a 3-2-1 countdown, presents the requested
