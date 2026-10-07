@@ -6,6 +6,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-10-08
+
 ### Added
 
 - **Camera-free Device Trust.** The Flows runner declares `device_signals_v1`
@@ -58,7 +60,7 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   so it takes `automaticallyAdjustsVideoMirroring`, which mirrors the front
   camera correctly. Checked rather than assumed.
 
-## [Unreleased]
+## [4.7.0] - 2026-08-07
 
 ### Changed
 
