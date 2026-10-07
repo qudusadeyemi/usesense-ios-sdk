@@ -60,6 +60,8 @@ public final class UseSenseSession: @unchecked Sendable {
     private var isCapturingFrames = false
     private var serverMaxFrames: Int?
     private var stepUpResult: StepUpResult?
+    /// Server step-up (round 2): set while the requested challenge is captured.
+    private var serverStepUp: StepUpInstruction?
 
     // MARK: - Init
 
@@ -250,6 +252,12 @@ public final class UseSenseSession: @unchecked Sendable {
         isCapturingFrames = false
         challengeResponseBuilder.markCompleted()
         eventEmitter.emit(.challengeCompleted)
+
+        if let stepUp = serverStepUp {
+            serverStepUp = nil
+            await finishServerStepUpRound(stepUp)
+            return
+        }
 
         // Check suspicion engine for inline step-up BEFORE stopping camera
         if let engine = suspicionEngine, engine.shouldTriggerStepUp() {
@@ -813,8 +821,9 @@ public final class UseSenseSession: @unchecked Sendable {
         currentState = .uploading(progress: 0)
         eventEmitter.emit(.uploadStarted)
 
+        let uploadResponse: UploadSignalsResponse
         do {
-            _ = try await apiClient.uploadSignals(
+            uploadResponse = try await apiClient.uploadSignals(
                 sessionId: session.sessionId,
                 sessionToken: session.sessionToken,
                 nonce: session.nonce,
@@ -832,6 +841,91 @@ public final class UseSenseSession: @unchecked Sendable {
             return
         }
 
+        // A server Step-up rule may ask for one more challenge in this session.
+        if let stepUp = StepUpInstruction(payload: uploadResponse.stepUp) {
+            await startServerStepUpRound(stepUp)
+            return
+        }
+
+        await completeSessionWithSafetyNet(session)
+    }
+
+    // MARK: - Server step-up (round 2)
+
+    /// Round 1 uploaded and a server Step-up rule asked for one more
+    /// challenge. The camera was stopped before the upload, so restart it; the
+    /// 3-2-1 countdown covers the warm-up. Then present the requested
+    /// challenge on a fresh frame buffer; the challenge view calls
+    /// `challengeCompleted()`, which hands off to `finishServerStepUpRound`.
+    private func startServerStepUpRound(_ stepUp: StepUpInstruction) async {
+        serverStepUp = stepUp
+        frameBuffer.reset()
+        challengeResponseBuilder.reset()
+        reconfigureFrameBuffer(maxFrames: stepUp.maxFrames, targetFps: sessionData?.upload.targetFps ?? 3)
+        frameCaptureManager.start()
+        captureStartTime = Date()
+        isCapturingFrames = true
+        do {
+            for i in stride(from: 3, through: 1, by: -1) {
+                currentState = .countdown(number: i)
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        } catch {
+            return
+        }
+        challengeResponseBuilder.markStarted()
+        frameBuffer.setCapturePhase(.challenge)
+        eventEmitter.emit(.challengeStarted, data: ["type": stepUp.challenge.challengeType.rawValue, "round": "2"])
+        currentState = .challenge(spec: stepUp.challenge)
+    }
+
+    /// Upload the step-up round (`?round=2`): its frames and challenge response only. Then complete.
+    private func finishServerStepUpRound(_ stepUp: StepUpInstruction) async {
+        frameCaptureManager.stop()
+        guard let session = sessionData else {
+            handleError(UseSenseError(code: .unknownError, message: "No session data available."))
+            return
+        }
+        let frames = Array(frameBuffer.getFrames().prefix(stepUp.maxFrames))
+        guard !frames.isEmpty else {
+            handleError(UseSenseError(code: .unknownError, message: "No frames captured."))
+            return
+        }
+        let metadata: [String: Any] = [
+            "session_id": session.sessionId,
+            "sdk_version": UseSenseAPIClient.sdkVersion,
+            "platform": "ios",
+            "source": "sdk",
+            "capture_channel": "ios",
+            "step_up_round": 2,
+            "client_capabilities": StepUpCapability.all,
+            "challenge_response": challengeResponseBuilder.build(challenge: stepUp.challenge),
+            "frame_hashes": Array(frameBuffer.getFrameHashes().prefix(frames.count)),
+        ]
+        currentState = .uploading(progress: 0)
+        do {
+            let metadataData = try JSONSerialization.data(withJSONObject: metadata)
+            _ = try await apiClient.uploadSignals(
+                sessionId: session.sessionId,
+                sessionToken: session.sessionToken,
+                nonce: session.nonce,
+                frames: frames,
+                metadata: metadataData,
+                audio: nil,
+                round: 2
+            )
+            currentState = .uploading(progress: 1.0)
+        } catch let error as UseSenseError {
+            handleError(error)
+            return
+        } catch {
+            handleError(UseSenseError(code: .networkError, message: error.localizedDescription))
+            return
+        }
+        await completeSessionWithSafetyNet(session)
+    }
+
+    private func completeSessionWithSafetyNet(_ session: SessionData) async {
         // Complete
         currentState = .completing
         eventEmitter.emit(.completeStarted)

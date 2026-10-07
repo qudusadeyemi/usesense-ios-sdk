@@ -4,6 +4,29 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Server step-up (round 2).** When a server Step-up rule matches the uploaded
+  capture, the `/signals` response now carries a `step_up` instruction. The
+  session restarts the camera behind a 3-2-1 countdown, presents the requested
+  Head Turn or Follow Dot on a fresh frame buffer (capped at the server's
+  `max_frames`), uploads it with `?round=2`, then completes. An instruction
+  this SDK can't render is ignored and the session completes as before (the
+  server then sends it to review).
+- The SDK declares `capabilities: ["step_up_v1"]` on create, exchange and
+  Flow `init-session`, and `client_capabilities` in the upload metadata (the
+  only place a backend-created or remote session can declare it).
+
+### Fixed
+
+- **`UploadSignalsResponse` decoding is tolerant.** `audio_received` and
+  `metadata_received` were required, so any response that omitted them (a
+  round-2 upload does) failed to decode and the upload was reported as an
+  error. A `step_up` with a challenge type this SDK doesn't know no longer
+  fails the whole response either.
+
 ## [4.7.1] - 2026-08-13
 
 ### Fixed

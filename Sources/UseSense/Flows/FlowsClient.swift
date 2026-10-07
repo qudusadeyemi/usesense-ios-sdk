@@ -123,7 +123,9 @@ public final class FlowsClient: @unchecked Sendable {
     /// run's wall-clock is enforced by the parent flow run, not the session),
     /// so we inject a synthetic 15-minute expiry to satisfy the Codable model.
     public func initSession(toolId: String?) async throws -> CreateSessionResponse {
-        let body: [String: Any] = toolId.map { ["toolId": $0] } ?? [:]
+        var body: [String: Any] = toolId.map { ["toolId": $0] } ?? [:]
+        // What this SDK can do, e.g. run a server step-up round.
+        body["capabilities"] = StepUpCapability.all
         let request = try makeRequest(method: "POST", suffix: "/init-session", body: body)
         guard var json = try await send(request) as? [String: Any] else {
             throw FlowError(code: .unknown, message: "Malformed init-session response")
