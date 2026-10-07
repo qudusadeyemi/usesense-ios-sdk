@@ -159,7 +159,10 @@ final class UseSenseAPIClient: @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         // No API key needed -- the client_token authenticates the request
         applyHeaders(&request)
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["client_token": clientToken])
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "client_token": clientToken,
+            "capabilities": StepUpCapability.all,
+        ])
         request.timeoutInterval = 15
 
         let response: CreateSessionResponse = try await perform(request)
@@ -174,7 +177,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
 
     func uploadSignals(
         sessionId: String, sessionToken: String, nonce: String,
-        frames: [Data], metadata: Data, audio: Data?
+        frames: [Data], metadata: Data, audio: Data?, round: Int? = nil
     ) async throws -> UploadSignalsResponse {
         self.sessionToken = sessionToken
         self.nonce = nonce
@@ -200,7 +203,13 @@ final class UseSenseAPIClient: @unchecked Sendable {
         }
         let body = multipart.finalize()
 
-        var request = URLRequest(url: buildURL(path: "/sessions/\(sessionId)/signals", includeNonce: true))
+        var url = buildURL(path: "/sessions/\(sessionId)/signals", includeNonce: true)
+        // round=2: a server step-up round, stored beside round 1, never over it.
+        if let round, var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            comps.queryItems = (comps.queryItems ?? []) + [URLQueryItem(name: "round", value: String(round))]
+            if let withRound = comps.url { url = withRound }
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue(multipart.contentType, forHTTPHeaderField: "Content-Type")
         applyHeaders(&request, includeSession: true)

@@ -62,6 +62,10 @@ final class MetadataBuilder: @unchecked Sendable {
         metadata["sdk_version"] = UseSenseAPIClient.sdkVersion
         metadata["platform"] = "ios"
         metadata["source"] = source
+        // Declared here as well as at session start: when the integrator's
+        // backend created the session, the upload is the only place the device
+        // can say it can run a server step-up round.
+        metadata["client_capabilities"] = StepUpCapability.all
 
         // Capture config
         if let config = captureConfig {
