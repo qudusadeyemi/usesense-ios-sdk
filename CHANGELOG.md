@@ -6,6 +6,8 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [4.8.1] - 2026-10-08
+
 ### Fixed
 
 - **The face-capture screens take the org's brand colour.** Inside a branded
