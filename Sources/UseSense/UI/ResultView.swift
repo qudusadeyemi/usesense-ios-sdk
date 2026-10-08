@@ -169,7 +169,7 @@ struct FailureView: View {
                     Button(action: onRetry) {
                         Text("Try Again")
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(USColors.primaryForeground)
                             .frame(maxWidth: .infinity)
                             .frame(height: 52)
                             .background(Color.UseSense.primary)
@@ -192,7 +192,7 @@ struct FailureView: View {
                     Button(action: onRetry) {
                         Text("Done")
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(USColors.primaryForeground)
                             .frame(maxWidth: .infinity)
                             .frame(height: 52)
                             .background(Color.UseSense.primary)

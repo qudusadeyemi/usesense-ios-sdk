@@ -16,6 +16,9 @@ public final class UseSenseSession: @unchecked Sendable {
     // MARK: - Private Properties
 
     private let config: UseSenseConfig
+    /// The integrator's SDK-init white-label, for the capture UI to theme from
+    /// when no Flow runner has already resolved one.
+    var brandingAppearance: FlowAppearance? { config.branding?.resolvedAppearance }
     private let sessionType: SessionType
     private let identityId: String?
     private let externalUserId: String?

@@ -27,13 +27,13 @@ struct InstructionsView: View {
                     // Title
                     Text(title)
                         .font(.system(size: 24, weight: .bold))
-                        .foregroundColor(Color(red: 0.059, green: 0.090, blue: 0.165))
+                        .foregroundColor(USColors.foreground)
                         .multilineTextAlignment(.center)
 
                     // Subtitle
                     Text(subtitle)
                         .font(.system(size: 16))
-                        .foregroundColor(Color(red: 0.278, green: 0.333, blue: 0.412))
+                        .foregroundColor(USColors.mutedForeground)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 16)
 
@@ -41,26 +41,26 @@ struct InstructionsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         Text("What to expect")
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(Color(red: 0.059, green: 0.090, blue: 0.165))
+                            .foregroundColor(USColors.foreground)
 
                         ForEach(Array(instructions.enumerated()), id: \.offset) { index, instruction in
                             HStack(alignment: .top, spacing: 12) {
                                 Text("\(index + 1)")
                                     .font(.system(size: 14, weight: .bold))
-                                    .foregroundColor(.white)
+                                    .foregroundColor(USColors.primaryForeground)
                                     .frame(width: 24, height: 24)
                                     .background(Color.UseSense.primary)
                                     .clipShape(Circle())
 
                                 Text(instruction)
                                     .font(.system(size: 15))
-                                    .foregroundColor(Color(red: 0.278, green: 0.333, blue: 0.412))
+                                    .foregroundColor(USColors.mutedForeground)
                                     .padding(.top, 2)
                             }
                         }
                     }
                     .padding(16)
-                    .background(Color(red: 0.969, green: 0.973, blue: 0.976))
+                    .background(USColors.secondary)
                     .cornerRadius(12)
                     .padding(.horizontal, 24)
 
@@ -72,7 +72,7 @@ struct InstructionsView: View {
 
                         Text("End-to-end encrypted")
                             .font(.system(size: 14))
-                            .foregroundColor(Color(red: 0.278, green: 0.333, blue: 0.412))
+                            .foregroundColor(USColors.mutedForeground)
                     }
                     .padding(.vertical, 8)
                     .padding(.horizontal, 16)
@@ -83,7 +83,7 @@ struct InstructionsView: View {
                     Button(action: onContinue) {
                         Text("Got it - Start")
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(USColors.primaryForeground)
                             .frame(maxWidth: .infinity)
                             .frame(height: 52)
                             .background(Color.UseSense.primary)
@@ -96,7 +96,7 @@ struct InstructionsView: View {
                 }
             }
         }
-        .background(Color.white.ignoresSafeArea())
+        .background(USColors.background.ignoresSafeArea())
     }
 
     private var iconName: String {

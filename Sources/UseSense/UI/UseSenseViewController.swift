@@ -6,6 +6,9 @@ public final class UseSenseViewController: UIViewController {
     private let session: UseSenseSession
     private var onComplete: ((Result<RedactedDecisionObject, UseSenseError>) -> Void)?
     private var hostingController: UIHostingController<UseSenseView>?
+    /// True when this controller seeded FlowAppearanceResolver itself, so it
+    /// clears only what it set (a Flow runner owns the resolver during a run).
+    private var seededAppearance = false
 
     public init(
         session: UseSenseSession,
@@ -24,6 +27,14 @@ public final class UseSenseViewController: UIViewController {
 
     public override func viewDidLoad() {
         super.viewDidLoad()
+
+        // The capture screens read the brand tokens from FlowAppearanceResolver.
+        // Inside a Flow the runner has already set it; a standalone session
+        // themes from its own SDK-init branding.
+        if FlowAppearanceResolver.current == nil, let appearance = session.brandingAppearance {
+            FlowAppearanceResolver.set(appearance)
+            seededAppearance = true
+        }
 
         let useSenseView = UseSenseView(
             session: session,
@@ -50,6 +61,14 @@ public final class UseSenseViewController: UIViewController {
             hosting.view.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
         hosting.didMove(toParent: self)
+    }
+
+    public override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if seededAppearance, isBeingDismissed || presentingViewController == nil {
+            FlowAppearanceResolver.reset()
+            seededAppearance = false
+        }
     }
 }
 #endif

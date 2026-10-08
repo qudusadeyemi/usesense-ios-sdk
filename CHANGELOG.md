@@ -8,6 +8,16 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The face-capture screens take the org's brand colour.** Inside a branded
+  Flow, the challenge instructions, "Almost done", challenge, step-up and result
+  screens stayed UseSense blue while the runner's own screens took the org
+  colour. `Color.UseSense.primary` (and `primaryBg`, `primaryLight`,
+  `primaryDark`, `qualityInfo`, `focusRing`, `instructionIconBg`) now follow the
+  resolved appearance and fall back to DeepSense Blue. Text on brand-filled
+  buttons uses `primaryForeground`. The instructions screen uses the theme's
+  neutrals in place of hardcoded greys and white. A standalone
+  `UseSenseViewController` themes from its own `BrandingConfig` when no Flow
+  runner has set one. The dark backdrops over the camera stay dark.
 - **A Device Trust step without a nonce no longer spins forever.** The runner
   re-reads the run once to pick up the nonce (the server mints it for a client
   that declares `device_signals_v1`). If it is still missing, the run now ends
