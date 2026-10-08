@@ -509,10 +509,15 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         showSpinner(message: "Checking your device")
         guard let nonce else {
             // The server mints the nonce when the client declares the
-            // capability; one re-read picks it up.
-            guard !reloadedForDeviceNonce else { return }
-            reloadedForDeviceNonce = true
-            Task { await load() }
+            // capability: re-read once to pick it up, then fail clearly
+            // instead of leaving the spinner up.
+            switch DeviceSignalsCapability.onMissingNonce(alreadyReloaded: reloadedForDeviceNonce) {
+            case .reload:
+                reloadedForDeviceNonce = true
+                Task { await load() }
+            case .fail:
+                finish(.failure(FlowError(code: .unknown, message: DeviceSignalsCapability.missingNonceMessage)))
+            }
             return
         }
         guard submittedDeviceNonce != nonce else { return }

@@ -20,6 +20,20 @@ enum DeviceSignalsCapability {
     static func needsReload(serverCode: String?) -> Bool {
         serverCode == "nonce_mismatch" || serverCode == "device_step_not_pending"
     }
+
+    /// What the runner does with a device step that arrived without a nonce.
+    enum MissingNonce: Equatable { case reload, fail }
+
+    /// The server mints the nonce when the client declares the capability, so a
+    /// device step without one is re-read once to pick it up. If it is still
+    /// missing the run fails with a clear error rather than spinning forever.
+    /// Same rule as the Android SDK.
+    static func onMissingNonce(alreadyReloaded: Bool) -> MissingNonce {
+        alreadyReloaded ? .fail : .reload
+    }
+
+    /// Error message when a device step still has no nonce after one re-read.
+    static let missingNonceMessage = "Device Trust step is missing its nonce"
 }
 
 #if canImport(UIKit)

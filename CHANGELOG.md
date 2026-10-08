@@ -6,6 +6,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Device Trust step without a nonce no longer spins forever.** The runner
+  re-reads the run once to pick up the nonce (the server mints it for a client
+  that declares `device_signals_v1`). If it is still missing, the run now ends
+  with `FlowError(.unknown, "Device Trust step is missing its nonce")` instead
+  of leaving the spinner up. Same rule as the Android SDK.
+
 ## [4.8.0] - 2026-10-08
 
 ### Added
