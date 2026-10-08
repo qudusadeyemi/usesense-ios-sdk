@@ -16,12 +16,22 @@ extension Color {
         /// MatchSense Green — Identity collision, verified states
         public static let matchSenseGreen = Color(hex: 0x00D4AA)
 
-        // ── Brand Primary (alias for DeepSense Blue) ──
+        // ── Brand Primary ──
+        //
+        // Follows the resolved white-label (FlowAppearanceResolver) and falls
+        // back to DeepSense Blue. These were fixed constants, so the capture
+        // screens that read them (instructions, challenges, processing, result)
+        // stayed UseSense blue inside a branded Flow while the runner's own
+        // screens took the org colour.
 
-        public static let primary = deepSenseBlue
-        public static let primaryDark = Color(hex: 0x3D63DB)    // Blue 600
-        public static let primaryLight = Color(hex: 0xD6E0FF)   // Blue 100
-        public static let primaryBg = Color(hex: 0xEBF0FF)      // Blue 000
+        public static var primary: Color {
+            FlowAppearanceResolver.constantColor(\.primary, default: 0x4F7CFF)
+        }
+        public static var primaryDark: Color { isBranded ? primary : Color(hex: 0x3D63DB) }   // Blue 600
+        public static var primaryLight: Color { isBranded ? primary.opacity(0.2) : Color(hex: 0xD6E0FF) } // Blue 100
+        public static var primaryBg: Color { isBranded ? primary.opacity(0.1) : Color(hex: 0xEBF0FF) }    // Blue 000
+
+        private static var isBranded: Bool { FlowAppearanceResolver.current?.colors?.primary != nil }
 
         // ── Purple Scale ──
 
@@ -65,20 +75,20 @@ extension Color {
         // ── Component Tokens ──
 
         /// Focus ring: 0 0 0 3px rgba(79,124,255,.15)
-        public static let focusRing = Color(hex: 0x4F7CFF).opacity(0.15)
+        public static var focusRing: Color { primary.opacity(0.15) }
 
         // ── Quality Indicators ──
 
         public static let qualityCritical = liveSensePurple
         public static let qualityWarning = Color(hex: 0x967FF7)
-        public static let qualityInfo = deepSenseBlue
+        public static var qualityInfo: Color { primary }
         public static let criticalBannerText = Color(hex: 0x6347D6)
         public static let warningBannerText = liveSensePurple
 
         // ── Challenge-specific ──
 
         public static let challengeDot = Color(hex: 0xFF6B4A)
-        public static let instructionIconBg = primaryBg
+        public static var instructionIconBg: Color { primaryBg }
         public static let instructionTitle = textDark
         public static let instructionBody = textSecondary
     }

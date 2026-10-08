@@ -261,7 +261,7 @@ public struct UseSenseView: View {
                 Button(action: { viewModel.retry() }) {
                     Text("Try Again")
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(USColors.primaryForeground)
                         .frame(maxWidth: .infinity)
                         .frame(height: 52)
                         .background(Color.UseSense.primary)
@@ -332,7 +332,7 @@ public struct UseSenseView: View {
                 Button(action: { viewModel.requestPermissions() }) {
                     Text("Grant Access")
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor(USColors.primaryForeground)
                         .frame(maxWidth: .infinity)
                         .frame(height: 52)
                         .background(Color.UseSense.primary)
