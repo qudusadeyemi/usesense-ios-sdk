@@ -551,7 +551,9 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
                 model.isBusy = true
                 Task {
                     do {
-                        let response = try await self.client.initSession(toolId: toolId)
+                        // Same-device proof for a Device Trust check earlier in the run (never blocks).
+                        let binding = await DeviceBinding.collect()
+                        let response = try await self.client.initSession(toolId: toolId, deviceBinding: binding)
                         self.dismiss(animated: false) { self.presentCaptureViewController(with: response) }
                     } catch let e as FlowError {
                         self.dismiss(animated: true) { self.finish(.failure(e)) }

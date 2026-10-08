@@ -143,9 +143,17 @@ public final class FlowsClient: @unchecked Sendable {
     /// run's wall-clock is enforced by the parent flow run, not the session),
     /// so we inject a synthetic 15-minute expiry to satisfy the Codable model.
     public func initSession(toolId: String?) async throws -> CreateSessionResponse {
+        try await initSession(toolId: toolId, deviceBinding: nil)
+    }
+
+    /// Start a face capture. `deviceBinding` (see `DeviceBinding`) lets the
+    /// server reuse a Device Trust check from earlier in the run only when it
+    /// came from this device.
+    func initSession(toolId: String?, deviceBinding: [String: Any]?) async throws -> CreateSessionResponse {
         var body: [String: Any] = toolId.map { ["toolId": $0] } ?? [:]
         // What this SDK can do, e.g. run a server step-up round.
         body["capabilities"] = StepUpCapability.all
+        if let deviceBinding { body["device_binding"] = deviceBinding }
         let request = try makeRequest(method: "POST", suffix: "/init-session", body: body)
         guard var json = try await send(request) as? [String: Any] else {
             throw FlowError(code: .unknown, message: "Malformed init-session response")

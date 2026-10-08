@@ -6,6 +6,16 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Face init-session sends a device binding.** When a flow's face step
+  starts, the runner sends the stable signals the server hashes into the device
+  fingerprint, plus this device's existing App Attest key id
+  (`device_binding`). The server then reuses a Device Trust check from earlier
+  in the run only if it came from this device, instead of matching on platform
+  and device model alone. Collection makes no App Attest network call, is
+  capped at 1.5 s and never blocks the face step.
+
 ## [4.8.1] - 2026-10-08
 
 ### Fixed
