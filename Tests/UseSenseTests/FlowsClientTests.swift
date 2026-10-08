@@ -231,6 +231,11 @@ final class FlowsDeviceTrustTests: XCTestCase {
         XCTAssertEqual(v.pendingAction, .captureDevice(toolId: "device_trust_check", nonce: "dn_9"))
     }
 
+    func test_deviceAction_withoutNonce_reloadsOnceThenFails() {
+        XCTAssertEqual(DeviceSignalsCapability.onMissingNonce(alreadyReloaded: false), .reload)
+        XCTAssertEqual(DeviceSignalsCapability.onMissingNonce(alreadyReloaded: true), .fail)
+    }
+
     func test_deviceAction_withoutNonce_stillDecodes() throws {
         let action = try PendingAction.decode(["kind": "capture", "capture": "device"])
         XCTAssertEqual(action, .captureDevice(toolId: nil, nonce: nil))
