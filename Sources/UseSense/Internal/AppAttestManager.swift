@@ -15,6 +15,13 @@ actor AppAttestManager {
 
     var isSupported: Bool { service.isSupported }
 
+    /// The App Attest key id this device already has, without generating one
+    /// (no network call). Nil when App Attest is unsupported or no key exists.
+    func existingKeyId() -> String? {
+        guard isSupported else { return nil }
+        return keychain.string(forKey: Self.keychainKeyId)
+    }
+
     // MARK: - Key Generation
 
     /// Ensures an App Attest key exists, generating one if needed.

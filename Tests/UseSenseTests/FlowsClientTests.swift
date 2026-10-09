@@ -250,3 +250,57 @@ final class FlowsDeviceTrustTests: XCTestCase {
     }
     #endif
 }
+
+/// Face init-session device binding: what is sent and that old callers still work.
+final class FlowsDeviceBindingTests: XCTestCase {
+    private let baseURL = URL(string: "https://api.usesense.ai")!
+
+    private func client(capture: LockedBox<URLRequest>) -> FlowsClient {
+        let session: [String: Any] = [
+            "session_id": "s", "session_token": "t", "nonce": "n",
+            "policy": ["requires_audio": false, "requires_stepup": false, "challenge_type": "none", "policy_source": "flow"],
+            "upload": ["max_frames": 24, "target_fps": 6, "capture_duration_ms": 4000],
+        ]
+        return FlowsClient(flowRunId: "fr_1", sdkToken: "t", apiBaseURL: baseURL) { request in
+            capture.set(request)
+            let data = try JSONSerialization.data(withJSONObject: session)
+            return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+    }
+
+    func test_body_picksOnlyFingerprintKeys_andAddsAppAttestKeyId() {
+        let ci: [String: Any] = [
+            "screen_resolution": "1179x2556", "platform": "ios", "timezone": "Europe/Lisbon",
+            "hardware_concurrency": 6, "battery_level": 0.4, "is_jailbroken": false, "canvas_hash": NSNull(),
+        ]
+        let body = DeviceBinding.body(channelIntegrity: ci, appAttestKeyId: "key_1")
+        let components = body?["components"] as? [String: Any]
+        XCTAssertEqual(Set(components?.keys.map { $0 } ?? []), ["screen_resolution", "platform", "timezone", "hardware_concurrency"])
+        XCTAssertEqual(body?["app_attest_key_id"] as? String, "key_1")
+    }
+
+    func test_body_isNil_whenNothingToSend() {
+        XCTAssertNil(DeviceBinding.body(channelIntegrity: ["battery_level": 1], appAttestKeyId: nil))
+        XCTAssertNil(DeviceBinding.body(channelIntegrity: [:], appAttestKeyId: ""))
+    }
+
+    func test_fingerprintKeys_matchServer() {
+        XCTAssertEqual(DeviceBinding.fingerprintKeys, [
+            "canvas_hash", "webgl_renderer", "webgl_vendor", "webgl_extensions",
+            "screen_resolution", "hardware_concurrency", "device_memory", "max_touch_points",
+            "platform", "color_depth", "timezone", "audio_fingerprint",
+        ])
+    }
+
+    func test_initSession_sendsDeviceBinding_onlyWhenGiven() async throws {
+        let captured = LockedBox<URLRequest>()
+        let c = client(capture: captured)
+        _ = try await c.initSession(toolId: "face_liveness_enrollment", deviceBinding: ["components": ["platform": "ios"]])
+        let withBinding = try JSONSerialization.jsonObject(with: captured.value!.httpBody!) as? [String: Any]
+        XCTAssertEqual(((withBinding?["device_binding"] as? [String: Any])?["components"] as? [String: Any])?["platform"] as? String, "ios")
+        _ = try await c.initSession(toolId: "face_liveness_enrollment")
+        let without = try JSONSerialization.jsonObject(with: captured.value!.httpBody!) as? [String: Any]
+        XCTAssertNil(without?["device_binding"])
+        XCTAssertEqual(without?["toolId"] as? String, "face_liveness_enrollment")
+    }
+}
