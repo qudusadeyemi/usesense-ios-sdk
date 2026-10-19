@@ -15,6 +15,25 @@ import Combine
     @Published public var booleans: [String: Bool] = [:]
     @Published public var errors: [String: String] = [:]
     @Published public var isBusy: Bool = false
+    /// Optional status line rendered above the fields. Used by location
+    /// capture to report position acquisition without blocking the form.
+    @Published public var statusLine: String?
+    /// True when the status reports success rather than a recoverable problem.
+    @Published public var statusIsGood: Bool = false
+
+    /// An optional extra action offered below the fields, used by location
+    /// capture to offer a frontage photo. Never gates the continue button.
+    public struct SecondaryAction {
+        public let title: String
+        public let hint: String?
+        public let perform: () -> Void
+        public init(title: String, hint: String? = nil, perform: @escaping () -> Void) {
+            self.title = title
+            self.hint = hint
+            self.perform = perform
+        }
+    }
+    @Published public var secondaryAction: SecondaryAction?
 
     public init(fields: [FormField], serverErrors: [String: String] = [:]) {
         self.fields = fields
@@ -53,8 +72,47 @@ public struct FormScreen: View {
                     Text(FlowCopyResolver.text(\.form?.title, default: "A few details"))
                         .font(.usDisplay(24, .bold))
                         .foregroundColor(USColors.foreground)
+                    if let status = model.statusLine {
+                        HStack(spacing: 8) {
+                            Text(model.statusIsGood ? "\u{2713}" : "\u{2022}")
+                                .foregroundColor(model.statusIsGood ? brandColor : USColors.mutedForeground)
+                            Text(status)
+                                .font(.usBody(13.5))
+                                .foregroundColor(USColors.mutedForeground)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(USColors.card)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(USColors.border, lineWidth: 1))
+                        .cornerRadius(12)
+                        .accessibilityElement(children: .combine)
+                    }
                     ForEach(model.fields, id: \.key) { field in
                         fieldView(field)
+                    }
+                    if let secondary = model.secondaryAction {
+                        Button(action: secondary.perform) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(secondary.title)
+                                    .font(.usBody(15))
+                                    .foregroundColor(brandColor)
+                                if let hint = secondary.hint {
+                                    Text(hint)
+                                        .font(.usBody(12))
+                                        .foregroundColor(USColors.mutedForeground)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 14)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .strokeBorder(USColors.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.top, 4)

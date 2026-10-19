@@ -31,7 +31,10 @@ Pod::Spec.new do |s|
     ]
   }
 
-  s.frameworks       = 'AVFoundation', 'CoreMotion', 'UIKit', 'Accelerate'
+  # CoreLocation: address capture (Flows/LocationFixer.swift). Declared
+  # explicitly rather than relying on Swift auto-linking, matching every other
+  # system framework this pod uses.
+  s.frameworks       = 'AVFoundation', 'CoreMotion', 'UIKit', 'Accelerate', 'CoreLocation'
   s.weak_frameworks  = 'LocalAuthentication', 'DeviceCheck', 'CryptoKit'
 
   # ──────────────────────────────────────────────────────────────────────
