@@ -16,6 +16,13 @@ public struct FlowError: Error, CustomStringConvertible, Equatable {
         /// keyed by FormField.key. The runner surfaces these inline rather
         /// than terminating the run via the completion handler.
         case invalidInput = "invalid_input"
+        /// The face capture did not reach its upload in time (watchdog).
+        case captureTimeout = "capture_timeout"
+        /// The face capture's upload / completion did not finish in time.
+        case uploadTimeout = "upload_timeout"
+        /// The run sat on a step with nothing for the device to do and never
+        /// moved on within the polling budget.
+        case stepTimeout = "step_timeout"
         case unknown
     }
 
@@ -34,4 +41,19 @@ public struct FlowError: Error, CustomStringConvertible, Equatable {
     }
 
     public var description: String { "FlowError(\(code.rawValue)): \(message)" }
+
+    /// Whether "Try again" can help. A dead or forbidden token cannot be
+    /// fixed from the device, and a cancellation is the subject's choice.
+    public var isRetryable: Bool {
+        switch code {
+        case .tokenExpired, .tokenInvalid, .cancelled: return false
+        default: return true
+        }
+    }
+
+    /// The stable code shown on the terminal error screen.
+    public var displayCode: String {
+        if let serverCode, !serverCode.isEmpty { return serverCode.uppercased() }
+        return code.rawValue.uppercased()
+    }
 }

@@ -13,7 +13,21 @@ public final class FlowsClient: @unchecked Sendable {
     private let baseURL: URL
     private let fetcher: Fetcher
 
-    public init(flowRunId: String, sdkToken: String, apiBaseURL: URL, session: URLSession = .shared) {
+    /// Default per-request idle timeout for the JSON runner calls.
+    public static let requestTimeout: TimeInterval = 60
+    /// Documents are megabytes of base64; give them longer.
+    public static let documentUploadTimeout: TimeInterval = 120
+
+    /// URLSession.shared bounds only the idle gap between packets (60s) and
+    /// lets a transfer run for 7 days. This one caps the whole transfer.
+    public static let defaultSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = requestTimeout
+        config.timeoutIntervalForResource = documentUploadTimeout + 30
+        return URLSession(configuration: config)
+    }()
+
+    public init(flowRunId: String, sdkToken: String, apiBaseURL: URL, session: URLSession = FlowsClient.defaultSession) {
         self.flowRunId = flowRunId
         self.sdkToken = sdkToken
         self.baseURL = apiBaseURL
@@ -38,6 +52,7 @@ public final class FlowsClient: @unchecked Sendable {
     private func makeRequest(method: String, suffix: String, query: [URLQueryItem] = [], body: [String: Any]? = nil) throws -> URLRequest {
         var request = URLRequest(url: url(suffix, query: query))
         request.httpMethod = method
+        request.timeoutInterval = Self.requestTimeout
         request.setValue("Bearer \(sdkToken)", forHTTPHeaderField: "Authorization")
         // Identify the platform to the server at the first device contact
         // (init-session), so the flow capture session is scored on the iOS
@@ -196,7 +211,8 @@ public final class FlowsClient: @unchecked Sendable {
         var body: [String: Any] = ["data": data, "mimeType": mimeType, "side": side]
         if let documentType { body["documentType"] = documentType }
         if let captureMethod { body["captureMethod"] = captureMethod }
-        let request = try makeRequest(method: "POST", suffix: "/documents", body: body)
+        var request = try makeRequest(method: "POST", suffix: "/documents", body: body)
+        request.timeoutInterval = Self.documentUploadTimeout
         guard let json = try await send(request) as? [String: Any],
               let documentId = json["document_id"] as? String,
               let status = json["status"] as? String else {

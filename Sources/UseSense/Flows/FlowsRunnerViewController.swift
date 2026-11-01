@@ -44,6 +44,13 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     private var submittedDeviceNonce: String?
     /// One re-read for a device step that arrived without a nonce.
     private var reloadedForDeviceNonce = false
+    /// Bounded re-read while the run is live but has nothing for the device to
+    /// do. Before this the runner showed its spinner forever.
+    private var pollTask: Task<Void, Never>?
+    static var stepPollInterval: TimeInterval = 2
+    static var stepPollBudget: TimeInterval = 60
+    /// Guards re-presenting the terminal error surface.
+    private var terminalErrorPresented = false
 
     init(options: RunFlowOptions, completion: @escaping (Result<FlowRunResult, FlowError>) -> Void) {
         self.options = options
@@ -135,9 +142,9 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             applyResolvedCopy(server: next.branding?.copy)
             render()
         } catch let e as FlowError {
-            finish(.failure(e))
+            presentTerminalError(e)
         } catch {
-            finish(.failure(FlowError(code: .unknown, message: error.localizedDescription)))
+            presentTerminalError(FlowError(code: .unknown, message: error.localizedDescription))
         }
     }
 
@@ -155,9 +162,9 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             fieldErrors = e.details
             render()
         } catch let e as FlowError {
-            finish(.failure(e))
+            presentTerminalError(e)
         } catch {
-            finish(.failure(FlowError(code: .unknown, message: error.localizedDescription)))
+            presentTerminalError(FlowError(code: .unknown, message: error.localizedDescription))
         }
     }
 
@@ -177,23 +184,34 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
 
     private func render() {
         guard let view = view_ else { return }
+        if terminalErrorPresented { return }
         hideSpinner()
         // Terminal: show the branded result screen, then deliver the result when
         // the subject taps Continue. Subject-initiated exits (cancel / abandon)
         // close immediately with no result screen.
         switch view.state {
         case .cancelled, .abandoned:
+            stopPolling()
             finish(.success(FlowRunResult(flowRunId: view.id, state: view.state, outcome: view.outcome)))
             return
         case .completed, .errored:
+            stopPolling()
+            presentResult(for: view)
+            return
+        case .awaitingReview where view.pendingAction == nil:
+            // The subject's part is done; a human reviews next. Waiting on
+            // that behind a spinner would be a hang, so show "under review".
+            stopPolling()
             presentResult(for: view)
             return
         default: break
         }
         guard let action = view.pendingAction else {
             showSpinner()
+            startPollingForAction()
             return
         }
+        stopPolling()
         switch action {
         case .captureFace(let toolId):
             presentFaceCapture(toolId: toolId)
@@ -229,7 +247,12 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         case .approve:      kind = .success
         case .reject:       kind = .notVerified
         case .manualReview: kind = .review
-        case .none:         kind = view.state == .errored ? .notVerified : .success
+        case .none:
+            switch view.state {
+            case .errored: kind = .notVerified
+            case .awaitingReview: kind = .review
+            default: kind = .success
+            }
         }
         let result = FlowRunResult(flowRunId: view.id, state: view.state, outcome: view.outcome)
         let doneTitle = FlowCopyResolver.text(\.buttons?.continue, default: "Done")
@@ -267,6 +290,134 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         let displayName = view_?.branding?.displayName
         if logoURL == nil && displayName == nil { return nil }
         return USBrandingHeader(displayName: displayName, logoURL: logoURL)
+    }
+
+    // MARK: - Fail-safe
+
+    /// The run is live but parked on nothing the device can act on (a server
+    /// step still settling). Re-read it on an interval; if nothing changes
+    /// within the budget, end in a retryable error instead of a spinner.
+    private func startPollingForAction() {
+        guard pollTask == nil else { return }
+        let interval = Self.stepPollInterval
+        let budget = Self.stepPollBudget
+        pollTask = Task { [weak self] in
+            let deadline = Date().addingTimeInterval(budget)
+            while Date() < deadline {
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                if Task.isCancelled { return }
+                guard let self else { return }
+                guard let next = try? await self.client.get() else { continue }
+                if Task.isCancelled { return }
+                self.view_ = next
+                if next.pendingAction != nil || Self.isTerminal(next.state) {
+                    self.pollTask = nil
+                    self.applyResolvedAppearance(server: next.branding?.appearance)
+                    self.applyResolvedCopy(server: next.branding?.copy)
+                    self.render()
+                    return
+                }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.pollTask = nil
+            self.presentTerminalError(FlowError(
+                code: .stepTimeout,
+                message: "The run did not move on within \(Int(budget))s."
+            ))
+        }
+    }
+
+    private func stopPolling() {
+        pollTask?.cancel()
+        pollTask = nil
+    }
+
+    private static func isTerminal(_ state: FlowRunState) -> Bool {
+        switch state {
+        case .completed, .errored, .cancelled, .abandoned, .awaitingReview: return true
+        default: return false
+        }
+    }
+
+    /// The face capture's error, carried into the Flow taxonomy with the SDK's
+    /// own code kept as the displayed reference.
+    static func flowError(fromCapture err: UseSenseError) -> FlowError {
+        let code: FlowError.Code
+        switch err.code {
+        case .captureTimeout: code = .captureTimeout
+        case .uploadTimeout: code = .uploadTimeout
+        default: code = .providerUnavailable
+        }
+        return FlowError(code: code, message: err.message, serverCode: err.code.rawValue)
+    }
+
+    /// Subject-facing copy for a terminal error. Never the raw message, which
+    /// can be a decoder or transport string.
+    static func subjectMessage(for error: FlowError) -> String {
+        switch error.code {
+        case .networkUnavailable:
+            return "We couldn't reach the verification service. Check your connection and try again."
+        case .tokenExpired, .tokenInvalid:
+            return "This verification link is no longer valid. Please start again from the app."
+        case .captureTimeout:
+            return UseSenseErrorCode.captureTimeout.userMessage
+        case .uploadTimeout:
+            return UseSenseErrorCode.uploadTimeout.userMessage
+        case .stepTimeout:
+            return "This step is taking longer than expected. Please try again."
+        case .permissionDenied:
+            return "Camera access is needed to continue. Allow it in Settings, then try again."
+        default:
+            return FlowCopyResolver.text(\.errors?.providerUnavailable, default: "Verification is temporarily unavailable. Please try again.")
+        }
+    }
+
+    /// A system failure ends here: a branded screen with the reason, a stable
+    /// code, "Try again" (a clean re-read of the run, which re-presents the
+    /// parked step) when it can help, and "Close", which reports the failure to
+    /// the host. It replaces the old behaviour of closing the runner at once,
+    /// which to the subject looked like the SDK ejecting them.
+    private func presentTerminalError(_ error: FlowError) {
+        guard !terminalErrorPresented else { return }
+        terminalErrorPresented = true
+        stopPolling()
+        hideSpinner()
+        let retry: (() -> Void)? = error.isRetryable ? { [weak self] in self?.retryAfterTerminalError() } : nil
+        let host = UIHostingController(rootView: FlowErrorView(
+            title: FlowCopyResolver.text(\.errors?.generic, default: "Something went wrong"),
+            message: Self.subjectMessage(for: error),
+            retryTitle: retry == nil ? nil : FlowCopyResolver.text(\.buttons?.tryAgain, default: "Try again"),
+            onRetry: retry,
+            branding: brandingHeader,
+            code: error.displayCode,
+            secondaryTitle: "Close",
+            onSecondary: { [weak self] in
+                guard let self else { return }
+                self.dismiss(animated: false) { self.finish(.failure(error)) }
+            }
+        ))
+        host.modalPresentationStyle = .fullScreen
+        // Whatever surface is up (primer, form, id entry) goes first: UIKit
+        // drops a present issued over a controller that is presenting.
+        formModel = nil
+        formHost = nil
+        idNumberPresented = false
+        if presentedViewController != nil {
+            dismiss(animated: false) { [weak self] in self?.present(host, animated: true) }
+        } else {
+            present(host, animated: true)
+        }
+    }
+
+    private func retryAfterTerminalError() {
+        dismiss(animated: true) { [weak self] in
+            guard let self else { return }
+            self.terminalErrorPresented = false
+            self.submittedDeviceNonce = nil
+            self.reloadedForDeviceNonce = false
+            self.infoOpenURLPresented = false
+            Task { await self.refreshAndDrive() }
+        }
     }
 
     // MARK: - Surfaces
@@ -516,7 +667,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
                 reloadedForDeviceNonce = true
                 Task { await load() }
             case .fail:
-                finish(.failure(FlowError(code: .unknown, message: DeviceSignalsCapability.missingNonceMessage)))
+                presentTerminalError(FlowError(code: .unknown, message: DeviceSignalsCapability.missingNonceMessage))
             }
             return
         }
@@ -533,9 +684,9 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             } catch let e as FlowError where DeviceSignalsCapability.needsReload(serverCode: e.serverCode) {
                 await load()
             } catch let e as FlowError {
-                finish(.failure(e))
+                presentTerminalError(e)
             } catch {
-                finish(.failure(FlowError(code: .unknown, message: error.localizedDescription)))
+                presentTerminalError(FlowError(code: .unknown, message: error.localizedDescription))
             }
         }
     }
@@ -556,11 +707,13 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
                         let response = try await self.client.initSession(toolId: toolId, deviceBinding: binding)
                         self.dismiss(animated: false) { self.presentCaptureViewController(with: response) }
                     } catch let e as FlowError {
-                        self.dismiss(animated: true) { self.finish(.failure(e)) }
+                        // A failed init-session (including a response the
+                        // decoder rejects) used to close the runner outright:
+                        // the subject saw the SDK vanish. Show why, and offer
+                        // a clean retry of the step instead.
+                        self.presentTerminalError(e)
                     } catch {
-                        self.dismiss(animated: true) {
-                            self.finish(.failure(FlowError(code: .unknown, message: error.localizedDescription)))
-                        }
+                        self.presentTerminalError(FlowError(code: .unknown, message: error.localizedDescription))
                     }
                 }
             }
@@ -614,10 +767,15 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
                 if err.code == .userCancelled {
                     Task { await self.cancelRun() }
                 } else {
-                    self.finish(.failure(FlowError(code: .providerUnavailable, message: err.message)))
+                    // The step is still parked server-side: "Try again"
+                    // re-reads the run and mints a fresh capture session.
+                    self.presentTerminalError(Self.flowError(fromCapture: err))
                 }
             }
         }
+        // Report after the capture screen is gone, so the next present (the
+        // result, the next step or an error) is never dropped by UIKit.
+        captureVC.dismissesBeforeCallback = true
         captureVC.modalPresentationStyle = .fullScreen
         present(captureVC, animated: true)
     }
@@ -857,9 +1015,9 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
                 }
                 await advance(inputs: ["document_id": response.documentId])
             } catch let e as FlowError {
-                finish(.failure(e))
+                presentTerminalError(e)
             } catch {
-                finish(.failure(FlowError(code: .unknown, message: error.localizedDescription)))
+                presentTerminalError(FlowError(code: .unknown, message: error.localizedDescription))
             }
         }
     }

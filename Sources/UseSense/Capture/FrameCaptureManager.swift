@@ -17,6 +17,10 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
 
     private(set) var isRunning = false
     private var isMirrored = false
+    /// configure() runs once per manager. A retry calls it again, and adding a
+    /// second input for the same camera fails ("Cannot add camera input."),
+    /// which turned every "Try again" into a camera error.
+    private var isConfigured = false
 
     /// Cached preview layer – must return the **same** instance every time so the
     /// UIView that hosts it keeps showing the live feed across SwiftUI re-renders.
@@ -31,6 +35,7 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
     }
 
     func configure() throws {
+        if isConfigured { return }
         captureSession.beginConfiguration()
         defer { captureSession.commitConfiguration() }
 
@@ -64,6 +69,7 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
             connection.isVideoMirrored = false
             isMirrored = false
         }
+        isConfigured = true
     }
 
     func start() {

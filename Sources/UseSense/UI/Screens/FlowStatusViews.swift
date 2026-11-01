@@ -55,19 +55,28 @@ public struct FlowErrorView: View {
     private let retryTitle: String?
     private let onRetry: (() -> Void)?
     private let branding: USBrandingHeader?
+    private let code: String?
+    private let secondaryTitle: String?
+    private let onSecondary: (() -> Void)?
 
     public init(
         title: String = "Unavailable",
         message: String,
         retryTitle: String? = nil,
         onRetry: (() -> Void)? = nil,
-        branding: USBrandingHeader? = nil
+        branding: USBrandingHeader? = nil,
+        code: String? = nil,
+        secondaryTitle: String? = nil,
+        onSecondary: (() -> Void)? = nil
     ) {
         self.title = title
         self.message = message
         self.retryTitle = retryTitle
         self.onRetry = onRetry
         self.branding = branding
+        self.code = code
+        self.secondaryTitle = secondaryTitle
+        self.onSecondary = onSecondary
     }
 
     public var body: some View {
@@ -90,12 +99,24 @@ public struct FlowErrorView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 16)
+                if let code {
+                    // A stable reference for support and the host app.
+                    Text("Error code: \(code)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(USColors.mutedForeground)
+                        .accessibilityIdentifier("usesense.flow.error.code")
+                }
                 Spacer()
             }
             .frame(maxWidth: .infinity)
         } footer: {
-            if let retryTitle, let onRetry {
-                USButton(retryTitle, variant: .primary, size: .large, action: onRetry)
+            VStack(spacing: 12) {
+                if let retryTitle, let onRetry {
+                    USButton(retryTitle, variant: .primary, size: .large, action: onRetry)
+                }
+                if let secondaryTitle, let onSecondary {
+                    USButton(secondaryTitle, variant: .secondary, size: .large, action: onSecondary)
+                }
             }
         }
     }

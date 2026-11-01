@@ -9,6 +9,13 @@ public final class UseSenseViewController: UIViewController {
     /// True when this controller seeded FlowAppearanceResolver itself, so it
     /// clears only what it set (a Flow runner owns the resolver during a run).
     private var seededAppearance = false
+    /// When true the controller dismisses itself first and reports the result
+    /// in the dismissal's completion. The Flows runner sets it: it presents its
+    /// next surface (or an error screen) from the callback, and a present
+    /// issued while this controller is still dismissing is dropped by UIKit,
+    /// leaving the subject on a blank runner. Off by default so integrators
+    /// that dismiss from the callback keep today's order.
+    var dismissesBeforeCallback = false
 
     public init(
         session: UseSenseSession,
@@ -39,12 +46,10 @@ public final class UseSenseViewController: UIViewController {
         let useSenseView = UseSenseView(
             session: session,
             onComplete: { [weak self] result in
-                self?.onComplete?(result)
-                self?.dismiss(animated: true)
+                self?.deliver(result)
             },
             onCancel: { [weak self] in
-                self?.onComplete?(.failure(UseSenseError(code: .userCancelled)))
-                self?.dismiss(animated: true)
+                self?.deliver(.failure(UseSenseError(code: .userCancelled)))
             }
         )
 
@@ -61,6 +66,22 @@ public final class UseSenseViewController: UIViewController {
             hosting.view.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
         hosting.didMove(toParent: self)
+    }
+
+    private func deliver(_ result: Result<RedactedDecisionObject, UseSenseError>) {
+        guard let callback = onComplete else { return }
+        // Exactly once: a second tap or a late state change must not report twice.
+        onComplete = nil
+        if dismissesBeforeCallback {
+            if presentingViewController != nil {
+                dismiss(animated: true) { callback(result) }
+            } else {
+                callback(result)
+            }
+        } else {
+            callback(result)
+            dismiss(animated: true)
+        }
     }
 
     public override func viewDidDisappear(_ animated: Bool) {

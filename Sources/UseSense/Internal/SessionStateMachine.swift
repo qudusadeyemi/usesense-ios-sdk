@@ -37,6 +37,50 @@ enum SessionState: Sendable {
     case error(UseSenseError)
 }
 
+extension SessionState {
+    /// The attempt is over: a decision, an error, or a camera failure.
+    var isTerminal: Bool {
+        switch self {
+        case .done, .error, .cameraError: return true
+        default: return false
+        }
+    }
+
+    var isIdle: Bool {
+        if case .idle = self { return true }
+        return false
+    }
+
+    /// Frames are being captured or a challenge is on screen.
+    var isCaptureInProgress: Bool {
+        switch self {
+        case .baseline, .zoom, .countdown, .challenge, .inlineStepUp: return true
+        default: return false
+        }
+    }
+
+    /// Stable, PII-free name for diagnostics.
+    var debugName: String {
+        switch self {
+        case .idle: return "idle"
+        case .created: return "created"
+        case .permissionsRequired: return "permissions_required"
+        case .cameraError: return "camera_error"
+        case .instructions: return "instructions"
+        case .faceGuide: return "face_guide"
+        case .baseline: return "baseline"
+        case .zoom: return "zoom"
+        case .countdown: return "countdown"
+        case .challenge: return "challenge"
+        case .inlineStepUp: return "inline_step_up"
+        case .uploading: return "uploading"
+        case .completing: return "completing"
+        case .done: return "done"
+        case .error: return "error"
+        }
+    }
+}
+
 struct SessionData: Sendable {
     let sessionId: String
     let sessionToken: String
