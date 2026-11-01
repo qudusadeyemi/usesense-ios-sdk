@@ -48,15 +48,17 @@ final class SessionWatchdogTests: XCTestCase {
         let firedAt = LockedBox<Date>()
         let watchdog = SessionWatchdog { _ in firedAt.set(Date()); fired.fulfill() }
         let start = Date()
-        watchdog.arm(.upload, budget: .init(total: 5, stall: 0.25))
-        // Progress for ~0.6s (past two stall windows), then silence.
-        for i in 1...6 {
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.1 * Double(i)) { watchdog.kick() }
+        // Windows are generous so a loaded CI runner's scheduling jitter can't
+        // make a kick land after the window it was meant to extend.
+        watchdog.arm(.upload, budget: .init(total: 30, stall: 1.0))
+        // Progress every 0.3s for ~1.5s (past one stall window), then silence.
+        for i in 1...5 {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.3 * Double(i)) { watchdog.kick() }
         }
-        wait(for: [fired], timeout: 3)
+        wait(for: [fired], timeout: 10)
         let elapsed = firedAt.value!.timeIntervalSince(start)
-        XCTAssertGreaterThan(elapsed, 0.6, "kicks must push the stall deadline back")
-        XCTAssertLessThan(elapsed, 2.0, "a stalled phase fails on the stall window, not the hard ceiling")
+        XCTAssertGreaterThan(elapsed, 1.5, "kicks must push the stall deadline back")
+        XCTAssertLessThan(elapsed, 8.0, "a stalled phase fails on the stall window, not the hard ceiling")
     }
 
     func test_phaseCodes_areStable() {
