@@ -48,7 +48,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     /// do. Before this the runner showed its spinner forever.
     private var pollTask: Task<Void, Never>?
     static var stepPollInterval: TimeInterval = 2
-    static var stepPollBudget: TimeInterval = 60
+    static var stepPollBudget: TimeInterval = 90
     /// Guards re-presenting the terminal error surface.
     private var terminalErrorPresented = false
 
