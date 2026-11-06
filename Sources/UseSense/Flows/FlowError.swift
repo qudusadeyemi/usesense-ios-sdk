@@ -22,7 +22,7 @@ public struct FlowError: Error, CustomStringConvertible, Equatable {
         case uploadTimeout = "upload_timeout"
         /// The run sat on a step with nothing for the device to do and never
         /// moved on within the polling budget.
-        case stepTimeout = "step_timeout"
+        case runTimeout = "run_timeout"
         case unknown
     }
 

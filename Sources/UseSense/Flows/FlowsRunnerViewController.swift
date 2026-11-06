@@ -321,7 +321,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             guard let self, !Task.isCancelled else { return }
             self.pollTask = nil
             self.presentTerminalError(FlowError(
-                code: .stepTimeout,
+                code: .runTimeout,
                 message: "The run did not move on within \(Int(budget))s."
             ))
         }
@@ -363,7 +363,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             return UseSenseErrorCode.captureTimeout.userMessage
         case .uploadTimeout:
             return UseSenseErrorCode.uploadTimeout.userMessage
-        case .stepTimeout:
+        case .runTimeout:
             return "This step is taking longer than expected. Please try again."
         case .permissionDenied:
             return "Camera access is needed to continue. Allow it in Settings, then try again."

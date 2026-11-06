@@ -276,8 +276,8 @@ final class FlowFailsafeErrorTests: XCTestCase {
         XCTAssertFalse(FlowError(code: .tokenExpired, message: "").isRetryable)
         XCTAssertFalse(FlowError(code: .tokenInvalid, message: "").isRetryable)
         XCTAssertTrue(FlowError(code: .networkUnavailable, message: "").isRetryable)
-        XCTAssertTrue(FlowError(code: .stepTimeout, message: "").isRetryable)
-        XCTAssertEqual(FlowError(code: .stepTimeout, message: "").displayCode, "STEP_TIMEOUT")
+        XCTAssertTrue(FlowError(code: .runTimeout, message: "").isRetryable)
+        XCTAssertEqual(FlowError(code: .runTimeout, message: "").displayCode, "RUN_TIMEOUT")
         XCTAssertEqual(FlowError(code: .providerUnavailable, message: "", serverCode: "CAPTURE_FAILED").displayCode, "CAPTURE_FAILED")
     }
 
