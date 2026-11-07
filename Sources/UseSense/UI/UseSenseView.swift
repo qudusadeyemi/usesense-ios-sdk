@@ -219,9 +219,11 @@ public struct UseSenseView: View {
                 if let guidance = viewModel.qualityGuidance.first {
                     QualityWarningBanner(guidance: guidance, qualityLevel: viewModel.qualityLevel)
                         .padding(.horizontal, 16)
-                        .padding(.bottom, 32)
+                        .padding(.bottom, 8)
                 }
             }
+            // Clears the "Powered by Sense" capture footer.
+            .padding(.bottom, CaptureFooter.clearance)
         }
     }
 
@@ -247,7 +249,7 @@ public struct UseSenseView: View {
                 ChallengeProgressBar(progress: viewModel.challengeProgress)
                     .padding(.horizontal, 16)
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, CaptureFooter.clearance)
         }
     }
 
@@ -384,6 +386,10 @@ public struct UseSenseView: View {
 // MARK: - Capture footer ("Powered by Sense", 50% white, as Android's capture footer)
 
 struct CaptureFooter: View {
+    /// Bottom space content above the footer must leave (12pt text + 2 x 12pt
+    /// padding, plus a small gap).
+    static let clearance: CGFloat = 44
+
     var body: some View {
         Text("Powered by Sense")
             .font(.system(size: 12))
