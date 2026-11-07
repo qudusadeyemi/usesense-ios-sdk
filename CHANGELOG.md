@@ -6,7 +6,20 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [4.9.0] - 2026-11-07
+
+Tested on an iPhone 17 Pro in session mode and in a Flow, against the sandbox
+API.
+
 ### Changed
+
+- **Capture screens match Android.** The result shows the org's logo header
+  (the logo alone; the name only without a logo), and the capture screens carry
+  a "Powered by Sense" footer.
+- **No "Try Again" on the result inside a Flow.** The server settles the run
+  when the capture completes, so a retry there captured a session that counted
+  for nothing; the Flow's own policy decides retries. Standalone sessions keep
+  "Try Again" on a reject.
 
 - **One branding precedence everywhere: code wins, field by field.** For each
   field (colour, font, radius, logo, name, copy...), a value set in code beats
@@ -30,6 +43,14 @@ optional. `BrandingConfig(buttonRadius:)` takes `CGFloat?` (source-compatible).
 
 ### Fixed
 
+- **"Verifying your presence" could spin forever.** The watchdog's own timeout
+  error was discarded as belonging to a stale attempt, so a stalled upload or
+  completion never reached the error screen. It now always surfaces.
+- **A dead connection fails in 60 s, not 300 s.** The upload idle timeout was
+  five minutes.
+- **Captures and Flows never hang silently.** Capture, upload, completion and
+  the Flows runner are time-limited (the runner waits 90 s, as on Android) and
+  end in `capture_timeout`, `upload_timeout` or `run_timeout`.
 - **Retry finishes the same capture.** After an upload or completion failure,
   "Retry" keeps the session and the frames: it calls `/complete` again if the
   signals were accepted, otherwise re-uploads the same capture. It used to
@@ -50,6 +71,8 @@ optional. `BrandingConfig(buttonRadius:)` takes `CGFloat?` (source-compatible).
 
 ### Added
 
+- Opt-in on-device trace: launch with `USESENSE_DEBUG=1` to log each step and
+  network call; it is also written to `Library/Caches/usesense-trace.log`.
 - Error codes `NO_FRAMES_CAPTURED` (retryable, same wire code as Android) and
   `RESPONSE_INVALID`.
 
