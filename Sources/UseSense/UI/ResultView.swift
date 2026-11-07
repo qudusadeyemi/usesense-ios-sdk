@@ -4,11 +4,18 @@ import SwiftUI
 /// Multi-screen outcome view matching Android's success/denied/blocked/failure screens.
 struct ResultView: View {
     let decision: RedactedDecisionObject
+    /// Org lockup in a header bar, as Android's result screen: the logo alone
+    /// when there is one, else the name. Both nil = no header.
+    var headerLogoURL: URL? = nil
+    var headerDisplayName: String? = nil
     let onDismiss: () -> Void
     var onRetry: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 24) {
+            if headerLogoURL != nil || headerDisplayName != nil {
+                ResultBrandHeader(logoURL: headerLogoURL, displayName: headerDisplayName)
+            }
             Spacer()
 
             VStack(spacing: 20) {
@@ -122,6 +129,45 @@ struct ResultView: View {
         case "REJECT": return "Done"
         case "MANUAL_REVIEW": return "Got It"
         default: return "Done"
+        }
+    }
+}
+
+/// 56pt white bar with a hairline: the logo alone, the name while it loads or
+/// when there is no logo / it fails (HostedPageHeader's rule).
+struct ResultBrandHeader: View {
+    let logoURL: URL?
+    let displayName: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Spacer()
+                if let logoURL {
+                    AsyncImage(url: logoURL) { phase in
+                        if let image = phase.image {
+                            image.resizable().aspectRatio(contentMode: .fit).frame(maxHeight: 32)
+                        } else {
+                            name
+                        }
+                    }
+                } else {
+                    name
+                }
+                Spacer()
+            }
+            .frame(height: 56)
+            Rectangle().fill(Color.UseSense.border).frame(height: 1)
+        }
+        .background(Color.UseSense.surface)
+        .accessibilityIdentifier("usesense.result.header")
+    }
+
+    @ViewBuilder private var name: some View {
+        if let displayName {
+            Text(displayName)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(Color.UseSense.primary)
         }
     }
 }

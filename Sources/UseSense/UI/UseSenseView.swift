@@ -117,7 +117,10 @@ public struct UseSenseView: View {
                 }
 
             case .done(let decision):
-                ResultView(decision: decision, onDismiss: {
+                ResultView(decision: decision,
+                           headerLogoURL: viewModel.showsHeader ? viewModel.headerLogoURL : nil,
+                           headerDisplayName: viewModel.showsHeader ? viewModel.headerDisplayName : nil,
+                           onDismiss: {
                     onComplete(.success(decision))
                 }, onRetry: {
                     viewModel.retry()
@@ -139,6 +142,9 @@ public struct UseSenseView: View {
                     viewModel.resumeFinalization()
                 } : nil)
             }
+        }
+        .overlay(alignment: .bottom) {
+            if viewModel.showsCaptureFooter { CaptureFooter() }
         }
         .statusBarHidden(viewModel.isCameraActive)
     }
@@ -375,6 +381,20 @@ public struct UseSenseView: View {
     }
 }
 
+// MARK: - Capture footer ("Powered by Sense", 50% white, as Android's capture footer)
+
+struct CaptureFooter: View {
+    var body: some View {
+        Text("Powered by Sense")
+            .font(.system(size: 12))
+            .foregroundColor(.white.opacity(0.5))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .allowsHitTesting(false)
+            .accessibilityIdentifier("usesense.capture.footer")
+    }
+}
+
 // MARK: - Verifying Badge (red pulsing dot + "Verifying" per spec)
 
 struct VerifyingBadge: View {
@@ -413,6 +433,24 @@ final class UseSenseViewModel: ObservableObject {
 
     var previewLayer: AVCaptureVideoPreviewLayer? {
         session.previewLayer
+    }
+
+    /// Result header lockup. A Flow's resolved appearance (logo / placement)
+    /// wins over the session's own branding; placement `none` hides it.
+    var headerLogoURL: URL? { FlowAppearanceResolver.logoURL ?? session.brandLogoURL }
+    var headerDisplayName: String? { session.brandDisplayName }
+    var showsHeader: Bool {
+        FlowAppearanceResolver.logoPlacement != AppearanceLogo.Placement.none &&
+            (headerLogoURL != nil || headerDisplayName != nil)
+    }
+
+    /// The capture screens (camera up to the result) carry the
+    /// "Powered by Sense" footer, as on Android.
+    var showsCaptureFooter: Bool {
+        switch state {
+        case .faceGuide, .baseline, .zoom, .countdown, .challenge, .inlineStepUp, .uploading, .completing: return true
+        default: return false
+        }
     }
 
     var isCameraActive: Bool {

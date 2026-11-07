@@ -32,6 +32,14 @@ public final class UseSenseSession: @unchecked Sendable {
     /// from code alone at load can fold the dashboard layer in underneath.
     var onBrandingAvailable: (@MainActor (FlowAppearance?) -> Void)?
 
+    /// The org lockup for the result header: logo alone when there is one,
+    /// the name only without a logo (same rule as the hosted header).
+    /// Code (SDK init) logo first, then the session's dashboard branding.
+    var brandLogoURL: URL? {
+        (config.branding?.logoUrl ?? sessionData?.branding?.logoUrl).flatMap { URL(string: $0) }
+    }
+    var brandDisplayName: String? { sessionData?.branding?.displayName }
+
     private func publishBranding() {
         USTrace.log(BrandingResolver.describeSources(
             code: codeAppearance,
