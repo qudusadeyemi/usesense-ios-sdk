@@ -36,11 +36,19 @@ public final class UseSenseViewController: UIViewController {
         super.viewDidLoad()
 
         // The capture screens read the brand tokens from FlowAppearanceResolver.
-        // Inside a Flow the runner has already set it; a standalone session
-        // themes from its own SDK-init branding.
-        if FlowAppearanceResolver.current == nil, let appearance = session.brandingAppearance {
-            FlowAppearanceResolver.set(appearance)
+        // Inside a Flow the runner has already resolved it (code > dashboard)
+        // and owns it. A standalone session owns it here: it themes from the
+        // code-set branding at once, then folds the dashboard branding in
+        // underneath when the session response delivers it ("code wins").
+        if FlowAppearanceResolver.current == nil {
             seededAppearance = true
+            if let appearance = session.brandingAppearance {
+                FlowAppearanceResolver.set(appearance)
+            }
+            session.onBrandingAvailable = { [weak self] appearance in
+                guard self?.seededAppearance == true else { return }
+                FlowAppearanceResolver.set(appearance)
+            }
         }
 
         let useSenseView = UseSenseView(

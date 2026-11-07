@@ -80,6 +80,9 @@ public struct BrandingConfig: Sendable {
     /// the Flow appearance resolver so it never beats the operator's dashboard
     /// color (see `resolvedAppearance`).
     public static let defaultPrimaryColor = "#4F7CFF"
+    /// The built-in legacy button radius (kept as the concrete value of
+    /// `buttonRadius` for legacy screens; "not set" for the resolver).
+    public static let defaultButtonRadius: CGFloat = 10
 
     public var logoUrl: String?
     public var primaryColor: String
@@ -91,6 +94,9 @@ public struct BrandingConfig: Sendable {
     /// dashboard color wins. Existing non-Flows surfaces that read `primaryColor`
     /// directly are unaffected — they still see the concrete default.
     private let primaryColorWasSet: Bool
+    /// Same rule for `buttonRadius`: the legacy default (10) must not occupy the
+    /// code layer and beat a dashboard radius.
+    private let buttonRadiusWasSet: Bool
     /// Full white-label customization passed by the developer at SDK init. This
     /// is the highest-priority layer in the Flow appearance merge:
     ///   appearance > server(branding.appearance) > legacy primaryColor/buttonRadius/logoUrl/fontFamily > built-in default.
@@ -106,7 +112,7 @@ public struct BrandingConfig: Sendable {
     public init(
         logoUrl: String? = nil,
         primaryColor: String? = nil,
-        buttonRadius: CGFloat = 10,
+        buttonRadius: CGFloat? = nil,
         fontFamily: String? = nil,
         appearance: FlowAppearance? = nil,
         copy: FlowCopy? = nil
@@ -114,7 +120,8 @@ public struct BrandingConfig: Sendable {
         self.logoUrl = logoUrl
         self.primaryColor = primaryColor ?? Self.defaultPrimaryColor
         self.primaryColorWasSet = primaryColor != nil
-        self.buttonRadius = buttonRadius
+        self.buttonRadius = buttonRadius ?? Self.defaultButtonRadius
+        self.buttonRadiusWasSet = buttonRadius != nil
         self.fontFamily = fontFamily
         self.appearance = appearance
         self.copy = copy
@@ -132,7 +139,7 @@ public struct BrandingConfig: Sendable {
     public var resolvedAppearance: FlowAppearance? {
         let legacy = FlowAppearance.fromLegacy(
             primaryColor: primaryColorWasSet ? primaryColor : nil,
-            buttonRadius: buttonRadius,
+            buttonRadius: buttonRadiusWasSet ? buttonRadius : nil,
             logoUrl: logoUrl,
             fontFamily: fontFamily
         )

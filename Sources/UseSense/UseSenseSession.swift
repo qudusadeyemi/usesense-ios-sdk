@@ -16,9 +16,31 @@ public final class UseSenseSession: @unchecked Sendable {
     // MARK: - Private Properties
 
     private let config: UseSenseConfig
-    /// The integrator's SDK-init white-label, for the capture UI to theme from
+    /// The integrator's code-set white-label (SDK init config): the highest
+    /// layer in session mode.
+    var codeAppearance: FlowAppearance? { config.branding?.resolvedAppearance }
+
+    /// Session-mode appearance, field by field: code over the dashboard branding
+    /// delivered with the session ("code wins"). The capture UI themes from this
     /// when no Flow runner has already resolved one.
-    var brandingAppearance: FlowAppearance? { config.branding?.resolvedAppearance }
+    var brandingAppearance: FlowAppearance? {
+        BrandingResolver.resolve(code: codeAppearance, dashboard: sessionData?.branding?.resolvedAppearance)
+    }
+
+    /// Called on the main actor once the session's dashboard branding arrives
+    /// (session create / token exchange / injection), so a screen that themed
+    /// from code alone at load can fold the dashboard layer in underneath.
+    var onBrandingAvailable: (@MainActor (FlowAppearance?) -> Void)?
+
+    private func publishBranding() {
+        USTrace.log(BrandingResolver.describeSources(
+            code: codeAppearance,
+            dashboard: sessionData?.branding?.resolvedAppearance
+        ))
+        guard let callback = onBrandingAvailable else { return }
+        let appearance = brandingAppearance
+        Task { @MainActor in callback(appearance) }
+    }
     private let sessionType: SessionType
     private let identityId: String?
     private let externalUserId: String?
@@ -200,6 +222,7 @@ public final class UseSenseSession: @unchecked Sendable {
         USTrace.log("injected hosted/Flows session \(response.sessionId)")
         let data = SessionData(from: response)
         self.sessionData = data
+        publishBranding()
         self.sessionInjected = true
         self.apiClient.sessionToken = data.sessionToken
         self.apiClient.nonce = data.nonce
@@ -229,6 +252,7 @@ public final class UseSenseSession: @unchecked Sendable {
                     let response = try await apiClient.exchangeToken(clientToken: clientToken)
                     let data = SessionData(from: response)
                     self.sessionData = data
+                    publishBranding()
                 } else {
                     // Standard Init: create session directly
                     let request = CreateSessionRequest(
@@ -240,6 +264,7 @@ public final class UseSenseSession: @unchecked Sendable {
                     let response = try await apiClient.createSession(request: request)
                     let data = SessionData(from: response)
                     self.sessionData = data
+                    publishBranding()
                 }
             }
 

@@ -6,6 +6,28 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **One branding precedence everywhere: code wins, field by field.** For each
+  field (colour, font, radius, logo, name, copy...), a value set in code beats
+  the dashboard, the dashboard beats the built-in defaults, and nothing counts
+  unless it was explicitly set. Setting only a colour in code no longer hides
+  the dashboard logo.
+- **Session mode shows the dashboard branding.** The org's branding delivered
+  with the session (`branding` on the session-create / token-exchange /
+  init-session response) now themes the capture screens underneath any
+  code-set branding. Previously only code-set branding applied outside Flows.
+- **Unset is unset.** `BrandingConfig.buttonRadius` no longer counts as a code
+  choice unless passed (its legacy default of 10 used to beat a dashboard
+  radius), and the Flow run view no longer fills a missing `display_name` /
+  `primary_color` with "Sense" / `#4F7CFF`.
+- With `USESENSE_DEBUG=1` the trace logs the source of each resolved branding
+  field once per session/run, e.g. `primary=#FF6A00 (dashboard)`.
+
+**API:** `FlowRunView.Branding.displayName` and `.primaryColor` are now
+optional. `BrandingConfig(buttonRadius:)` takes `CGFloat?` (source-compatible).
+`CreateSessionResponse.branding` and `ServerBranding.appearance` / `.copy` are new.
+
 ### Fixed
 
 - **Retry finishes the same capture.** After an upload or completion failure,
