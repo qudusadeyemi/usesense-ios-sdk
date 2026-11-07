@@ -34,6 +34,21 @@ public struct CreateSessionResponse: Codable, Sendable {
         case nonce, policy, upload
         case geometricCoherence = "geometric_coherence"
     }
+
+    /// The identity fields (session_id, session_token, nonce, expires_at) and
+    /// the policy / upload blocks stay strict: without them there is no session
+    /// to run. `geometric_coherence` is an optional collection hint, so a block
+    /// of the wrong shape is dropped rather than failing the whole decode.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sessionId = try c.decode(String.self, forKey: .sessionId)
+        sessionToken = try c.decode(String.self, forKey: .sessionToken)
+        expiresAt = try c.decode(String.self, forKey: .expiresAt)
+        nonce = try c.decode(String.self, forKey: .nonce)
+        policy = try c.decode(SessionPolicy.self, forKey: .policy)
+        upload = try c.decode(UploadConfig.self, forKey: .upload)
+        geometricCoherence = (try? c.decodeIfPresent(GeometricCoherenceConfig.self, forKey: .geometricCoherence)) ?? nil
+    }
 }
 
 public struct SessionPolicy: Codable, Sendable {
@@ -59,6 +74,24 @@ public struct SessionPolicy: Codable, Sendable {
         case geometricCoherencePolicy = "geometricCoherence"
         case screenIllumination
         case meshIntegrity
+    }
+
+    /// The challenge blocks (`challenge`, `audio_challenge`) and the three
+    /// top-level policy fields stay strict -- silently dropping a challenge
+    /// would weaken the capture. The remaining blocks are optional tuning
+    /// hints: one the server sends malformed is treated as absent.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        requiresAudio = try c.decode(Bool.self, forKey: .requiresAudio)
+        requiresStepup = try c.decode(Bool.self, forKey: .requiresStepup)
+        challengeType = try c.decode(String.self, forKey: .challengeType)
+        challenge = try c.decodeIfPresent(ChallengeSpecWrapper.self, forKey: .challenge)
+        audioChallenge = try c.decodeIfPresent(SpeakPhraseChallenge.self, forKey: .audioChallenge)
+        policySource = (try? c.decodeIfPresent(String.self, forKey: .policySource)) ?? nil
+        inlineStepUp = (try? c.decodeIfPresent(InlineStepUpConfig.self, forKey: .inlineStepUp)) ?? nil
+        geometricCoherencePolicy = (try? c.decodeIfPresent(GCPolicyConfig.self, forKey: .geometricCoherencePolicy)) ?? nil
+        screenIllumination = (try? c.decodeIfPresent(ScreenIlluminationConfig.self, forKey: .screenIllumination)) ?? nil
+        meshIntegrity = (try? c.decodeIfPresent(MeshIntegrityConfig.self, forKey: .meshIntegrity)) ?? nil
     }
 }
 
@@ -88,6 +121,50 @@ public struct GeometricCoherenceConfig: Codable, Sendable {
         case onDevice3dmmRequired = "on_device_3dmm_required"
         case meshBindingChallenge = "mesh_binding_challenge"
     }
+
+    public init(
+        dualPathEnabled: Bool = false,
+        screenIlluminationEnabled: Bool = false,
+        onDevice3dmmRequired: Bool = false,
+        meshBindingChallenge: String = ""
+    ) {
+        self.dualPathEnabled = dualPathEnabled
+        self.screenIlluminationEnabled = screenIlluminationEnabled
+        self.onDevice3dmmRequired = onDevice3dmmRequired
+        self.meshBindingChallenge = meshBindingChallenge
+    }
+
+    /// Tolerant: this block is an optional server hint about which extra
+    /// signals to collect, so a field the server omits or sends as null (or as
+    /// the wrong type) degrades to "off" / "" instead of failing the whole
+    /// init-session decode. That strictness used to kill the session outright
+    /// ("The data couldn't be read because it is missing.") whenever the
+    /// server left out `screen_illumination_enabled` or sent
+    /// `mesh_binding_challenge: null`.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        dualPathEnabled = c.lenientBool(.dualPathEnabled)
+        screenIlluminationEnabled = c.lenientBool(.screenIlluminationEnabled)
+        onDevice3dmmRequired = c.lenientBool(.onDevice3dmmRequired)
+        meshBindingChallenge = c.lenientString(.meshBindingChallenge)
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// Missing, null or mistyped -> false. Accepts 0/1 and "true"/"false".
+    func lenientBool(_ key: Key) -> Bool {
+        if let b = try? decodeIfPresent(Bool.self, forKey: key) { return b }
+        if let i = try? decodeIfPresent(Int.self, forKey: key) { return i != 0 }
+        if let s = try? decodeIfPresent(String.self, forKey: key) {
+            return ["true", "1", "yes"].contains(s.lowercased())
+        }
+        return false
+    }
+
+    /// Missing, null or mistyped -> "".
+    func lenientString(_ key: Key) -> String {
+        (try? decodeIfPresent(String.self, forKey: key)) ?? ""
+    }
 }
 
 // MARK: - Inline Step-Up Config
@@ -101,6 +178,23 @@ public struct InlineStepUpConfig: Codable, Sendable {
         case enabled
         case suspicionThreshold = "suspicion_threshold"
         case preferredChallenge = "preferred_challenge"
+    }
+
+    public init(enabled: Bool, suspicionThreshold: Int, preferredChallenge: String) {
+        self.enabled = enabled
+        self.suspicionThreshold = suspicionThreshold
+        self.preferredChallenge = preferredChallenge
+    }
+
+    /// Tolerant like GeometricCoherenceConfig: a missing `enabled` reads as
+    /// off, a missing threshold as the default 55, a missing/null preferred
+    /// challenge as "auto".
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = c.lenientBool(.enabled)
+        suspicionThreshold = (try? c.decodeIfPresent(Int.self, forKey: .suspicionThreshold)) ?? 55
+        let preferred = c.lenientString(.preferredChallenge)
+        preferredChallenge = preferred.isEmpty ? "auto" : preferred
     }
 }
 
@@ -125,4 +219,8 @@ public struct MeshIntegrityConfig: Codable, Sendable {
     public let absenceAction: String?
     public let failureAction: String?
     public let requiredTiers: [String]?
+}
+
+extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

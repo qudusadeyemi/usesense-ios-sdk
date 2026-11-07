@@ -21,6 +21,12 @@ public enum UseSenseErrorCode: String, CaseIterable, Sendable {
     case faceNotDetected = "FACE_NOT_DETECTED"
     case lowLight = "LOW_LIGHT"
     case timeout = "TIMEOUT"
+    /// The capture did not reach the upload within its budget (a challenge
+    /// that never completed, a hung device call). Retryable.
+    case captureTimeout = "CAPTURE_TIMEOUT"
+    /// The signals upload or the complete call did not finish within its
+    /// budget, or stopped making progress. Retryable.
+    case uploadTimeout = "UPLOAD_TIMEOUT"
     case serverError = "SERVER_ERROR"
     case serviceUnavailable = "SERVICE_UNAVAILABLE"
     case tokenExpired = "TOKEN_EXPIRED"
@@ -51,6 +57,8 @@ public enum UseSenseErrorCode: String, CaseIterable, Sendable {
         case .faceNotDetected: return "Please position your face in the frame and try again."
         case .lowLight: return "Lighting is too low. Please move to a brighter area."
         case .timeout: return "Verification took too long. Please try again."
+        case .captureTimeout: return "The capture took too long to finish. Please try again."
+        case .uploadTimeout: return "We couldn't send your verification in time. Check your connection and try again."
         case .serverError: return "Server error. Please try again or contact support."
         case .serviceUnavailable: return "Service unavailable. Try again later."
         case .tokenExpired: return "Verification token has expired. Please start over."

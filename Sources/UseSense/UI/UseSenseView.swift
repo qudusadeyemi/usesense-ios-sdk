@@ -125,7 +125,10 @@ public struct UseSenseView: View {
 
             case .error(let error):
                 FailureView(error: error, onRetry: {
-                    if error.isRetryable {
+                    // A retryable error restarts in place only when a clean
+                    // attempt is possible here; otherwise the host (e.g. the
+                    // Flows runner) gets the error and re-inits the step.
+                    if error.isRetryable && viewModel.canRestartInPlace {
                         viewModel.retry()
                     } else {
                         onComplete(.failure(error))
@@ -457,6 +460,8 @@ final class UseSenseViewModel: ObservableObject {
     func retry() {
         Task { await session.retry() }
     }
+
+    var canRestartInPlace: Bool { session.canRestartInPlace }
 
     func cancel() {
         session.cancel()

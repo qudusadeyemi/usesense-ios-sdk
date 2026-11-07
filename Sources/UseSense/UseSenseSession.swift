@@ -50,9 +50,40 @@ public final class UseSenseSession: @unchecked Sendable {
 
     private var sessionData: SessionData?
     private var sessionStartTime: Date?
-    private var currentState: SessionState = .idle {
-        didSet { onStateChange?(currentState) }
+    private var storedState: SessionState = .idle
+    /// Every state write goes through here. A write from a superseded attempt
+    /// (work the watchdog or a retry abandoned, still winding down) is dropped,
+    /// so a late failure from the old attempt can never overwrite the new one.
+    private var currentState: SessionState {
+        get { storedState }
+        set {
+            if isStaleContext { return }
+            storedState = newValue
+            if newValue.isTerminal || newValue.isIdle { watchdog?.disarm() }
+            onStateChange?(newValue)
+        }
     }
+
+    // MARK: - Fail-safe
+
+    /// The attempt the current task belongs to. Set by `runAttempt`, inherited
+    /// by every child task, and compared with `attempt` before a state write.
+    @TaskLocal static var attemptToken: Int?
+    private let attemptLock = NSLock()
+    private var attempt = 0
+    private var attemptTasks: [Task<Void, Never>] = []
+    private var watchdog: SessionWatchdog?
+    var captureBudget = SessionWatchdog.captureBudget
+    var uploadBudget = SessionWatchdog.uploadBudget
+    /// App Attest is an Apple network call on first use. It must never hold
+    /// the upload: past this, the upload goes without it (the server treats a
+    /// missing attestation as unavailable, not as a failure).
+    static let appAttestWaitSeconds: TimeInterval = 5
+    /// Credentials were handed in (Flows / hosted page), so this object cannot
+    /// mint a fresh session of its own.
+    private var sessionInjected = false
+    /// Signals for this session may have reached the server.
+    private var uploadAttempted = false
     private var isStarted = false
     private var audioRecordingURL: URL?
     private var captureStartTime: Date?
@@ -105,12 +136,20 @@ public final class UseSenseSession: @unchecked Sendable {
         self.apiClient = UseSenseAPIClient(config: config)
         self.eventEmitter = eventEmitter
 
+        let maxFrames = config.options?.maxFrames ?? 30
+        let targetFps = config.options?.targetFps ?? 3
+        self.frameBuffer = FrameBuffer(maxFrames: maxFrames, targetFps: targetFps)
+
+        frameCaptureManager.delegate = self
+
         // Surface real upload progress. The signals request is the only one
         // that carries megabytes, and on a slow uplink it is minutes long;
         // without this the host has no way to tell slow from stuck.
-        self.apiClient.onUploadProgress = { [weak eventEmitter] sent, total in
+        self.apiClient.onUploadProgress = { [weak self, weak eventEmitter] sent, total in
             guard total > 0 else { return }
             let percent = Int((Double(sent) / Double(total)) * 100)
+            // Bytes moving = the upload is alive; push back the stall window.
+            self?.watchdog?.kick()
             eventEmitter?.emit(.uploadProgress, data: [
                 "bytes_sent": String(sent),
                 "bytes_total": String(total),
@@ -118,11 +157,9 @@ public final class UseSenseSession: @unchecked Sendable {
             ])
         }
 
-        let maxFrames = config.options?.maxFrames ?? 30
-        let targetFps = config.options?.targetFps ?? 3
-        self.frameBuffer = FrameBuffer(maxFrames: maxFrames, targetFps: targetFps)
-
-        frameCaptureManager.delegate = self
+        watchdog = SessionWatchdog(onTimeout: { [weak self] phase in
+            self?.handleWatchdogTimeout(phase)
+        })
     }
 
     // MARK: - Public Event Listener
@@ -143,6 +180,7 @@ public final class UseSenseSession: @unchecked Sendable {
     public func injectHostedSessionData(_ response: CreateSessionResponse) {
         let data = SessionData(from: response)
         self.sessionData = data
+        self.sessionInjected = true
         self.apiClient.sessionToken = data.sessionToken
         self.apiClient.nonce = data.nonce
         frameBuffer.reconfigure(maxFrames: data.upload.maxFrames, targetFps: data.upload.targetFps)
@@ -155,6 +193,10 @@ public final class UseSenseSession: @unchecked Sendable {
     func start() async {
         guard !isStarted else { return }
         isStarted = true
+        await runAttempt { await self.runStart() }
+    }
+
+    private func runStart() async {
         sessionStartTime = Date()
 
         do {
@@ -207,6 +249,10 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     func requestPermissions() async {
+        await runAttempt { await self.runRequestPermissions() }
+    }
+
+    private func runRequestPermissions() async {
         eventEmitter.emit(.permissionsRequested)
 
         let cameraStatus = AVCaptureDevice.authorizationStatus(for: .video)
@@ -244,14 +290,19 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     func proceedFromInstructions() async {
-        await startFaceGuide()
+        await runAttempt { await self.startFaceGuide() }
     }
 
     func faceReady() async {
-        await startBaseline()
+        await runAttempt { await self.startBaseline() }
     }
 
     func challengeCompleted() async {
+        await runAttempt { await self.runChallengeCompleted() }
+    }
+
+    private func runChallengeCompleted() async {
+        guard storedState.isCaptureInProgress else { return }
         isCapturingFrames = false
         challengeResponseBuilder.markCompleted()
         eventEmitter.emit(.challengeCompleted)
@@ -287,8 +338,27 @@ public final class UseSenseSession: @unchecked Sendable {
         challengeResponseBuilder.recordFrame(frameIndex: frameIndex, timestampMs: timestampMs)
     }
 
+    /// Whether "Try again" can run a clean attempt inside this object. Once
+    /// signals may have reached the server, a clean attempt needs a new
+    /// session, which only a self-created session can mint; an injected one
+    /// (Flows / hosted page) hands the error back to its host to re-init.
+    var canRestartInPlace: Bool {
+        !uploadAttempted || (!sessionInjected && clientToken == nil)
+    }
+
     func retry() async {
+        invalidateAttempt()
         isCapturingFrames = false
+        frameCaptureManager.stop()
+        audioCaptureManager.cleanup()
+        if uploadAttempted && !sessionInjected && clientToken == nil {
+            // The old session may already hold this attempt's signals.
+            sessionData = nil
+        }
+        uploadAttempted = false
+        stepUpResult = nil
+        serverStepUp = nil
+        framesDropped = 0
         frameBuffer.reset()
         challengeResponseBuilder.reset()
         faceMeshManager.reset()
@@ -301,6 +371,7 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     func cancel() {
+        invalidateAttempt()
         isCapturingFrames = false
         frameCaptureManager.stop()
         audioCaptureManager.cleanup()
@@ -422,6 +493,7 @@ public final class UseSenseSession: @unchecked Sendable {
     private func startBaseline() async {
         do {
             eventEmitter.emit(.captureStarted)
+            watchdog?.arm(.capture, budget: captureBudget)
             captureStartTime = Date()
             frameBuffer.reset()
             faceMeshManager.reset()
@@ -558,7 +630,14 @@ public final class UseSenseSession: @unchecked Sendable {
         // Wait for App Attest
         var attestFields: [String: Any] = [:]
         #if canImport(DeviceCheck) && canImport(CryptoKit)
-        attestFields = await appAttestTask?.value ?? [:]
+        if let attestTask = appAttestTask {
+            attestFields = await Deadline.run(seconds: Self.appAttestWaitSeconds) {
+                await attestTask.value
+            } ?? {
+                attestTask.cancel()
+                return ["app_attest_supported": true, "app_attest_timed_out": true]
+            }()
+        }
         #endif
 
         // Collect channel integrity and device telemetry
@@ -620,7 +699,8 @@ public final class UseSenseSession: @unchecked Sendable {
                 meshResults: meshResults,
                 fittingResults: fittingResults,
                 frameHashes: frameHashes,
-                meshBindingChallenge: session.geometricCoherence?.meshBindingChallenge,
+                // An omitted challenge decodes as ""; treat it as absent.
+                meshBindingChallenge: session.geometricCoherence?.meshBindingChallenge.nilIfEmpty,
                 attestFields: attestFields
             )
         }
@@ -821,6 +901,8 @@ public final class UseSenseSession: @unchecked Sendable {
         }
 
         // Upload
+        uploadAttempted = true
+        watchdog?.arm(.upload, budget: uploadBudget)
         currentState = .uploading(progress: 0)
         eventEmitter.emit(.uploadStarted)
 
@@ -862,6 +944,7 @@ public final class UseSenseSession: @unchecked Sendable {
     /// `challengeCompleted()`, which hands off to `finishServerStepUpRound`.
     private func startServerStepUpRound(_ stepUp: StepUpInstruction) async {
         serverStepUp = stepUp
+        watchdog?.arm(.capture, budget: captureBudget)
         frameBuffer.reset()
         challengeResponseBuilder.reset()
         reconfigureFrameBuffer(maxFrames: stepUp.maxFrames, targetFps: sessionData?.upload.targetFps ?? 3)
@@ -905,6 +988,8 @@ public final class UseSenseSession: @unchecked Sendable {
             "challenge_response": challengeResponseBuilder.build(challenge: stepUp.challenge),
             "frame_hashes": Array(frameBuffer.getFrameHashes().prefix(frames.count)),
         ]
+        uploadAttempted = true
+        watchdog?.arm(.upload, budget: uploadBudget)
         currentState = .uploading(progress: 0)
         do {
             let metadataData = try JSONSerialization.data(withJSONObject: metadata)
@@ -969,11 +1054,85 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     private func handleError(_ error: UseSenseError) {
+        if isStaleContext { return }
+        // Stop the camera and mic too: an error screen over a live camera is
+        // a capture that never ended.
+        isCapturingFrames = false
+        frameCaptureManager.stop()
+        if audioCaptureManager.isRecording { _ = audioCaptureManager.stopRecording() }
         deviceSignalCollector.release()
         faceMeshManager.teardown()
         eventEmitter.emit(.error, data: ["code": error.code.rawValue, "message": error.message])
         currentState = .error(error)
     }
+}
+
+// MARK: - Attempts + watchdog
+
+extension UseSenseSession {
+    private var currentAttempt: Int {
+        attemptLock.lock(); defer { attemptLock.unlock() }
+        return attempt
+    }
+
+    /// True when running inside a task that belongs to a superseded attempt.
+    private var isStaleContext: Bool {
+        guard let token = Self.attemptToken else { return false }
+        return token != currentAttempt
+    }
+
+    /// Runs one unit of session work as part of the current attempt, so the
+    /// watchdog, a retry or a cancel can cancel it and mute its late writes.
+    private func runAttempt(_ body: @escaping @Sendable () async -> Void) async {
+        let token = currentAttempt
+        let task = Task { await Self.$attemptToken.withValue(token) { await body() } }
+        trackAttemptTask(task, add: true)
+        await task.value
+        trackAttemptTask(task, add: false)
+    }
+
+    private func trackAttemptTask(_ task: Task<Void, Never>, add: Bool) {
+        attemptLock.lock(); defer { attemptLock.unlock() }
+        if add { attemptTasks.append(task) } else { attemptTasks.removeAll { $0 == task } }
+    }
+
+    /// Abandon the attempt in flight: cancel its work and mute its writes.
+    private func invalidateAttempt() {
+        attemptLock.lock()
+        attempt += 1
+        let tasks = attemptTasks
+        attemptTasks.removeAll()
+        attemptLock.unlock()
+        tasks.forEach { $0.cancel() }
+        appAttestTask?.cancel()
+        watchdog?.disarm()
+    }
+
+    /// The watchdog's verdict: the phase ran out of time. End the attempt in a
+    /// retryable error with a stable code, never a spinner or a silent close.
+    func handleWatchdogTimeout(_ phase: SessionWatchdog.Phase) {
+        guard !storedState.isTerminal else { return }
+        let stateName = storedState.debugName
+        invalidateAttempt()
+        handleError(UseSenseError(
+            code: phase.errorCode,
+            details: "watchdog: \(phase.rawValue) phase exceeded its budget in state \(stateName)",
+            isRetryable: true
+        ))
+    }
+
+    /// Test seam: the state the UI is showing.
+    var stateForTesting: SessionState { storedState }
+
+    /// Test seam: put the session into a capture state without a camera.
+    func enterStateForTesting(_ state: SessionState) { currentState = state }
+
+    /// Test seam: arm the session's own watchdog with its configured budget.
+    func armWatchdogForTesting(_ phase: SessionWatchdog.Phase) {
+        watchdog?.arm(phase, budget: phase == .capture ? captureBudget : uploadBudget)
+    }
+
+    var watchdogPhaseForTesting: SessionWatchdog.Phase? { watchdog?.armedPhase }
 }
 
 // MARK: - FrameCaptureDelegate

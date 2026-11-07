@@ -72,27 +72,21 @@ extension DeviceBinding {
     /// step used, with no App Attest network call: only an existing key id is
     /// read. Capped at `timeoutSeconds`; a slow collection sends none.
     static func collect() async -> [String: Any]? {
-        await withTaskGroup(of: [String: Any]??.self) { group in
-            group.addTask {
-                let ci = await MainActor.run { () -> [String: Any] in
-                    let collector = DeviceSignalCollector()
-                    defer { collector.release() }
-                    return collector.collectChannelIntegrity()
-                }
-                var keyId: String?
-                #if canImport(DeviceCheck) && canImport(CryptoKit)
-                keyId = await AppAttestManager().existingKeyId()
-                #endif
-                return .some(body(channelIntegrity: ci, appAttestKeyId: keyId))
+        // Deadline, not a task-group race: a group waits for every child, so
+        // a collection that ignored cancellation used to hold the face step.
+        let result = await Deadline.run(seconds: timeoutSeconds) { () -> [String: Any]? in
+            let ci = await MainActor.run { () -> [String: Any] in
+                let collector = DeviceSignalCollector()
+                defer { collector.release() }
+                return collector.collectChannelIntegrity()
             }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-                return .some(nil)
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first ?? nil
+            var keyId: String?
+            #if canImport(DeviceCheck) && canImport(CryptoKit)
+            keyId = await AppAttestManager().existingKeyId()
+            #endif
+            return body(channelIntegrity: ci, appAttestKeyId: keyId)
         }
+        return result ?? nil
     }
 }
 
@@ -132,16 +126,11 @@ enum DeviceTrustSignals {
     private static func attestFields(nonce: String) async -> [String: Any] {
         #if canImport(DeviceCheck) && canImport(CryptoKit)
         let manager = AppAttestManager()
-        return await withTaskGroup(of: [String: Any]?.self) { group in
-            group.addTask { await manager.getAttestFields(sessionNonce: nonce) }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(attestTimeoutSeconds * 1_000_000_000))
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first ?? ["app_attest_supported": true, "app_attest_timed_out": true]
-        }
+        // Deadline, not a task-group race: DCAppAttestService does not honour
+        // task cancellation, and a group waits for every child to finish.
+        return await Deadline.run(seconds: attestTimeoutSeconds) {
+            await manager.getAttestFields(sessionNonce: nonce)
+        } ?? ["app_attest_supported": true, "app_attest_timed_out": true]
         #else
         return [:]
         #endif

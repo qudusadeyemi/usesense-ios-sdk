@@ -165,6 +165,12 @@ struct FailureView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 8)
 
+                // Stable code for support and the host app; never a stack.
+                Text("Error code: \(error.code.rawValue)")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(Color.UseSense.textSecondary)
+                    .accessibilityIdentifier("usesense.error.code")
+
                 if error.isRetryable {
                     Button(action: onRetry) {
                         Text("Try Again")
@@ -214,7 +220,8 @@ struct FailureView: View {
 
     private var errorIcon: String {
         switch error.code {
-        case .networkError, .networkTimeout: return "wifi.slash"
+        case .networkError, .networkTimeout, .uploadTimeout: return "wifi.slash"
+        case .captureTimeout: return "clock.fill"
         case .cameraUnavailable, .cameraPermissionDenied: return "camera.fill"
         case .sessionExpired: return "clock.fill"
         case .quotaExceeded: return "hand.raised.fill"
@@ -225,6 +232,7 @@ struct FailureView: View {
     private var errorTitle: String {
         switch error.code {
         case .networkError, .networkTimeout: return "Connection Error"
+        case .captureTimeout, .uploadTimeout: return "Taking Too Long"
         case .cameraUnavailable, .cameraPermissionDenied: return "Camera Unavailable"
         case .sessionExpired: return "Session Expired"
         case .quotaExceeded: return "Rate Limited"

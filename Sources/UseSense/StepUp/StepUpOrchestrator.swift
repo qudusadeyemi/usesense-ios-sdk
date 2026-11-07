@@ -136,25 +136,11 @@ final class StepUpOrchestrator: @unchecked Sendable {
         )
     }
 
-    private func withTimeout<T: Sendable>(seconds: Int, operation: @escaping () async -> T) async -> T? {
-        await withTaskGroup(of: T?.self) { group in
-            group.addTask {
-                return await operation()
-            }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
-                return nil
-            }
-            // Return first non-nil completed result, or nil on timeout
-            while let result = await group.next() {
-                if result != nil {
-                    group.cancelAll()
-                    return result
-                }
-            }
-            group.cancelAll()
-            return nil
-        }
+    /// Returns at the deadline even if the challenges ignore cancellation.
+    /// (The task-group race this replaced kept waiting for the operation after
+    /// the timer fired, so the 15s cap never actually capped anything.)
+    private func withTimeout<T>(seconds: Int, operation: @escaping () async -> T) async -> T? {
+        await Deadline.run(seconds: TimeInterval(seconds)) { await operation() }
     }
 }
 #endif
