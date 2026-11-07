@@ -149,6 +149,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     private func advance(inputs: [String: Any]) async {
+        USTrace.log("flows advance inputs=\(inputs.keys.sorted())")
         showSpinner()
         do {
             let next = try await client.advance(inputs: inputs)
@@ -183,6 +184,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     // MARK: - Render
 
     private func render() {
+        USTrace.log("flows render: state=\(String(describing: view_?.state)) pendingAction=\(String(describing: view_?.pendingAction))")
         guard let view = view_ else { return }
         if terminalErrorPresented { return }
         hideSpinner()
@@ -692,6 +694,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     }
 
     private func presentFaceCapture(toolId: String?) {
+        USTrace.log("flows presentFaceCapture tool=\(toolId ?? "nil")")
         // Hosted parity: show the face primer first ("Take a selfie" + the do's),
         // then mint the capture session on the CTA and hand off to the existing
         // capture UI. The CTA shows progress while init-session is in flight.

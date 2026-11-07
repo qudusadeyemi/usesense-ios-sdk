@@ -144,6 +144,26 @@ final class SessionFailsafeTests: XCTestCase {
         wait(for: [reachedError], timeout: 2)
     }
 
+    /// Regression (iPhone, Flows face step, 2026-11-07): the upload arms the
+    /// watchdog inside an attempt, so its timer inherited the attempt token;
+    /// the timeout invalidated that attempt and its own error was dropped as
+    /// stale. The spinner never ended.
+    func test_watchdogArmedInsideAttempt_stillSurfacesItsError() {
+        let session = makeSession()
+        let reachedError = expectation(description: "terminal error")
+        session.onStateChange = { state in
+            if case .error(let e) = state, e.code == .uploadTimeout { reachedError.fulfill() }
+        }
+        session.enterStateForTesting(.uploading(progress: 0))
+        session.uploadBudget = .init(total: 0.1)
+        session.armWatchdogInsideAttemptForTesting(.upload)
+        wait(for: [reachedError], timeout: 2)
+        guard case .error(let error) = session.stateForTesting else {
+            return XCTFail("still \(session.stateForTesting.debugName): the timeout was dropped")
+        }
+        XCTAssertEqual(error.code, .uploadTimeout)
+    }
+
     func test_timeout_isIgnored_onceTerminal() {
         let session = makeSession()
         session.enterStateForTesting(.error(UseSenseError(code: .sessionExpired)))

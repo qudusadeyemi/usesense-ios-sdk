@@ -82,6 +82,7 @@ final class SessionWatchdog: @unchecked Sendable {
         task?.cancel()
         task = Task { [weak self] in await self?.run(generation: gen) }
         lock.unlock()
+        USTrace.log("watchdog armed: \(phase.rawValue) total=\(budget.total)s stall=\(budget.stall.map { "\($0)s" } ?? "none")")
     }
 
     /// Record progress. Only meaningful for a phase with a stall window.
@@ -92,6 +93,7 @@ final class SessionWatchdog: @unchecked Sendable {
     }
 
     func disarm() {
+        USTrace.log("watchdog disarmed")
         lock.lock()
         generation += 1
         phase = nil
@@ -126,7 +128,12 @@ final class SessionWatchdog: @unchecked Sendable {
         while !Task.isCancelled {
             guard let wait = secondsUntilFire(generation: gen) else { return }
             if wait <= 0 {
-                if let expired = claim(generation: gen) { onTimeout(expired) }
+                if let expired = claim(generation: gen) {
+                    USTrace.log("watchdog deadline reached: \(expired.rawValue)")
+                    onTimeout(expired)
+                } else {
+                    USTrace.log("watchdog deadline reached but superseded (gen \(gen))")
+                }
                 return
             }
             // Wake at the earliest possible fire time, then re-check: a kick

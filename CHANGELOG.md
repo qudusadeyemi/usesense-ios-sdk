@@ -6,6 +6,31 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Retry finishes the same capture.** After an upload or completion failure,
+  "Retry" keeps the session and the frames: it calls `/complete` again if the
+  signals were accepted, otherwise re-uploads the same capture. It used to
+  start a new session and recapture, which could reject the person against
+  their own just-enrolled face. "Start over" still recaptures.
+- **Verdicts always decode.** Scores may be fractional, detail blocks that
+  drift become nil instead of failing the decision, `dedupe_analysis` is read
+  in the server's camelCase, and the v4 envelope (`verdict`) is accepted. An
+  unreadable response is `RESPONSE_INVALID`, not a server error with Swift's
+  "data couldn't be read" text.
+- **One capture per tap.** "Got it - Start" and "I'm Ready" can't start a
+  second capture, and a capture round completes exactly once.
+- **The capture clock starts on the camera's first frame**, not on the tap.
+- **Plain-language errors.** The error screen shows copy chosen from the error
+  code (connection, capture, expired, unavailable, generic) and never the
+  server's raw message; the code is a caption. HTTP 403 maps to
+  `UNAUTHORIZED`.
+
+### Added
+
+- Error codes `NO_FRAMES_CAPTURED` (retryable, same wire code as Android) and
+  `RESPONSE_INVALID`.
+
 ## [4.8.2] - 2026-10-09
 
 ### Added

@@ -127,10 +127,21 @@ struct ResultView: View {
 }
 
 /// Error/failure screen shown when the verification process fails.
+///
+/// The title and body are chosen from the error's code (`SubjectErrorCopy`),
+/// never the server's or the system's raw text, which goes to the host
+/// callback. When the capture is still usable, "Retry" finishes it on the same
+/// session and "Start over" recaptures.
 struct FailureView: View {
     let error: UseSenseError
+    /// "Start over" (or "Try again" when the capture can't be reused).
     let onRetry: () -> Void
     let onCancel: (() -> Void)?
+    /// "Retry": finish the same capture on the same session. Nil when the
+    /// capture can't be reused.
+    var onResume: (() -> Void)? = nil
+
+    private var copy: SubjectErrorCopy { SubjectErrorCopy.forError(error) }
 
     var body: some View {
         VStack(spacing: 24) {
@@ -147,65 +158,44 @@ struct FailureView: View {
                         .foregroundColor(Color.UseSense.error)
                 }
 
-                Text(errorTitle)
-                    .font(.system(size: 26, weight: .bold))
+                Text(copy.title)
+                    .font(.system(size: 24, weight: .bold))
                     .foregroundColor(Color.UseSense.textPrimary)
-                    // See ResultView above for the reasoning. Titles
-                    // like "Something Went Wrong" and "Camera Unavailable"
-                    // wrap on smaller screens; without explicit multiline
-                    // centre alignment, the wrapped lines left-align
-                    // within the Text widget and look off.
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("usesense.error.title")
 
-                Text(error.message)
+                Text(copy.body)
                     .font(.system(size: 16))
                     .foregroundColor(Color.UseSense.textSecondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 8)
+                    .accessibilityIdentifier("usesense.error.body")
 
-                // Stable code for support and the host app; never a stack.
-                Text("Error code: \(error.code.rawValue)")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(Color.UseSense.textSecondary)
-                    .accessibilityIdentifier("usesense.error.code")
-
-                if error.isRetryable {
-                    Button(action: onRetry) {
-                        Text("Try Again")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(USColors.primaryForeground)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 52)
-                            .background(Color.UseSense.primary)
-                            .cornerRadius(12)
-                    }
-                    .padding(.top, 8)
+                if error.isRetryable, let onResume = onResume {
+                    primaryButton("Retry", action: onResume)
+                        .padding(.top, 8)
+                    secondaryButton("Start over", action: onRetry)
+                } else if error.isRetryable {
+                    primaryButton("Try Again", action: onRetry)
+                        .padding(.top, 8)
                 }
 
                 if let onCancel = onCancel {
-                    Button(action: onCancel) {
-                        Text("Cancel")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(Color.UseSense.textPrimary)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 52)
-                            .background(Color.UseSense.border)
-                            .cornerRadius(12)
-                    }
+                    secondaryButton(error.isRetryable ? "Cancel" : "Close", action: onCancel)
                 } else if !error.isRetryable {
-                    Button(action: onRetry) {
-                        Text("Done")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(USColors.primaryForeground)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 52)
-                            .background(Color.UseSense.primary)
-                            .cornerRadius(12)
-                    }
-                    .padding(.top, 8)
+                    primaryButton("Done", action: onRetry)
+                        .padding(.top, 8)
                 }
+
+                // Stable code for support and the host app; never a stack.
+                Text(SubjectErrorCopy.caption(for: error))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(Color.UseSense.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("usesense.error.code")
             }
             .padding(32)
             .background(Color.UseSense.surface)
@@ -218,26 +208,41 @@ struct FailureView: View {
         .background(Color.UseSense.background.ignoresSafeArea())
     }
 
-    private var errorIcon: String {
-        switch error.code {
-        case .networkError, .networkTimeout, .uploadTimeout: return "wifi.slash"
-        case .captureTimeout: return "clock.fill"
-        case .cameraUnavailable, .cameraPermissionDenied: return "camera.fill"
-        case .sessionExpired: return "clock.fill"
-        case .quotaExceeded: return "hand.raised.fill"
-        default: return "exclamationmark.triangle.fill"
+    private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(USColors.primaryForeground)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(Color.UseSense.primary)
+                .cornerRadius(12)
         }
     }
 
-    private var errorTitle: String {
-        switch error.code {
-        case .networkError, .networkTimeout: return "Connection Error"
-        case .captureTimeout, .uploadTimeout: return "Taking Too Long"
-        case .cameraUnavailable, .cameraPermissionDenied: return "Camera Unavailable"
-        case .sessionExpired: return "Session Expired"
-        case .quotaExceeded: return "Rate Limited"
-        case .userCancelled: return "Cancelled"
-        default: return "Something Went Wrong"
+    private func secondaryButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(Color.UseSense.textPrimary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+                .background(Color.UseSense.border)
+                .cornerRadius(12)
+        }
+    }
+
+    private var errorIcon: String {
+        switch copy {
+        case .connection: return "wifi.slash"
+        case .capture: return "camera.viewfinder"
+        case .expired: return "clock.fill"
+        case .unavailable: return "hand.raised.fill"
+        default:
+            switch error.code {
+            case .cameraUnavailable, .cameraPermissionDenied: return "camera.fill"
+            default: return "exclamationmark.triangle.fill"
+            }
         }
     }
 }
