@@ -41,6 +41,12 @@ final class UseSenseAPIClient: @unchecked Sendable {
     /// Ceiling for the signals upload, the one request that carries megabytes.
     /// Everything else keeps its own much shorter timeout.
     static let uploadTimeout: TimeInterval = 300
+    /// Idle limit on the upload request: no bytes either way for this long and
+    /// it fails. It resets as data flows, so a slow uplink still finishes
+    /// inside `uploadTimeout` (the whole-transfer cap on the session config);
+    /// a dead pooled connection (e.g. after toggling Airplane Mode) now fails
+    /// in a minute instead of sitting for five.
+    static let uploadIdleTimeout: TimeInterval = 60
 
     private let config: UseSenseConfig
     private let session: URLSession
@@ -223,7 +229,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
         // production session managed 14.6 KB/s, so on a real mobile connection
         // the upload could not finish before it was cancelled. Sized instead
         // for a slow uplink to complete.
-        request.timeoutInterval = Self.uploadTimeout
+        request.timeoutInterval = Self.uploadIdleTimeout
 
         return try await performWithRetry(request)
     }
