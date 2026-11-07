@@ -89,6 +89,8 @@ struct SessionData: Sendable {
     let policy: SessionPolicy
     let upload: UploadConfig
     let geometricCoherence: GeometricCoherenceConfig?
+    /// Dashboard branding delivered with the session (nil on older servers).
+    var branding: ServerBranding? = nil
 
     var isExpired: Bool { Date() >= expiresAt }
 }
@@ -106,5 +108,6 @@ extension SessionData {
         self.policy = response.policy
         self.upload = response.upload
         self.geometricCoherence = response.geometricCoherence
+        self.branding = response.branding
     }
 }
