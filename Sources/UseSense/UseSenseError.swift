@@ -27,6 +27,12 @@ public enum UseSenseErrorCode: String, CaseIterable, Sendable {
     /// The signals upload or the complete call did not finish within its
     /// budget, or stopped making progress. Retryable.
     case uploadTimeout = "UPLOAD_TIMEOUT"
+    /// The camera ran but no usable frame reached the buffer. A system or
+    /// capture failure, never a verdict. Retryable. Same wire code as Android.
+    case noFramesCaptured = "NO_FRAMES_CAPTURED"
+    /// The server answered, but the response couldn't be read. Not retryable:
+    /// asking again returns the same body.
+    case responseInvalid = "RESPONSE_INVALID"
     case serverError = "SERVER_ERROR"
     case serviceUnavailable = "SERVICE_UNAVAILABLE"
     case tokenExpired = "TOKEN_EXPIRED"
@@ -59,6 +65,8 @@ public enum UseSenseErrorCode: String, CaseIterable, Sendable {
         case .timeout: return "Verification took too long. Please try again."
         case .captureTimeout: return "The capture took too long to finish. Please try again."
         case .uploadTimeout: return "We couldn't send your verification in time. Check your connection and try again."
+        case .noFramesCaptured: return "The camera did not return any images. Please try again."
+        case .responseInvalid: return "We couldn't read the verification result. Please try again later."
         case .serverError: return "Server error. Please try again or contact support."
         case .serviceUnavailable: return "Service unavailable. Try again later."
         case .tokenExpired: return "Verification token has expired. Please start over."
@@ -67,6 +75,65 @@ public enum UseSenseErrorCode: String, CaseIterable, Sendable {
         case .nonceMismatch: return "Session verification failed. Please start a new session."
         case .unknownError: return "Something went wrong. Please try again."
         }
+    }
+}
+
+/// What the person being verified sees for an error: a title and a body
+/// chosen from the error's code, never the server's or the system's raw text
+/// (that goes to the host callback and logs). Same buckets as Android.
+struct SubjectErrorCopy: Equatable {
+    let title: String
+    let body: String
+
+    static let connection = SubjectErrorCopy(
+        title: "Connection problem",
+        body: "We couldn't reach the server. Check your internet connection and try again.")
+    static let capture = SubjectErrorCopy(
+        title: "We couldn't see your face clearly",
+        body: "Find a well-lit spot, hold your phone at eye level and keep your face inside the frame, then try again.")
+    static let expired = SubjectErrorCopy(
+        title: "This session has expired",
+        body: "Please go back and start the verification again.")
+    static let unavailable = SubjectErrorCopy(
+        title: "Verification is unavailable",
+        body: "Please try again later.")
+    static let generic = SubjectErrorCopy(
+        title: "Something went wrong",
+        body: "We couldn't finish your check. Please try again.")
+
+    static func forError(_ error: UseSenseError) -> SubjectErrorCopy {
+        switch error.code {
+        case .networkError, .networkTimeout, .uploadFailed, .uploadTimeout, .timeout:
+            return .connection
+        case .captureFailed, .captureTimeout, .noFramesCaptured, .encodingFailed, .faceNotDetected, .lowLight:
+            return .capture
+        case .sessionExpired, .tokenExpired, .invalidToken, .sessionNotFound, .nonceMismatch, .tokenAlreadyUsed:
+            return .expired
+        // An integration problem (bad key, config, credits, rate limit, outage):
+        // nothing the subject can fix, so no capture advice.
+        case .unauthorized, .invalidConfig, .insufficientCredits, .quotaExceeded, .serviceUnavailable:
+            return .unavailable
+        case .cameraUnavailable:
+            return SubjectErrorCopy(title: "Camera unavailable", body: UseSenseErrorCode.cameraUnavailable.userMessage)
+        case .cameraPermissionDenied:
+            return SubjectErrorCopy(title: "Camera access needed", body: UseSenseErrorCode.cameraPermissionDenied.userMessage)
+        case .micPermissionDenied:
+            return SubjectErrorCopy(title: "Microphone access needed", body: UseSenseErrorCode.micPermissionDenied.userMessage)
+        case .userCancelled:
+            return SubjectErrorCopy(title: "Cancelled", body: UseSenseErrorCode.userCancelled.userMessage)
+        default:
+            return .generic
+        }
+    }
+
+    /// The code shown as a caption: ours, plus the server's when it sent one.
+    static func caption(for error: UseSenseError) -> String {
+        if let server = error.details, !server.isEmpty, server.count <= 64,
+           server.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+           server.uppercased() != error.code.rawValue {
+            return "Error code: \(error.code.rawValue) (\(server))"
+        }
+        return "Error code: \(error.code.rawValue)"
     }
 }
 
@@ -150,6 +217,9 @@ public struct UseSenseError: Error, LocalizedError, Sendable {
             retryable = false
         case 402:
             code = .insufficientCredits
+            retryable = false
+        case 403:
+            code = .unauthorized
             retryable = false
         case 404:
             code = serverCode == "identity_not_found" ? .identityNotFound : .sessionNotFound

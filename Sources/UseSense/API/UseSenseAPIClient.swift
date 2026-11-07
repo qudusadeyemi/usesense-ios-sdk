@@ -389,7 +389,18 @@ final class UseSenseAPIClient: @unchecked Sendable {
                     throw UseSenseError.fromHTTP(statusCode: http.statusCode, serverCode: nil, serverMessage: "Server returned status \(http.statusCode).")
                 }
 
-                return try decoder.decode(T.self, from: data)
+                do {
+                    return try decoder.decode(T.self, from: data)
+                } catch let decodeError as DecodingError {
+                    // Never surface Swift's "The data couldn't be read..." as
+                    // a server error: it is our model disagreeing with the
+                    // response, and asking again returns the same body.
+                    throw UseSenseError(
+                        code: .responseInvalid,
+                        details: Self.describe(decodeError),
+                        isRetryable: false
+                    )
+                }
             } catch let error as URLError {
                 // Network error: retry with exponential backoff (1s, 2s, 4s)
                 lastError = UseSenseError(code: .networkError, message: error.localizedDescription, isRetryable: true)
@@ -437,8 +448,24 @@ final class UseSenseAPIClient: @unchecked Sendable {
 
         do {
             return try decoder.decode(T.self, from: data)
+        } catch let decodeError as DecodingError {
+            throw UseSenseError(code: .responseInvalid, details: Self.describe(decodeError), isRetryable: false)
         } catch {
-            throw UseSenseError(code: .unknownError, message: "Failed to decode response.", details: error.localizedDescription)
+            throw UseSenseError(code: .responseInvalid, details: error.localizedDescription, isRetryable: false)
+        }
+    }
+
+    /// A short, PII-free description of where decoding failed.
+    static func describe(_ error: DecodingError) -> String {
+        func path(_ ctx: DecodingError.Context) -> String {
+            ctx.codingPath.map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: ".")
+        }
+        switch error {
+        case .typeMismatch(_, let ctx): return "type_mismatch@\(path(ctx))"
+        case .valueNotFound(_, let ctx): return "value_not_found@\(path(ctx))"
+        case .keyNotFound(let key, let ctx): return "key_not_found@\(path(ctx)).\(key.stringValue)"
+        case .dataCorrupted(let ctx): return "data_corrupted@\(path(ctx))"
+        @unknown default: return "decoding_error"
         }
     }
 }
