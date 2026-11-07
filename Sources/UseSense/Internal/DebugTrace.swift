@@ -16,11 +16,31 @@ enum USTrace {
 
     private static let start = Date()
 
+    /// Also appended to `Library/Caches/usesense-trace.log` in the host app's
+    /// container, so a trace survives a dropped debugger/console link (e.g.
+    /// toggling Airplane Mode) and can be pulled off the device afterwards.
+    private static let fileQueue = DispatchQueue(label: "ai.usesense.trace")
+    private static let fileURL: URL? = FileManager.default
+        .urls(for: .cachesDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("usesense-trace.log")
+
     static func log(_ message: @autoclosure () -> String, file: StaticString = #fileID, line: UInt = #line) {
         guard enabled else { return }
         let elapsed = String(format: "%.3f", Date().timeIntervalSince(start))
         let thread = Thread.isMainThread ? "main" : "bg"
         let name = "\(file)".split(separator: "/").last.map(String.init) ?? "\(file)"
-        print("[UseSense +\(elapsed)s \(thread)] \(message()) (\(name):\(line))")
+        let entry = "[UseSense +\(elapsed)s \(thread)] \(message()) (\(name):\(line))"
+        print(entry)
+        let stamped = "\(ISO8601DateFormatter().string(from: Date())) \(entry)\n"
+        fileQueue.async {
+            guard let url = fileURL, let data = stamped.data(using: .utf8) else { return }
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            } else {
+                try? data.write(to: url)
+            }
+        }
     }
 }
