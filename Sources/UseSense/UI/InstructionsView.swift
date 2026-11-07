@@ -7,6 +7,10 @@ struct InstructionsView: View {
     let challenge: ChallengeSpecWrapper
     let onContinue: () -> Void
 
+    /// One tap starts one capture; a queued second tap is ignored. Fresh
+    /// (re-enabled) whenever the screen is shown again.
+    @State private var continued = false
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
@@ -80,7 +84,11 @@ struct InstructionsView: View {
                     .cornerRadius(20)
 
                     // Continue button
-                    Button(action: onContinue) {
+                    Button(action: {
+                        guard !continued else { return }
+                        continued = true
+                        onContinue()
+                    }) {
                         Text("Got it - Start")
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundColor(USColors.primaryForeground)
@@ -89,6 +97,7 @@ struct InstructionsView: View {
                             .background(Color.UseSense.primary)
                             .cornerRadius(12)
                     }
+                    .disabled(continued)
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
 
