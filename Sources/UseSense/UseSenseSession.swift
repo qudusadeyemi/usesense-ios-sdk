@@ -57,7 +57,8 @@ public final class UseSenseSession: @unchecked Sendable {
     private var currentState: SessionState {
         get { storedState }
         set {
-            if isStaleContext { return }
+            if isStaleContext { USTrace.log("state DROPPED (stale attempt): \(newValue.debugName)"); return }
+            USTrace.log("state -> \(newValue.debugName)")
             storedState = newValue
             if newValue.isTerminal || newValue.isIdle { watchdog?.disarm() }
             onStateChange?(newValue)
@@ -196,6 +197,7 @@ public final class UseSenseSession: @unchecked Sendable {
     /// Made public for the Flows runner; the dashboard hosted page calls it
     /// internally too via UseSenseSession's framework-internal init path.
     public func injectHostedSessionData(_ response: CreateSessionResponse) {
+        USTrace.log("injected hosted/Flows session \(response.sessionId)")
         let data = SessionData(from: response)
         self.sessionData = data
         self.sessionInjected = true
@@ -320,6 +322,7 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     private func runChallengeCompleted() async {
+        USTrace.log("challenge completed (capturing=\(storedState.isCaptureInProgress))")
         // Once per capture round. A second completion (a challenge view firing
         // twice, a duplicate tap) used to pass the state check below while the
         // first was still awaiting, and run a second upload/complete.
@@ -987,11 +990,13 @@ public final class UseSenseSession: @unchecked Sendable {
         }
         uploadAttempted = true
         watchdog?.arm(.upload, budget: uploadBudget)
+        USTrace.log("upload: start (path 1)")
         currentState = .uploading(progress: 0)
         eventEmitter.emit(.uploadStarted)
 
         let uploadResponse: UploadSignalsResponse
         do {
+            USTrace.log("upload: calling apiClient.uploadSignals")
             uploadResponse = try await apiClient.uploadSignals(
                 sessionId: session.sessionId,
                 sessionToken: session.sessionToken,
@@ -1001,8 +1006,10 @@ public final class UseSenseSession: @unchecked Sendable {
                 audio: pending.audio
             )
             eventEmitter.emit(.uploadCompleted)
+            USTrace.log("upload: accepted")
             currentState = .uploading(progress: 1.0)
         } catch let error as UseSenseError {
+            USTrace.log("upload: failed \(error.code.rawValue) \(error.message)")
             handleError(error)
             return
         } catch {
@@ -1079,6 +1086,7 @@ public final class UseSenseSession: @unchecked Sendable {
         ]
         uploadAttempted = true
         watchdog?.arm(.upload, budget: uploadBudget)
+        USTrace.log("upload: start (path 2)")
         currentState = .uploading(progress: 0)
         do {
             let metadataData = try JSONSerialization.data(withJSONObject: metadata)
@@ -1144,6 +1152,7 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     private func handleError(_ error: UseSenseError) {
+        USTrace.log("handleError \(error.code.rawValue): \(error.message) [state \(storedState.debugName)]")
         if isStaleContext { return }
         // Stop the camera and mic too: an error screen over a live camera is
         // a capture that never ended.
@@ -1201,6 +1210,7 @@ extension UseSenseSession {
     /// The watchdog's verdict: the phase ran out of time. End the attempt in a
     /// retryable error with a stable code, never a spinner or a silent close.
     func handleWatchdogTimeout(_ phase: SessionWatchdog.Phase) {
+        USTrace.log("watchdog FIRED: \(phase.rawValue) in state \(storedState.debugName), terminal=\(storedState.isTerminal)")
         guard !storedState.isTerminal else { return }
         let stateName = storedState.debugName
         invalidateAttempt()
@@ -1217,7 +1227,9 @@ extension UseSenseSession {
     func claimOnce(_ key: String) -> Bool {
         attemptLock.lock(); defer { attemptLock.unlock() }
         let owner = Self.attemptToken ?? attempt
-        return claims.insert("\(owner):\(key)").inserted
+        let inserted = claims.insert("\(owner):\(key)").inserted
+        if !inserted { USTrace.log("claimOnce REJECTED duplicate: \(key) (owner \(owner))") }
+        return inserted
     }
 
     var isCameraLive: Bool {

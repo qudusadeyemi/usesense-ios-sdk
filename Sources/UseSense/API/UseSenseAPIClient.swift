@@ -360,7 +360,10 @@ final class UseSenseAPIClient: @unchecked Sendable {
 
         for attempt in 0..<maxAttempts {
             do {
+                let started = Date()
+                USTrace.log("http start \(request.httpMethod ?? "?") \(request.url?.path ?? "?") bytes=\(request.httpBody?.count ?? 0) attempt=\(attempt)")
                 let (data, response) = try await session.data(for: request)
+                USTrace.log("http done \(request.url?.path ?? "?") status=\((response as? HTTPURLResponse)?.statusCode ?? -1) in \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
                 guard let http = response as? HTTPURLResponse else {
                     throw UseSenseError(code: .networkError, message: "Invalid response type.")
                 }
@@ -402,6 +405,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
                     )
                 }
             } catch let error as URLError {
+                USTrace.log("http URLError \(error.code.rawValue) \(error.localizedDescription) on \(request.url?.path ?? "?") attempt=\(attempt)")
                 // Network error: retry with exponential backoff (1s, 2s, 4s)
                 lastError = UseSenseError(code: .networkError, message: error.localizedDescription, isRetryable: true)
                 if attempt < Self.networkRetryDelays.count {
@@ -428,7 +432,9 @@ final class UseSenseAPIClient: @unchecked Sendable {
         let response: URLResponse
 
         do {
+            USTrace.log("http start (single) \(request.httpMethod ?? "?") \(request.url?.path ?? "?")")
             (data, response) = try await session.data(for: request)
+            USTrace.log("http done (single) \(request.url?.path ?? "?") status=\((response as? HTTPURLResponse)?.statusCode ?? -1)")
         } catch let error as URLError where error.code == .timedOut {
             throw UseSenseError(code: .timeout)
         } catch {
