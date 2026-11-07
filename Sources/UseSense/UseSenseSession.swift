@@ -40,6 +40,11 @@ public final class UseSenseSession: @unchecked Sendable {
     }
     var brandDisplayName: String? { sessionData?.branding?.displayName }
 
+    /// A session handed in by the Flows runner or the hosted page. Its outcome
+    /// is settled on the server when it completes, so the result screen offers
+    /// no in-place "Try Again" (a Flow's retries follow its own policy).
+    var isInjected: Bool { sessionInjected }
+
     private func publishBranding() {
         USTrace.log(BrandingResolver.describeSources(
             code: codeAppearance,

@@ -122,9 +122,9 @@ public struct UseSenseView: View {
                            headerDisplayName: viewModel.showsHeader ? viewModel.headerDisplayName : nil,
                            onDismiss: {
                     onComplete(.success(decision))
-                }, onRetry: {
+                }, onRetry: viewModel.canRetryFromResult ? {
                     viewModel.retry()
-                })
+                } : nil)
 
             case .error(let error):
                 FailureView(error: error, onRetry: {
@@ -458,6 +458,9 @@ final class UseSenseViewModel: ObservableObject {
         default: return false
         }
     }
+
+    /// "Try Again" on a reject: standalone sessions only (see isInjected).
+    var canRetryFromResult: Bool { !session.isInjected }
 
     var isCameraActive: Bool {
         switch state {
