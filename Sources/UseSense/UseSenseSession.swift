@@ -1210,15 +1210,23 @@ extension UseSenseSession {
     /// The watchdog's verdict: the phase ran out of time. End the attempt in a
     /// retryable error with a stable code, never a spinner or a silent close.
     func handleWatchdogTimeout(_ phase: SessionWatchdog.Phase) {
-        USTrace.log("watchdog FIRED: \(phase.rawValue) in state \(storedState.debugName), terminal=\(storedState.isTerminal)")
-        guard !storedState.isTerminal else { return }
-        let stateName = storedState.debugName
-        invalidateAttempt()
-        handleError(UseSenseError(
-            code: phase.errorCode,
-            details: "watchdog: \(phase.rawValue) phase exceeded its budget in state \(stateName)",
-            isRetryable: true
-        ))
+        // The watchdog's timer task is created inside an attempt and inherits
+        // its task-local attempt token. invalidateAttempt() below makes that
+        // token stale, so without clearing it the timeout's own error was
+        // dropped as a "late write from an old attempt": the fail-safe fired
+        // and the screen stayed on its spinner forever (seen on an iPhone in a
+        // Flows face step, 2026-11-07).
+        Self.$attemptToken.withValue(nil) {
+            USTrace.log("watchdog FIRED: \(phase.rawValue) in state \(storedState.debugName), terminal=\(storedState.isTerminal)")
+            guard !storedState.isTerminal else { return }
+            let stateName = storedState.debugName
+            invalidateAttempt()
+            handleError(UseSenseError(
+                code: phase.errorCode,
+                details: "watchdog: \(phase.rawValue) phase exceeded its budget in state \(stateName)",
+                isRetryable: true
+            ))
+        }
     }
 
     /// True once per attempt for `key`: the first caller wins, later callers
@@ -1265,6 +1273,12 @@ extension UseSenseSession {
     }
 
     var watchdogPhaseForTesting: SessionWatchdog.Phase? { watchdog?.armedPhase }
+
+    /// Test seam: arm the watchdog from inside the current attempt, the way the
+    /// real upload does, so its timer task inherits the attempt token.
+    func armWatchdogInsideAttemptForTesting(_ phase: SessionWatchdog.Phase) {
+        Self.$attemptToken.withValue(currentAttempt) { armWatchdogForTesting(phase) }
+    }
 
     /// Test seam: put the session where a finalization failure leaves it.
     func setFinalizationCheckpointForTesting(pendingFrames: [Data]?, signalsAccepted accepted: Bool) {
