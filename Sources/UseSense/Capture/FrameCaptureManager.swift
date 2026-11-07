@@ -22,6 +22,9 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
     /// which turned every "Try again" into a camera error.
     private var isConfigured = false
     private var camera: AVCaptureDevice?
+    #if targetEnvironment(simulator) && canImport(UIKit)
+    private var simulated: SimulatedCamera?
+    #endif
     private var lastPointOfInterest: CGPoint?
 
     /// Cached preview layer – must return the **same** instance every time so the
@@ -38,6 +41,14 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
 
     func configure() throws {
         if isConfigured { return }
+        #if targetEnvironment(simulator) && canImport(UIKit)
+        if let path = SimulatedCamera.imagePath, let sim = SimulatedCamera(path: path) {
+            simulated = sim
+            sim.attach(to: previewLayer)
+            isConfigured = true
+            return
+        }
+        #endif
         captureSession.beginConfiguration()
         defer { captureSession.commitConfiguration() }
 
@@ -76,6 +87,16 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
     }
 
     func start() {
+        #if targetEnvironment(simulator) && canImport(UIKit)
+        if let sim = simulated {
+            isRunning = true
+            sim.start { [weak self] buffer, time in
+                guard let self else { return }
+                self.delegate?.frameCaptureManager(self, didCapture: buffer, timestamp: time)
+            }
+            return
+        }
+        #endif
         sessionQueue.async { [weak self] in
             guard let self = self, !self.captureSession.isRunning else { return }
             self.captureSession.startRunning()
@@ -84,6 +105,13 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
     }
 
     func stop() {
+        #if targetEnvironment(simulator) && canImport(UIKit)
+        if let sim = simulated {
+            sim.stop()
+            isRunning = false
+            return
+        }
+        #endif
         sessionQueue.async { [weak self] in
             guard let self = self, self.captureSession.isRunning else { return }
             self.captureSession.stopRunning()

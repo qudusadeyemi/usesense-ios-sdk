@@ -73,7 +73,9 @@ struct GateThresholds: Sendable {
     var maxClippedRatio: Float = 0.08
     /// Laplacian variance of the 96x96 face. The spec wants the per-device
     /// 20th percentile; until that table exists this is a fixed floor.
-    var minFaceSharpness: Float = 12
+    /// Measured through the real pipeline on a 720p portrait: sharp 1313,
+    /// Gaussian blur sigma 2 -> 133, sigma 4 -> 25, sigma 8 -> 6.
+    var minFaceSharpness: Float = 50
     var maxEyeBlink = 0.6
     var stillnessWindow: TimeInterval = 0.3
     var maxJitter = 0.04

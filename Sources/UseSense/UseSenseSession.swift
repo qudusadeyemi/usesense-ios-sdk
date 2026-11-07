@@ -1681,6 +1681,19 @@ extension UseSenseSession {
 
         guideLock.lock()
         let snapshot = guide.update(observation)
+        if USTrace.enabled, snapshot.failing != latestGuide.failing {
+            let e = guide.lastEvaluation
+            let f = observation.face
+            USTrace.log("guide: failing [\(snapshot.failing.sorted().map(\.debugLabel).joined(separator: ","))]"
+                + " eye=\(observation.eyeDistance.map { String(format: "%.3f", $0) } ?? "-")"
+                + " oval=\(observation.ovalExtent.map { String(format: "%.2f", $0) } ?? "-")"
+                + " yaw=\(observation.yaw.map { String(format: "%.1f", $0) } ?? "-")"
+                + " pitch=\(observation.pitch.map { String(format: "%.1f", $0) } ?? "-")"
+                + " roll=\(observation.roll.map { String(format: "%.1f", $0) } ?? "-")"
+                + " luma=\(f.map { String(format: "%.0f", $0.meanLuma) } ?? "-")"
+                + " sharp=\(f.map { String(format: "%.1f", $0.sharpness) } ?? "-")"
+                + " jitter=\(e.jitter.map { String(format: "%.3f", $0) } ?? "-")")
+        }
         latestGuide = snapshot
         let update = GuidedCaptureUpdate(snapshot: snapshot, shutterAvailable: shutter)
         let now = CFAbsoluteTimeGetCurrent()

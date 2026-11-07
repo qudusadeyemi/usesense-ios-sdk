@@ -9,11 +9,23 @@ import CoreGraphics
 /// is a prediction from one image and is not depth evidence.
 final class ContourDepthField: @unchecked Sendable {
     static let size = 64
+    static let kernelRadius = 5
+    /// How strongly facial features stand out from the rounded base.
+    static let detailGain: Float = 2.2
+    /// > 1 lifts the nose and lips above the broad cheek/forehead plateau.
+    static let reliefGamma = 1.8
+    /// Gaussian splat kernel (sigma 2.4 cells), precomputed.
+    static let kernel: [Float] = {
+        let r = kernelRadius, s2: Float = 2 * 2.4 * 2.4
+        var k: [Float] = []
+        for dy in -r...r { for dx in -r...r { k.append(expf(-Float(dx * dx + dy * dy) / s2)) } }
+        return k
+    }()
 
     struct Snapshot: Sendable {
         /// Face box the grid covers, in view points.
         var rect: CGRect
-        /// Height above the face's mean depth / face width (toward camera > 0).
+        /// Relief height, already faded at the face edge: 0 off the face ... ~1 at the nose tip.
         var depth: [Float]
         /// 0...1 coverage (how much mesh is under each cell).
         var mask: [Float]
@@ -54,6 +66,28 @@ final class ContourDepthField: @unchecked Sendable {
         lock.lock(); state = .empty; lock.unlock()
     }
 
+    /// Separable box blur (radius 2), repeated: ~Gaussian.
+    static func blur(_ g: inout [Float], n: Int, passes: Int) {
+        var tmp = [Float](repeating: 0, count: n * n)
+        let r = 2
+        for _ in 0..<passes {
+            for y in 0..<n {
+                for x in 0..<n {
+                    var sum: Float = 0, c: Float = 0
+                    for dx in -r...r where x + dx >= 0 && x + dx < n { sum += g[y * n + x + dx]; c += 1 }
+                    tmp[y * n + x] = sum / c
+                }
+            }
+            for y in 0..<n {
+                for x in 0..<n {
+                    var sum: Float = 0, c: Float = 0
+                    for dy in -r...r where y + dy >= 0 && y + dy < n { sum += tmp[(y + dy) * n + x]; c += 1 }
+                    g[y * n + x] = sum / c
+                }
+            }
+        }
+    }
+
     /// Rasterise one frame's landmarks (view points + raw MediaPipe z).
     func update(points: [CGPoint], z: [Double]) {
         guard points.count == z.count, points.count >= 100 else {
@@ -70,30 +104,34 @@ final class ContourDepthField: @unchecked Sendable {
         guard faceW > 4, faceH > 4 else { return }
         let rect = CGRect(x: minX, y: minY, width: faceW, height: faceH).insetBy(dx: -faceW * 0.06, dy: -faceH * 0.06)
 
-        // MediaPipe z is negative toward the camera. Height = -(z - mean),
-        // scaled by the face's z range so the relief reads the same at any
-        // distance (about -0.5 ... +0.6, nose tip highest).
-        let meanZ = z.reduce(0, +) / Double(z.count)
+        // MediaPipe z is negative toward the camera. Height runs from 0 at
+        // the farthest point (face edge) to 1 at the nearest (nose tip), so
+        // the relief reads the same at any distance.
         var zMin = Double.infinity, zMax = -Double.infinity
         for v in z { zMin = min(zMin, v); zMax = max(zMax, v) }
         let zRange = max(1e-6, zMax - zMin)
-        let heights = z.map { -($0 - meanZ) / zRange }
+        let heights = z.map { pow((zMax - $0) / zRange, Self.reliefGamma) }
 
-        // Splat each landmark with a small Gaussian, then normalise.
+        // Splat each mesh landmark with a Gaussian, then normalise
+        // (normalised convolution). Iris points (468+) are skipped: their z
+        // doesn't follow the surface and they spike the eyes.
         let n = Self.size
         var acc = [Float](repeating: 0, count: n * n)
         var wsum = [Float](repeating: 0, count: n * n)
-        let radius = 3
-        let sigma2: Float = 2 * 1.6 * 1.6
-        for (i, p) in points.enumerated() {
-            let gx = Float((p.x - rect.minX) / rect.width) * Float(n - 1)
-            let gy = Float((p.y - rect.minY) / rect.height) * Float(n - 1)
-            let cx = Int(gx.rounded()), cy = Int(gy.rounded())
+        let r = Self.kernelRadius
+        let kw = 2 * r + 1
+        for i in 0..<min(points.count, 468) {
+            let p = points[i]
+            let cx = Int((Float((p.x - rect.minX) / rect.width) * Float(n - 1)).rounded())
+            let cy = Int((Float((p.y - rect.minY) / rect.height) * Float(n - 1)).rounded())
             let h = Float(heights[i])
-            for y in max(0, cy - radius)...min(n - 1, cy + radius) {
-                for x in max(0, cx - radius)...min(n - 1, cx + radius) {
-                    let dx = Float(x) - gx, dy = Float(y) - gy
-                    let w = expf(-(dx * dx + dy * dy) / sigma2)
+            for dy in -r...r {
+                let y = cy + dy
+                guard y >= 0, y < n else { continue }
+                for dx in -r...r {
+                    let x = cx + dx
+                    guard x >= 0, x < n else { continue }
+                    let w = Self.kernel[(dy + r) * kw + (dx + r)]
                     acc[y * n + x] += w * h
                     wsum[y * n + x] += w
                 }
@@ -102,8 +140,23 @@ final class ContourDepthField: @unchecked Sendable {
         var depth = [Float](repeating: 0, count: n * n)
         var mask = [Float](repeating: 0, count: n * n)
         for k in 0..<(n * n) where wsum[k] > 1e-3 {
-            depth[k] = acc[k] / wsum[k]
-            mask[k] = min(1, wsum[k] / 0.8)
+            // Soft edge: coverage ramps the relief in over ~1 kernel width.
+            let t = max(0, min(1, (wsum[k] - 0.25) / 1.6))
+            mask[k] = t * t * (3 - 2 * t)
+            depth[k] = acc[k] / wsum[k] * mask[k]
+        }
+        // Round the relief off: the mesh edge would otherwise read as a
+        // steep shelf with ripples where boundary landmarks are sparse.
+        var fine = depth
+        Self.blur(&fine, n: n, passes: 1)
+        Self.blur(&depth, n: n, passes: 3)
+        Self.blur(&mask, n: n, passes: 2)
+        // Put the features (nose ridge, eye sockets, lips) back on top of
+        // the rounded base, in the interior only so the edge stays clean.
+        for k in 0..<(n * n) {
+            let t = max(0, min(1, (mask[k] - 0.55) / 0.4))
+            let interior = t * t * (3 - 2 * t)
+            depth[k] += Self.detailGain * (fine[k] - depth[k]) * interior
         }
 
         lock.lock()
