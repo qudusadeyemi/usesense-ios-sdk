@@ -41,6 +41,12 @@ final class UseSenseAPIClient: @unchecked Sendable {
     /// Ceiling for the signals upload, the one request that carries megabytes.
     /// Everything else keeps its own much shorter timeout.
     static let uploadTimeout: TimeInterval = 300
+    /// Idle limit on the upload request: no bytes either way for this long and
+    /// it fails. It resets as data flows, so a slow uplink still finishes
+    /// inside `uploadTimeout` (the whole-transfer cap on the session config);
+    /// a dead pooled connection (e.g. after toggling Airplane Mode) now fails
+    /// in a minute instead of sitting for five.
+    static let uploadIdleTimeout: TimeInterval = 60
 
     private let config: UseSenseConfig
     private let session: URLSession
@@ -223,7 +229,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
         // production session managed 14.6 KB/s, so on a real mobile connection
         // the upload could not finish before it was cancelled. Sized instead
         // for a slow uplink to complete.
-        request.timeoutInterval = Self.uploadTimeout
+        request.timeoutInterval = Self.uploadIdleTimeout
 
         return try await performWithRetry(request)
     }
@@ -360,7 +366,10 @@ final class UseSenseAPIClient: @unchecked Sendable {
 
         for attempt in 0..<maxAttempts {
             do {
+                let started = Date()
+                USTrace.log("http start \(request.httpMethod ?? "?") \(request.url?.path ?? "?") bytes=\(request.httpBody?.count ?? 0) attempt=\(attempt)")
                 let (data, response) = try await session.data(for: request)
+                USTrace.log("http done \(request.url?.path ?? "?") status=\((response as? HTTPURLResponse)?.statusCode ?? -1) in \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
                 guard let http = response as? HTTPURLResponse else {
                     throw UseSenseError(code: .networkError, message: "Invalid response type.")
                 }
@@ -389,8 +398,20 @@ final class UseSenseAPIClient: @unchecked Sendable {
                     throw UseSenseError.fromHTTP(statusCode: http.statusCode, serverCode: nil, serverMessage: "Server returned status \(http.statusCode).")
                 }
 
-                return try decoder.decode(T.self, from: data)
+                do {
+                    return try decoder.decode(T.self, from: data)
+                } catch let decodeError as DecodingError {
+                    // Never surface Swift's "The data couldn't be read..." as
+                    // a server error: it is our model disagreeing with the
+                    // response, and asking again returns the same body.
+                    throw UseSenseError(
+                        code: .responseInvalid,
+                        details: Self.describe(decodeError),
+                        isRetryable: false
+                    )
+                }
             } catch let error as URLError {
+                USTrace.log("http URLError \(error.code.rawValue) \(error.localizedDescription) on \(request.url?.path ?? "?") attempt=\(attempt)")
                 // Network error: retry with exponential backoff (1s, 2s, 4s)
                 lastError = UseSenseError(code: .networkError, message: error.localizedDescription, isRetryable: true)
                 if attempt < Self.networkRetryDelays.count {
@@ -417,7 +438,9 @@ final class UseSenseAPIClient: @unchecked Sendable {
         let response: URLResponse
 
         do {
+            USTrace.log("http start (single) \(request.httpMethod ?? "?") \(request.url?.path ?? "?")")
             (data, response) = try await session.data(for: request)
+            USTrace.log("http done (single) \(request.url?.path ?? "?") status=\((response as? HTTPURLResponse)?.statusCode ?? -1)")
         } catch let error as URLError where error.code == .timedOut {
             throw UseSenseError(code: .timeout)
         } catch {
@@ -437,8 +460,24 @@ final class UseSenseAPIClient: @unchecked Sendable {
 
         do {
             return try decoder.decode(T.self, from: data)
+        } catch let decodeError as DecodingError {
+            throw UseSenseError(code: .responseInvalid, details: Self.describe(decodeError), isRetryable: false)
         } catch {
-            throw UseSenseError(code: .unknownError, message: "Failed to decode response.", details: error.localizedDescription)
+            throw UseSenseError(code: .responseInvalid, details: error.localizedDescription, isRetryable: false)
+        }
+    }
+
+    /// A short, PII-free description of where decoding failed.
+    static func describe(_ error: DecodingError) -> String {
+        func path(_ ctx: DecodingError.Context) -> String {
+            ctx.codingPath.map { $0.intValue.map(String.init) ?? $0.stringValue }.joined(separator: ".")
+        }
+        switch error {
+        case .typeMismatch(_, let ctx): return "type_mismatch@\(path(ctx))"
+        case .valueNotFound(_, let ctx): return "value_not_found@\(path(ctx))"
+        case .keyNotFound(let key, let ctx): return "key_not_found@\(path(ctx)).\(key.stringValue)"
+        case .dataCorrupted(let ctx): return "data_corrupted@\(path(ctx))"
+        @unknown default: return "decoding_error"
         }
     }
 }

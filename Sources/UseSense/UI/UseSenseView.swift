@@ -125,15 +125,19 @@ public struct UseSenseView: View {
 
             case .error(let error):
                 FailureView(error: error, onRetry: {
-                    // A retryable error restarts in place only when a clean
-                    // attempt is possible here; otherwise the host (e.g. the
+                    // "Start over": a clean attempt runs in place only when
+                    // that's possible here; otherwise the host (e.g. the
                     // Flows runner) gets the error and re-inits the step.
                     if error.isRetryable && viewModel.canRestartInPlace {
                         viewModel.retry()
                     } else {
                         onComplete(.failure(error))
                     }
-                }, onCancel: onCancel)
+                }, onCancel: onCancel, onResume: viewModel.canResumeFinalization ? {
+                    // "Retry": the capture is still good, so finish it on the
+                    // same session (also for injected Flows/hosted sessions).
+                    viewModel.resumeFinalization()
+                } : nil)
             }
         }
         .statusBarHidden(viewModel.isCameraActive)
@@ -462,6 +466,12 @@ final class UseSenseViewModel: ObservableObject {
     }
 
     var canRestartInPlace: Bool { session.canRestartInPlace }
+
+    var canResumeFinalization: Bool { session.canResumeFinalization }
+
+    func resumeFinalization() {
+        Task { await session.resumeFinalization() }
+    }
 
     func cancel() {
         session.cancel()

@@ -10,6 +10,9 @@ struct FaceGuideOverlay: View {
     var onReady: (() -> Void)?
 
     @State private var isPulsing = false
+    /// One tap starts one capture (a second baseline used to run). Fresh
+    /// whenever the face guide is shown again.
+    @State private var readyTapped = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -73,7 +76,12 @@ struct FaceGuideOverlay: View {
                     }
 
                     if showReadyButton {
-                        USButton("I'm Ready", variant: .primary, size: .large) { onReady?() }
+                        USButton("I'm Ready", variant: .primary, size: .large) {
+                            guard !readyTapped else { return }
+                            readyTapped = true
+                            onReady?()
+                        }
+                            .disabled(readyTapped)
                             .padding(.horizontal, 32)
                             .padding(.top, 4)
                     }
