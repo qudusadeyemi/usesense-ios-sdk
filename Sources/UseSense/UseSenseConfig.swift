@@ -173,11 +173,20 @@ public struct SDKOptions: Sendable {
     /// features map; the server returns 400 v4_not_enabled otherwise.
     public var liveSenseV4Enabled: Bool
 
+    /// The guided capture screen (LiveSense capture redesign, Phase 1): a
+    /// blocking quality gate on the face mesh with one hint at a time, auto
+    /// start when every check passes, a scan that pauses instead of
+    /// restarting, a screen fill light in the dark, a contour scan visual and
+    /// a shutter fallback. Experience only: the upload and scoring are
+    /// unchanged. Defaults to true; false restores the "I'm Ready" screen.
+    public var guidedCaptureEnabled: Bool
+
     public init(
         audioEnabled: AudioMode = .riskBased, stepUpPolicy: StepUpPolicy = .riskBased,
         captureDurationMs: Int = 8000, targetFps: Int = 3, maxFrames: Int = 30, maxUploadSizeMb: Int = 10,
         antispoofOnDeviceEnabled: Bool = false,
-        liveSenseV4Enabled: Bool = false
+        liveSenseV4Enabled: Bool = false,
+        guidedCaptureEnabled: Bool = true
     ) {
         self.audioEnabled = audioEnabled
         self.stepUpPolicy = stepUpPolicy
@@ -187,6 +196,7 @@ public struct SDKOptions: Sendable {
         self.maxUploadSizeMb = maxUploadSizeMb
         self.antispoofOnDeviceEnabled = antispoofOnDeviceEnabled
         self.liveSenseV4Enabled = liveSenseV4Enabled
+        self.guidedCaptureEnabled = guidedCaptureEnabled
     }
 }
 

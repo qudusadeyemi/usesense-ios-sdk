@@ -202,6 +202,48 @@ public struct AppearanceLoader: Codable, Equatable, Sendable {
     }
 }
 
+/// Colours of the face capture screen (contour scan, progress ring, warning).
+/// Unset slots use the Sense defaults; a colour under 3:1 contrast on the
+/// dark camera scrim is ignored so a brand colour can't hide the guide.
+/// Wire keys are camelCase; snake_case (`contour_start`) is accepted too.
+public struct AppearanceCapture: Codable, Equatable, Sendable {
+    /// Progress ring around the oval. Default #4F7CFF.
+    public var ring: String?
+    /// Contour lines, top of the gradient. Default #7A96FF.
+    public var contourStart: String?
+    /// Contour lines, bottom of the gradient. Default #A878FC.
+    public var contourEnd: String?
+    /// Paused ring and failing-oval pulse. Default #FFB84D.
+    public var warning: String?
+
+    public init(ring: String? = nil, contourStart: String? = nil, contourEnd: String? = nil, warning: String? = nil) {
+        self.ring = ring; self.contourStart = contourStart; self.contourEnd = contourEnd; self.warning = warning
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case ring, contourStart, contourEnd, warning
+        case contourStartSnake = "contour_start", contourEndSnake = "contour_end"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ring = try c.decodeIfPresent(String.self, forKey: .ring)
+        contourStart = try c.decodeIfPresent(String.self, forKey: .contourStart)
+            ?? c.decodeIfPresent(String.self, forKey: .contourStartSnake)
+        contourEnd = try c.decodeIfPresent(String.self, forKey: .contourEnd)
+            ?? c.decodeIfPresent(String.self, forKey: .contourEndSnake)
+        warning = try c.decodeIfPresent(String.self, forKey: .warning)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(ring, forKey: .ring)
+        try c.encodeIfPresent(contourStart, forKey: .contourStart)
+        try c.encodeIfPresent(contourEnd, forKey: .contourEnd)
+        try c.encodeIfPresent(warning, forKey: .warning)
+    }
+}
+
 /// Force a palette or follow the OS (default `.auto`).
 public enum AppearanceMode: String, Codable, Equatable, Sendable { case light, dark, auto }
 
@@ -218,6 +260,8 @@ public struct FlowAppearance: Codable, Equatable, Sendable {
     public var loader: AppearanceLoader?
     /// Force a palette or follow the OS (default `.auto`).
     public var mode: AppearanceMode?
+    /// Face capture screen colours (contour scan, ring, warning).
+    public var capture: AppearanceCapture?
 
     public init(
         colors: AppearanceColors? = nil,
@@ -227,7 +271,8 @@ public struct FlowAppearance: Codable, Equatable, Sendable {
         background: AppearanceBackground? = nil,
         icons: AppearanceIcons? = nil,
         loader: AppearanceLoader? = nil,
-        mode: AppearanceMode? = nil
+        mode: AppearanceMode? = nil,
+        capture: AppearanceCapture? = nil
     ) {
         self.colors = colors
         self.typography = typography
@@ -237,6 +282,7 @@ public struct FlowAppearance: Codable, Equatable, Sendable {
         self.icons = icons
         self.loader = loader
         self.mode = mode
+        self.capture = capture
     }
 }
 
@@ -273,7 +319,13 @@ public extension FlowAppearance {
                 style: high.loader?.style ?? low.loader?.style,
                 imageUrl: high.loader?.imageUrl ?? low.loader?.imageUrl
             ),
-            mode: high.mode ?? low.mode
+            mode: high.mode ?? low.mode,
+            capture: (high.capture == nil && low.capture == nil) ? nil : AppearanceCapture(
+                ring: high.capture?.ring ?? low.capture?.ring,
+                contourStart: high.capture?.contourStart ?? low.capture?.contourStart,
+                contourEnd: high.capture?.contourEnd ?? low.capture?.contourEnd,
+                warning: high.capture?.warning ?? low.capture?.warning
+            )
         )
     }
 

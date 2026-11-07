@@ -6,6 +6,30 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Guided face capture (LiveSense capture redesign, Phase 1).** The capture
+  screen now waits for a good face before it starts: framed in the oval, one
+  person, the right distance, facing the screen, lit, sharp, eyes open and
+  still. These checks run on the face mesh and on the face area (not the whole
+  frame), and they block instead of warn. One hint shows at a time (it must
+  fail for 400 ms and stays at least 1.2 s), with a VoiceOver announcement.
+  The scan starts by itself when every check passes, so the "I'm Ready" button
+  is gone. A movement pauses the progress ring instead of restarting it. In
+  the dark the screen becomes a fill light before the user is asked to find
+  light. Focus and exposure follow the face. A shutter button appears after
+  20 s or 3 dropped scans. A live contour scan is drawn from the mesh, and the
+  face is blurred behind the upload sheet. Challenge sessions keep their
+  challenge; the gate only decides when it starts.
+- `FlowAppearance.capture` (`ring`, `contourStart`, `contourEnd`, `warning`)
+  sets the capture colours. The defaults are Sense blue/violet, and a colour
+  under 3:1 contrast on the camera scrim falls back to the default.
+- `SDKOptions.guidedCaptureEnabled` (default `true`). Set it to `false` to keep
+  the previous screen.
+
+Experience only: the frames, metadata and scoring sent to the server are
+unchanged.
+
 ## [4.9.0] - 2026-11-07
 
 Tested on an iPhone 17 Pro in session mode and in a Flow, against the sandbox

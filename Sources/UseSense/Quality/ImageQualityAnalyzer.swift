@@ -44,6 +44,18 @@ struct ImageQualityReport: Sendable {
     let guidanceMessages: [QualityGuidance]
 }
 
+/// Light and sharpness on the face box only (capture gate input).
+struct FaceRegionQuality: Sendable, Equatable {
+    /// Mean BT.601 luma, 0...255.
+    let meanLuma: Float
+    /// Share of face samples at luma >= 250.
+    let clippedHighRatio: Float
+    /// Share of face samples at luma <= 5.
+    let clippedLowRatio: Float
+    /// Laplacian variance of the face resampled to 96x96.
+    let sharpness: Float
+}
+
 final class ImageQualityAnalyzer: @unchecked Sendable {
     private let analysisQueue = DispatchQueue(label: "com.usesense.quality", qos: .userInitiated)
     private var lastAnalysisTime: CFAbsoluteTime = 0
@@ -192,6 +204,72 @@ final class ImageQualityAnalyzer: @unchecked Sendable {
             isAcceptable: overallScore >= Self.acceptableThreshold,
             isTooDark: isTooDark, isTooBright: isTooBright,
             guidanceMessages: guidance
+        )
+    }
+
+    // MARK: - Face-area measurement (capture gate)
+
+    /// Light and sharpness measured on the face only. A bright window behind
+    /// the user no longer hides a dark face, and sharpness no longer depends
+    /// on how much background is in view.
+    ///
+    /// `faceRect` is the landmark bounding box in normalised buffer
+    /// coordinates (top-left origin). Luminance is sampled on a 64x64 grid;
+    /// sharpness is the Laplacian variance of the face resampled to 96x96,
+    /// so it is comparable across face sizes.
+    func analyzeFaceRegion(_ pixelBuffer: CVPixelBuffer, faceRect: NormalizedRect) -> FaceRegionQuality? {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA,
+              let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let ptr = base.assumingMemoryBound(to: UInt8.self)
+
+        let x0 = max(0, min(1, faceRect.x)), y0 = max(0, min(1, faceRect.y))
+        let x1 = max(0, min(1, faceRect.x + faceRect.w)), y1 = max(0, min(1, faceRect.y + faceRect.h))
+        guard x1 - x0 > 0.02, y1 - y0 > 0.02 else { return nil }
+
+        func luma(_ nx: Double, _ ny: Double) -> Float {
+            let px = min(width - 1, max(0, Int(nx * Double(width))))
+            let py = min(height - 1, max(0, Int(ny * Double(height))))
+            let o = py * bytesPerRow + px * 4
+            return 0.299 * Float(ptr[o + 2]) + 0.587 * Float(ptr[o + 1]) + 0.114 * Float(ptr[o])
+        }
+
+        // Light: 64x64 samples over the face box.
+        let n = 64
+        var sum: Float = 0
+        var clippedHigh = 0
+        var clippedLow = 0
+        for j in 0..<n {
+            let ny = y0 + (y1 - y0) * (Double(j) + 0.5) / Double(n)
+            for i in 0..<n {
+                let v = luma(x0 + (x1 - x0) * (Double(i) + 0.5) / Double(n), ny)
+                sum += v
+                if v >= 250 { clippedHigh += 1 }
+                if v <= 5 { clippedLow += 1 }
+            }
+        }
+        let count = Float(n * n)
+
+        // Sharpness: the face resampled to 96x96, Laplacian variance.
+        let s = 96
+        var gray = [Float](repeating: 0, count: s * s)
+        for j in 0..<s {
+            let ny = y0 + (y1 - y0) * (Double(j) + 0.5) / Double(s)
+            for i in 0..<s {
+                gray[j * s + i] = luma(x0 + (x1 - x0) * (Double(i) + 0.5) / Double(s), ny)
+            }
+        }
+        let sharpness = computeLaplacianVariance(gray, width: s, height: s)
+
+        return FaceRegionQuality(
+            meanLuma: sum / count,
+            clippedHighRatio: Float(clippedHigh) / count,
+            clippedLowRatio: Float(clippedLow) / count,
+            sharpness: sharpness
         )
     }
 

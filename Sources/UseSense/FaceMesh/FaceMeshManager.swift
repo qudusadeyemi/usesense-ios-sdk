@@ -16,6 +16,25 @@ struct FaceMeshResult: Sendable {
     let rightEAR: Double
     let bbox: NormalizedRect
     let landmarks: [(x: Double, y: Double, z: Double)]
+    /// Capture-gate inputs (display/gating only; never uploaded in Phase 1).
+    var gate: FaceGateSignals = .none
+}
+
+/// Per-frame inputs for the capture quality gate, taken from the same
+/// landmarker call as the mesh. None of this goes into the upload: the wire
+/// keeps `headPose` (today's estimate) so the binding proof, 3DMM fit and
+/// server scoring are unchanged.
+struct FaceGateSignals: Sendable {
+    /// Faces the landmarker returned (run with numFaces = 2 so a second
+    /// person is seen; the subject is the largest face).
+    var faceCount: Int
+    /// ZYX Euler angles (degrees) from the facial transformation matrix.
+    var matrixPose: HeadPose?
+    /// Blendshape eyeBlinkLeft / eyeBlinkRight (0 open ... 1 closed).
+    var eyeBlinkLeft: Double?
+    var eyeBlinkRight: Double?
+
+    static let none = FaceGateSignals(faceCount: 1, matrixPose: nil, eyeBlinkLeft: nil, eyeBlinkRight: nil)
 }
 
 struct HeadPose: Sendable {
@@ -84,8 +103,13 @@ final class FaceMeshManager: @unchecked Sendable {
                 let options = FaceLandmarkerOptions()
                 options.baseOptions.modelAssetPath = modelURL.path
                 options.runningMode = .image
-                options.numFaces = 1
+                // 2 so a second person in view can be detected and block the
+                // capture gate; the subject is always the largest face.
+                options.numFaces = 2
                 options.outputFacialTransformationMatrixes = true
+                // Eye-open gate (eyeBlinkLeft/Right). The blendshape head is a
+                // small MLP on the landmarks: cheap next to the mesh itself.
+                options.outputFaceBlendshapes = true
                 self.landmarker = try FaceLandmarker(options: options)
                 self.isReady = true
             } catch {
@@ -114,7 +138,7 @@ final class FaceMeshManager: @unchecked Sendable {
     func processFrame(_ pixelBuffer: CVPixelBuffer, timestampMs: Int64) -> FaceMeshResult? {
         guard isReady else { return nil }
 
-        guard let landmarkData = extractLandmarks(pixelBuffer) else { return nil }
+        guard let (landmarkData, gate) = extractLandmarks(pixelBuffer) else { return nil }
 
         let pose = estimateHeadPose(from: landmarkData)
         let leftEAR = computeEAR(landmarks: landmarkData, eye: .left)
@@ -133,7 +157,8 @@ final class FaceMeshManager: @unchecked Sendable {
             leftEAR: leftEAR,
             rightEAR: rightEAR,
             bbox: bbox,
-            landmarks: landmarkData
+            landmarks: landmarkData,
+            gate: gate
         )
     }
 
@@ -169,7 +194,8 @@ final class FaceMeshManager: @unchecked Sendable {
             leftEAR: result.leftEAR,
             rightEAR: result.rightEAR,
             bbox: result.bbox,
-            landmarks: result.landmarks
+            landmarks: result.landmarks,
+            gate: result.gate
         )
         results.append(recorded)
         lock.unlock()
@@ -198,18 +224,39 @@ final class FaceMeshManager: @unchecked Sendable {
 
     // MARK: - Landmark Extraction
 
-    private func extractLandmarks(_ pixelBuffer: CVPixelBuffer) -> [(x: Double, y: Double, z: Double)]? {
+    private func extractLandmarks(_ pixelBuffer: CVPixelBuffer) -> ([(x: Double, y: Double, z: Double)], FaceGateSignals)? {
         #if canImport(MediaPipeTasksVision)
         guard let landmarker = self.landmarker else { return nil }
         do {
             let mpImage = try MPImage(pixelBuffer: pixelBuffer)
             let result = try landmarker.detect(image: mpImage)
-            guard let firstFace = result.faceLandmarks.first, firstFace.count >= 468 else {
-                return nil
-            }
-            return firstFace.map { lm in
+            let faces = result.faceLandmarks.filter { $0.count >= 468 }
+            guard !faces.isEmpty else { return nil }
+            // The subject is the largest face; with numFaces = 2 the order
+            // MediaPipe returns is not a size order.
+            let subject = result.faceLandmarks.indices
+                .filter { result.faceLandmarks[$0].count >= 468 }
+                .max { Self.area(result.faceLandmarks[$0]) < Self.area(result.faceLandmarks[$1]) } ?? 0
+            let landmarks = result.faceLandmarks[subject].map { lm in
                 (x: Double(lm.x), y: Double(lm.y), z: Double(lm.z))
             }
+            var gate = FaceGateSignals(faceCount: faces.count, matrixPose: nil, eyeBlinkLeft: nil, eyeBlinkRight: nil)
+            if subject < result.facialTransformationMatrixes.count {
+                let m = result.facialTransformationMatrixes[subject]
+                if m.rows >= 3, m.columns >= 3 {
+                    gate.matrixPose = Self.zyxPose { r, c in Double(m.value(atRow: UInt(r), column: UInt(c))) }
+                }
+            }
+            if subject < result.faceBlendshapes.count {
+                for category in result.faceBlendshapes[subject].categories {
+                    switch category.categoryName {
+                    case "eyeBlinkLeft": gate.eyeBlinkLeft = Double(category.score)
+                    case "eyeBlinkRight": gate.eyeBlinkRight = Double(category.score)
+                    default: break
+                    }
+                }
+            }
+            return (landmarks, gate)
         } catch {
             return nil
         }
@@ -217,6 +264,35 @@ final class FaceMeshManager: @unchecked Sendable {
         // MediaPipeTasksVision not linked; no landmarks available.
         return nil
         #endif
+    }
+
+    #if canImport(MediaPipeTasksVision)
+    private static func area(_ face: [NormalizedLandmark]) -> Float {
+        var minX: Float = 1, maxX: Float = 0, minY: Float = 1, maxY: Float = 0
+        for lm in face {
+            minX = min(minX, lm.x); maxX = max(maxX, lm.x)
+            minY = min(minY, lm.y); maxY = max(maxY, lm.y)
+        }
+        return max(0, maxX - minX) * max(0, maxY - minY)
+    }
+    #endif
+
+    /// ZYX Euler angles (degrees) of a rotation matrix R = Rz(roll) * Ry(yaw) * Rx(pitch).
+    /// yaw = turn left/right (about the vertical Y axis), pitch = nod (about X),
+    /// roll = tilt (about the camera Z axis). Gimbal lock (|yaw| near 90):
+    /// roll is indeterminate and set to 0.
+    static func zyxPose(_ r: (Int, Int) -> Double) -> HeadPose {
+        let toDeg = 180.0 / Double.pi
+        let sy = (r(0, 0) * r(0, 0) + r(1, 0) * r(1, 0)).squareRoot()
+        let yaw = atan2(-r(2, 0), sy)
+        if sy < 1e-6 {
+            return HeadPose(yaw: yaw * toDeg, pitch: atan2(-r(1, 2), r(1, 1)) * toDeg, roll: 0)
+        }
+        return HeadPose(
+            yaw: yaw * toDeg,
+            pitch: atan2(r(2, 1), r(2, 2)) * toDeg,
+            roll: atan2(r(1, 0), r(0, 0)) * toDeg
+        )
     }
 
     // MARK: - Head Pose Estimation

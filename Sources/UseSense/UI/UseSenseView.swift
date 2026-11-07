@@ -1,6 +1,7 @@
 #if canImport(SwiftUI) && canImport(AVFoundation)
 import SwiftUI
 import AVFoundation
+import UIKit
 
 public struct UseSenseView: View {
     @StateObject private var viewModel: UseSenseViewModel
@@ -44,10 +45,18 @@ public struct UseSenseView: View {
                 }
 
             case .faceGuide:
-                cameraWithFaceGuide
+                if viewModel.guided {
+                    GuidedCaptureView(mode: .align, camera: cameraLayer, viewModel: viewModel, onClose: close)
+                } else {
+                    cameraWithFaceGuide
+                }
 
             case .baseline:
-                cameraWithBaseline
+                if viewModel.guided {
+                    GuidedCaptureView(mode: .scan, camera: cameraLayer, viewModel: viewModel, onClose: close)
+                } else {
+                    cameraWithBaseline
+                }
 
             case .zoom:
                 // V4 zoom-motion state. The legacy UI does not render this;
@@ -96,6 +105,9 @@ public struct UseSenseView: View {
                         Spacer()
                     }
                 }
+
+            case .uploading where viewModel.guided, .completing where viewModel.guided:
+                GuidedUploadView(backdrop: viewModel.uploadBackdrop, progress: viewModel.uploadProgress)
 
             case .uploading:
                 // Spec: dark bg (95% opacity), spinner, specific text
@@ -147,6 +159,12 @@ public struct UseSenseView: View {
             if viewModel.showsCaptureFooter { CaptureFooter() }
         }
         .statusBarHidden(viewModel.isCameraActive)
+        .onDisappear { viewModel.restoreScreen() }
+    }
+
+    private func close() {
+        viewModel.cancel()
+        onCancel?()
     }
 
     // MARK: - Camera Views
@@ -368,10 +386,7 @@ public struct UseSenseView: View {
     // MARK: - Close Button
 
     private var closeButton: some View {
-        Button(action: {
-            viewModel.cancel()
-            onCancel?()
-        }) {
+        Button(action: close) {
             Image(systemName: "xmark")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(.white)
@@ -435,7 +450,31 @@ final class UseSenseViewModel: ObservableObject {
     @Published var challengeProgress: Double = 0
     @Published var completionResult: Result<RedactedDecisionObject, UseSenseError>?
 
+    // Guided capture (capture redesign P1)
+    @Published var guide = GuidedCaptureUpdate(snapshot: .initial, shutterAvailable: false)
+    @Published var scan = ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: 0, completed: false)
+    @Published var uploadBackdrop: UIImage?
+
     private let session: UseSenseSession
+    private let fillLight = ScreenFillLight()
+    private let readyHaptic = UIImpactFeedbackGenerator(style: .light)
+    private let doneHaptic = UINotificationFeedbackGenerator()
+    private var lastAnnouncement = Date.distantPast
+    static let announcementInterval: TimeInterval = 1.2
+
+    var guided: Bool { session.guidedCapture }
+    var contourField: ContourDepthField { session.contourField }
+    var scanSecondsForCopy: Int { session.guidedScanSeconds }
+
+    /// One bar for upload and checking.
+    var uploadProgress: Double {
+        switch state {
+        case .uploading(let p): return p >= 1 ? 0.7 : 0.55
+        case .completing: return 0.95
+        case .done: return 1
+        default: return 0.04
+        }
+    }
 
     var previewLayer: AVCaptureVideoPreviewLayer? {
         session.previewLayer
@@ -473,8 +512,14 @@ final class UseSenseViewModel: ObservableObject {
         self.session = session
         session.onStateChange = { [weak self] newState in
             DispatchQueue.main.async {
-                self?.state = newState
+                self?.apply(state: newState)
             }
+        }
+        session.onGuideUpdate = { [weak self] update in
+            DispatchQueue.main.async { self?.apply(guide: update) }
+        }
+        session.onScanUpdate = { [weak self] progress in
+            DispatchQueue.main.async { self?.apply(scan: progress) }
         }
         session.onQualityUpdate = { [weak self] report in
             DispatchQueue.main.async {
@@ -487,6 +532,61 @@ final class UseSenseViewModel: ObservableObject {
     func start() {
         Task { await session.start() }
     }
+
+    // MARK: Guided capture
+
+    private func apply(state newState: SessionState) {
+        state = newState
+        switch newState {
+        case .faceGuide:
+            uploadBackdrop = nil
+            scan = ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: 0, completed: false)
+            readyHaptic.prepare()
+        case .baseline, .zoom, .countdown, .challenge, .inlineStepUp:
+            doneHaptic.prepare()
+        case .uploading, .completing:
+            fillLight.restore()
+            if guided, uploadBackdrop == nil {
+                uploadBackdrop = session.lastCapturedFrame().flatMap { UIImage(data: $0) }
+            }
+        default:
+            fillLight.restore()
+        }
+    }
+
+    private func apply(guide update: GuidedCaptureUpdate) {
+        let wasPassing = guide.snapshot.allPass
+        let oldHint = guide.snapshot.hint
+        guide = update
+        if update.snapshot.fillLight { fillLight.activate() }
+        if case .faceGuide = state, update.snapshot.allPass, !wasPassing {
+            readyHaptic.impactOccurred()
+        }
+        if let hint = update.snapshot.hint, hint != oldHint {
+            announce(hint.subtitle.map { "\(hint.title). \($0)" } ?? hint.title)
+        }
+    }
+
+    private func apply(scan progress: ScanProgress) {
+        let wasComplete = scan.completed
+        scan = progress
+        if progress.completed, !wasComplete { doneHaptic.notificationOccurred(.success) }
+    }
+
+    /// VoiceOver hint, rate-limited like the on-screen hint (1.2 s).
+    private func announce(_ text: String) {
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastAnnouncement) >= Self.announcementInterval else { return }
+        lastAnnouncement = now
+        UIAccessibility.post(notification: .announcement, argument: text)
+    }
+
+    func setViewport(_ size: CGSize) { session.setViewport(size) }
+
+    func shutterTapped() { Task { await session.shutterTapped() } }
+
+    func restoreScreen() { fillLight.restore() }
 
     func continueFromInstructions() {
         Task { await session.proceedFromInstructions() }

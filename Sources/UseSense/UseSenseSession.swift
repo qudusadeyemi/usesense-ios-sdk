@@ -8,6 +8,14 @@ public final class UseSenseSession: @unchecked Sendable {
 
     var onStateChange: ((SessionState) -> Void)?
     var onQualityUpdate: ((ImageQualityReport) -> Void)?
+    /// Guided capture: the gate's state (hint, all-pass, fill light, shutter).
+    /// Called from the capture queue, at most ~10 Hz unless something the
+    /// user sees changed.
+    var onGuideUpdate: ((GuidedCaptureUpdate) -> Void)?
+    /// Guided capture: scan ring progress (called from the scan task).
+    var onScanUpdate: ((ScanProgress) -> Void)?
+    /// The contour scan's depth texture (mesh z, smoothed).
+    let contourField = ContourDepthField()
 
     var previewLayer: AVCaptureVideoPreviewLayer? {
         frameCaptureManager.previewLayer
@@ -150,6 +158,34 @@ public final class UseSenseSession: @unchecked Sendable {
     private var cameraLiveFlag = false
     /// How long the capture waits for the camera's first frame.
     var firstFrameBudget: TimeInterval = 20
+
+    // MARK: Guided capture (capture redesign P1)
+
+    /// The guided screen is on unless the integrator turned it off.
+    var guidedCapture: Bool { config.options?.guidedCaptureEnabled ?? true }
+    /// Gate state; `guide` is fed on the capture queue, read by the scan task.
+    private let guideLock = NSLock()
+    private var guide = CaptureGuide()
+    private var latestGuide = GuideSnapshot.initial
+    private var lastGuidePublished: GuidedCaptureUpdate?
+    private var lastGuidePublishTime: CFAbsoluteTime = 0
+    private var lastFocusTime: CFAbsoluteTime = 0
+    private var viewportSize = CGSize(width: 390, height: 844)
+    /// The auto start has been asked for from the current align screen.
+    private var autoStartRequested = false
+    /// First time the align screen showed in this attempt (shutter timer).
+    private var alignStartedAt: Date?
+    /// Scan windows abandoned after a pause longer than `scanDiscardAfter`.
+    private var pausedWindows = 0
+    /// The scan was started from the shutter button: long pauses never
+    /// discard frames, so shaky hands can still finish.
+    private var manualStart = false
+    /// Serialises "bank a frame + its mesh" against discarding them, so the
+    /// frame/mesh index pairing can never be split by a discard.
+    private let bankLock = NSLock()
+    static let shutterAfterSeconds: TimeInterval = 20
+    static let shutterAfterPausedWindows = 3
+    static let scanDiscardAfter: TimeInterval = 1.5
 
     // MARK: - Init
 
@@ -355,6 +391,30 @@ public final class UseSenseSession: @unchecked Sendable {
         await runAttempt { await self.startBaseline() }
     }
 
+    /// Shutter fallback: start the same scan by hand. The quality bar is the
+    /// same; only the start is manual.
+    func shutterTapped() async {
+        manualStart = true
+        await faceReady()
+    }
+
+    /// The capture screen's size in points, so the gate tests landmarks
+    /// against the oval the user actually sees.
+    func setViewport(_ size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        guideLock.lock(); viewportSize = size; guideLock.unlock()
+    }
+
+    /// Seconds the guided scan banks (the shutter copy names it).
+    var guidedScanSeconds: Int {
+        let ms = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 8000
+        let single = sessionData?.policy.challenge == nil && config.options?.liveSenseV4Enabled != true
+        return Int((baselineDuration + (single ? Double(ms) / 1000 : 0)).rounded())
+    }
+
+    /// The last banked frame (for the blurred backdrop behind the upload sheet).
+    func lastCapturedFrame() -> Data? { frameBuffer.getFrames().last }
+
     func challengeCompleted() async {
         await runAttempt { await self.runChallengeCompleted() }
     }
@@ -456,6 +516,7 @@ public final class UseSenseSession: @unchecked Sendable {
         uploadAttempted = false
         stepUpResult = nil
         serverStepUp = nil
+        resetGuidedState()
         framesDropped = 0
         frameBuffer.reset()
         challengeResponseBuilder.reset()
@@ -538,7 +599,93 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     private func startFaceGuide() async {
+        if alignStartedAt == nil { alignStartedAt = Date() }
+        rearmAutoStart()
         currentState = .faceGuide
+    }
+
+    /// A fresh align screen: the gate starts over (the fill light stays on)
+    /// and may auto start again.
+    private func rearmAutoStart() {
+        guideLock.lock()
+        autoStartRequested = false
+        guide.reset(keepFillLight: true)
+        guideLock.unlock()
+    }
+
+    private func resetGuidedState() {
+        alignStartedAt = nil
+        pausedWindows = 0
+        manualStart = false
+        guideLock.lock()
+        guide.reset()
+        latestGuide = .initial
+        lastGuidePublished = nil
+        autoStartRequested = false
+        guideLock.unlock()
+        contourField.clear()
+    }
+
+    private var guideAllPass: Bool {
+        guideLock.lock(); defer { guideLock.unlock() }
+        return latestGuide.allPass
+    }
+
+    /// Drop the frames banked so far (a pause outlasted `scanDiscardAfter`).
+    private func discardBankedFrames() {
+        bankLock.lock()
+        frameBuffer.reset()
+        faceMeshManager.reset()
+        bankLock.unlock()
+        frameBuffer.setCapturePhase(.baseline)
+        captureStartTime = Date()
+    }
+
+    /// The guided scan: frames bank only while every check passes; any
+    /// failure pauses the ring, which resumes when the face is good again.
+    /// Banked frames are kept unless a pause lasts more than 1.5 s; then the
+    /// window is dropped and this returns false, so the caller goes back to
+    /// the align screen (the shutter shows after 3 dropped windows). In
+    /// shutter mode a pause never drops the window.
+    private func runGatedScan(duration: TimeInterval) async throws -> Bool {
+        var banked: TimeInterval = 0
+        var pausedFor: TimeInterval = 0
+        var last = Date()
+        onScanUpdate?(ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: duration, completed: false))
+        while banked < duration {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            try Task.checkCancellation()
+            let now = Date()
+            let dt = min(0.25, now.timeIntervalSince(last))
+            last = now
+            let passing = guideAllPass
+            isCapturingFrames = passing
+            if passing {
+                banked += dt
+                pausedFor = 0
+            } else {
+                pausedFor += dt
+                if !manualStart, pausedFor > Self.scanDiscardAfter {
+                    isCapturingFrames = false
+                    pausedWindows += 1
+                    USTrace.log("scan: pause > \(Self.scanDiscardAfter)s, window \(pausedWindows) dropped")
+                    return false
+                }
+            }
+            onScanUpdate?(ScanProgress(fraction: min(1, banked / duration), paused: !passing,
+                                       bankedSeconds: banked, totalSeconds: duration, completed: false))
+        }
+        onScanUpdate?(ScanProgress(fraction: 1, paused: false, bankedSeconds: duration, totalSeconds: duration, completed: true))
+        return true
+    }
+
+    /// Back to the align screen after a dropped scan window.
+    private func returnToAlign() async {
+        isCapturingFrames = false
+        discardBankedFrames()
+        if audioCaptureManager.isRecording { _ = audioCaptureManager.stopRecording() }
+        releaseClaim("baseline")
+        await startFaceGuide()
     }
 
     private func reconfigureFrameBuffer(maxFrames: Int, targetFps: Int) {
@@ -620,7 +767,31 @@ public final class UseSenseSession: @unchecked Sendable {
                 startAudioRecording()
             }
 
-            try await Task.sleep(nanoseconds: UInt64(baselineDuration * 1_000_000_000))
+            let captureDurationMs = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 8000
+            // Guided passive scan: one gated window covers baseline + capture
+            // (the same frames as before). Challenge and v4 sessions are
+            // gated at the start only: a head turn needs pose "failures".
+            let singleGatedScan = guidedCapture
+                && sessionData?.policy.challenge == nil
+                && config.options?.liveSenseV4Enabled != true
+            if singleGatedScan {
+                isCapturingFrames = false
+                guard try await runGatedScan(duration: baselineDuration + Double(captureDurationMs) / 1000) else {
+                    await returnToAlign()
+                    return
+                }
+            } else if guidedCapture {
+                // Challenge / v4 baseline: not gated, but the ring still fills.
+                let start = Date()
+                while Date().timeIntervalSince(start) < baselineDuration {
+                    try await Task.sleep(nanoseconds: 50_000_000)
+                    let done = min(baselineDuration, Date().timeIntervalSince(start))
+                    onScanUpdate?(ScanProgress(fraction: done / baselineDuration, paused: false, bankedSeconds: done,
+                                               totalSeconds: baselineDuration, completed: done >= baselineDuration))
+                }
+            } else {
+                try await Task.sleep(nanoseconds: UInt64(baselineDuration * 1_000_000_000))
+            }
 
             // v4: insert a constitutive zoom phase between baseline and the
             // active challenge. Additive -- existing challenges still run.
@@ -642,8 +813,9 @@ public final class UseSenseSession: @unchecked Sendable {
                 frameBuffer.setCapturePhase(.challenge)
                 currentState = .challenge(spec: challenge)
             } else {
-                let captureDurationMs = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 8000
-                try await Task.sleep(nanoseconds: UInt64(captureDurationMs) * 1_000_000)
+                if !singleGatedScan {
+                    try await Task.sleep(nanoseconds: UInt64(captureDurationMs) * 1_000_000)
+                }
                 isCapturingFrames = false
 
                 // Check suspicion engine before stopping camera
@@ -1278,6 +1450,14 @@ extension UseSenseSession {
         return inserted
     }
 
+    /// Undo `claimOnce(key)` for the current attempt, so the step can run
+    /// again (the guided scan going back to the align screen).
+    func releaseClaim(_ key: String) {
+        attemptLock.lock(); defer { attemptLock.unlock() }
+        let owner = Self.attemptToken ?? attempt
+        claims.remove("\(owner):\(key)")
+    }
+
     var isCameraLive: Bool {
         cameraLiveLock.lock(); defer { cameraLiveLock.unlock() }
         return cameraLiveFlag
@@ -1359,6 +1539,10 @@ extension UseSenseSession: FrameCaptureDelegate {
             suspicionEngine?.analyzeFrame(pose: meshResult.headPose, luminance: luminance, sharpness: sharpness)
         }
 
+        if guidedCapture {
+            updateGuide(pixelBuffer: pixelBuffer, mesh: meshResult, time: CMTimeGetSeconds(timestamp))
+        }
+
         // Only store frames during active capture phases
         guard isCapturingFrames else { return }
 
@@ -1372,6 +1556,10 @@ extension UseSenseSession: FrameCaptureDelegate {
         // and `frameHashes[i]` are always the same camera frame.
         guard let meshResult = meshResult else { return }
 
+        bankLock.lock()
+        defer { bankLock.unlock() }
+        // Re-checked under the lock: the guided scan may have paused.
+        guard isCapturingFrames else { return }
         if frameBuffer.shouldCapture() && !frameBuffer.isFull {
             let frameIndex = frameBuffer.count
             frameBuffer.addFrame(pixelBuffer, timestamp: CMTimeGetSeconds(timestamp))
@@ -1387,6 +1575,145 @@ extension UseSenseSession: FrameCaptureDelegate {
 
     func frameCaptureManager(_ manager: FrameCaptureManager, didFailWithError error: Error) {
         handleError(UseSenseError(code: .captureFailed, message: "Camera error: \(error.localizedDescription)"))
+    }
+}
+
+// MARK: - Guided capture gate
+
+/// What the capture screen needs from the gate each update.
+struct GuidedCaptureUpdate: Equatable, Sendable {
+    var snapshot: GuideSnapshot
+    /// Show the shutter button (20 s on the align screen, or 3 abandoned scans).
+    var shutterAvailable: Bool
+}
+
+/// Ring progress of the guided scan.
+struct ScanProgress: Equatable, Sendable {
+    var fraction: Double
+    var paused: Bool
+    var bankedSeconds: TimeInterval
+    var totalSeconds: TimeInterval
+    var completed: Bool
+}
+
+extension UseSenseSession {
+    /// Stillness anchors: nose tip, eye outer corners, chin, forehead.
+    static let stillnessAnchors = [1, 33, 263, 152, 10]
+
+    /// Iris-centre distance / frame width (eye-corner midpoints without iris points).
+    static func eyeDistance(_ lm: [(x: Double, y: Double, z: Double)], aspect: Double) -> Double? {
+        let l: (Double, Double), r: (Double, Double)
+        if lm.count >= 478 {
+            l = (lm[468].x, lm[468].y); r = (lm[473].x, lm[473].y)
+        } else if lm.count >= 468 {
+            l = ((lm[33].x + lm[133].x) / 2, (lm[33].y + lm[133].y) / 2)
+            r = ((lm[362].x + lm[263].x) / 2, (lm[362].y + lm[263].y) / 2)
+        } else {
+            return nil
+        }
+        // y is normalised by height: scale to width units (aspect = H / W).
+        return hypot(r.0 - l.0, (r.1 - l.1) * aspect)
+    }
+
+    static func boundingBox(_ points: [CGPoint]) -> CGRect? {
+        guard let first = points.first else { return nil }
+        var r = CGRect(origin: first, size: .zero)
+        for p in points.dropFirst() { r = r.union(CGRect(origin: p, size: .zero)) }
+        return r
+    }
+
+    /// Runs on the capture queue for every camera frame of a guided session.
+    fileprivate func updateGuide(pixelBuffer: CVPixelBuffer, mesh: FaceMeshResult?, time: TimeInterval) {
+        let state = storedState
+        let onCaptureScreen: Bool
+        switch state {
+        case .faceGuide, .baseline: onCaptureScreen = true
+        default: onCaptureScreen = false
+        }
+        guard onCaptureScreen else { return }
+
+        let bufferW = Double(CVPixelBufferGetWidth(pixelBuffer))
+        let bufferH = Double(CVPixelBufferGetHeight(pixelBuffer))
+        guideLock.lock()
+        let viewport = viewportSize
+        guideLock.unlock()
+
+        var observation = GateObservation.noFace(at: time)
+        var facePoint: CGPoint?
+        if let mesh, bufferW > 0, bufferH > 0 {
+            let aspect = bufferH / bufferW
+            let mapper = PreviewMapper(bufferSize: CGSize(width: bufferW, height: bufferH), viewSize: viewport)
+            let points = mesh.landmarks.map { mapper.viewPoint(x: $0.x, y: $0.y) }
+            let oval = CaptureOvalLayout.ovalRect(in: viewport)
+            observation = GateObservation(
+                time: time,
+                faceCount: max(1, mesh.gate.faceCount),
+                ovalExtent: PreviewMapper.ovalExtent(of: points, in: oval),
+                faceLargerThanOval: Self.boundingBox(points).map {
+                    $0.width > oval.width * 0.96 || $0.height > oval.height * 0.96
+                } ?? false,
+                eyeDistance: Self.eyeDistance(mesh.landmarks, aspect: aspect),
+                yaw: mesh.gate.matrixPose?.yaw,
+                pitch: mesh.gate.matrixPose?.pitch,
+                roll: mesh.gate.matrixPose?.roll,
+                face: qualityAnalyzer.analyzeFaceRegion(pixelBuffer, faceRect: mesh.bbox),
+                eyeBlinkLeft: mesh.gate.eyeBlinkLeft,
+                eyeBlinkRight: mesh.gate.eyeBlinkRight,
+                anchors: Self.stillnessAnchors.compactMap { i in
+                    i < mesh.landmarks.count
+                        ? CGPoint(x: mesh.landmarks[i].x, y: mesh.landmarks[i].y * aspect) : nil
+                }
+            )
+            contourField.update(points: points, z: mesh.landmarks.map(\.z))
+            facePoint = mapper.viewPoint(x: mesh.bbox.x + mesh.bbox.w / 2, y: mesh.bbox.y + mesh.bbox.h / 2)
+            if mesh.gate.faceCount > 1, latestGuide.failing.contains(.onePerson) == false {
+                // Rising edge only. Not uploaded in Phase 1 (no wire change).
+                USTrace.log("guide: second face in view (\(mesh.gate.faceCount) faces)")
+            }
+        } else {
+            contourField.update(points: [], z: [])
+        }
+
+        let isAlign: Bool
+        if case .faceGuide = state { isAlign = true } else { isAlign = false }
+        let shutter = isAlign && (pausedWindows >= Self.shutterAfterPausedWindows
+            || (alignStartedAt.map { Date().timeIntervalSince($0) >= Self.shutterAfterSeconds } ?? false))
+
+        guideLock.lock()
+        let snapshot = guide.update(observation)
+        latestGuide = snapshot
+        let update = GuidedCaptureUpdate(snapshot: snapshot, shutterAvailable: shutter)
+        let now = CFAbsoluteTimeGetCurrent()
+        let previous = lastGuidePublished
+        let visibleChange = previous == nil
+            || previous?.snapshot.hint != update.snapshot.hint
+            || previous?.snapshot.allPass != update.snapshot.allPass
+            || previous?.snapshot.fillLight != update.snapshot.fillLight
+            || previous?.shutterAvailable != update.shutterAvailable
+        let publish = visibleChange || (update != previous && now - lastGuidePublishTime >= 0.1)
+        if publish {
+            lastGuidePublished = update
+            lastGuidePublishTime = now
+        }
+        let startScan = isAlign && snapshot.allPass && !autoStartRequested
+        if startScan { autoStartRequested = true }
+        let refocus = facePoint != nil && now - lastFocusTime >= 0.5
+        if refocus { lastFocusTime = now }
+        guideLock.unlock()
+
+        if publish { onGuideUpdate?(update) }
+        if startScan {
+            USTrace.log("guide: all checks pass, auto start")
+            Task { await self.faceReady() }
+        }
+        if refocus, let facePoint {
+            let layer = previewLayer
+            let manager = frameCaptureManager
+            DispatchQueue.main.async {
+                guard let layer, layer.bounds.width > 0 else { return }
+                manager.setPointOfInterest(layer.captureDevicePointConverted(fromLayerPoint: facePoint))
+            }
+        }
     }
 }
 #endif
