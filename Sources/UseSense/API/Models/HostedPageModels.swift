@@ -1,20 +1,8 @@
 import Foundation
 
-// MARK: - Server Branding (from /data endpoint)
-
-public struct ServerBranding: Codable, Sendable {
-    public let displayName: String?
-    public let logoUrl: String?
-    public let primaryColor: String?
-    public let redirectUrl: String?
-
-    enum CodingKeys: String, CodingKey {
-        case displayName = "display_name"
-        case logoUrl = "logo_url"
-        case primaryColor = "primary_color"
-        case redirectUrl = "redirect_url"
-    }
-}
+// MARK: - Server Branding
+// `ServerBranding` (the dashboard layer, shared by the hosted /data endpoint,
+// session create, init-session and Flow run views) lives in ServerBranding.swift.
 
 // MARK: - Effective Branding (merged: SDK > org > defaults)
 

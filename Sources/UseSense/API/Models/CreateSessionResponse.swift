@@ -8,6 +8,9 @@ public struct CreateSessionResponse: Codable, Sendable {
     public let policy: SessionPolicy
     public let upload: UploadConfig
     public let geometricCoherence: GeometricCoherenceConfig?
+    /// The org's dashboard branding (optional; absent on older servers). The
+    /// layer below the integrator's code-set branding in session mode.
+    public let branding: ServerBranding?
 
     public init(
         sessionId: String,
@@ -16,7 +19,8 @@ public struct CreateSessionResponse: Codable, Sendable {
         nonce: String,
         policy: SessionPolicy,
         upload: UploadConfig,
-        geometricCoherence: GeometricCoherenceConfig? = nil
+        geometricCoherence: GeometricCoherenceConfig? = nil,
+        branding: ServerBranding? = nil
     ) {
         self.sessionId = sessionId
         self.sessionToken = sessionToken
@@ -25,6 +29,7 @@ public struct CreateSessionResponse: Codable, Sendable {
         self.policy = policy
         self.upload = upload
         self.geometricCoherence = geometricCoherence
+        self.branding = branding
     }
 
     enum CodingKeys: String, CodingKey {
@@ -33,6 +38,7 @@ public struct CreateSessionResponse: Codable, Sendable {
         case expiresAt = "expires_at"
         case nonce, policy, upload
         case geometricCoherence = "geometric_coherence"
+        case branding
     }
 
     /// The identity fields (session_id, session_token, nonce, expires_at) and
@@ -48,6 +54,7 @@ public struct CreateSessionResponse: Codable, Sendable {
         policy = try c.decode(SessionPolicy.self, forKey: .policy)
         upload = try c.decode(UploadConfig.self, forKey: .upload)
         geometricCoherence = (try? c.decodeIfPresent(GeometricCoherenceConfig.self, forKey: .geometricCoherence)) ?? nil
+        branding = (try? c.decodeIfPresent(ServerBranding.self, forKey: .branding)) ?? nil
     }
 }
 

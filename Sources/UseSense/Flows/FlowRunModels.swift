@@ -283,10 +283,13 @@ public struct FlowRunView {
     public let pendingAction: PendingAction?
     public let branding: Branding?
 
+    /// The dashboard branding layer for the run. Every field is optional: a
+    /// value the operator never configured is nil, never a built-in default
+    /// (defaults are applied last, where tokens are read).
     public struct Branding {
-        public let displayName: String
+        public let displayName: String?
         public let logoURL: URL?
-        public let primaryColor: String
+        public let primaryColor: String?
         public let redirectURL: URL?
         /// Operator-configured white-label customization delivered with the run.
         /// Sits below the SDK-init appearance and above the legacy
@@ -312,14 +315,15 @@ public struct FlowRunView {
         let outcome = (run["outcome"] as? String).flatMap { FlowOutcome(rawValue: $0) }
         let cursor = run["cursorStepId"] as? String
         let action: PendingAction? = try (run["pendingAction"] as? [String: Any]).map { try PendingAction.decode($0) }
-        let branding = (root["branding"] as? [String: Any]).map { b -> FlowRunView.Branding in
-            Branding(
-                displayName: (b["display_name"] as? String) ?? "Sense",
-                logoURL: (b["logo_url"] as? String).flatMap { URL(string: $0) },
-                primaryColor: (b["primary_color"] as? String) ?? "#4F7CFF",
-                redirectURL: (b["redirect_url"] as? String).flatMap { URL(string: $0) },
-                appearance: (b["appearance"] as? [String: Any]).flatMap(FlowAppearance.decodeFromJSONObject),
-                copy: (b["copy"] as? [String: Any]).flatMap(FlowCopy.decodeFromJSONObject)
+        let branding = (root["branding"] as? [String: Any]).map { raw -> FlowRunView.Branding in
+            let b = ServerBranding.fromJSONObject(raw)
+            return Branding(
+                displayName: b.displayName,
+                logoURL: b.logoUrl.flatMap { URL(string: $0) },
+                primaryColor: b.primaryColor,
+                redirectURL: b.redirectUrl.flatMap { URL(string: $0) },
+                appearance: b.appearance,
+                copy: b.copy
             )
         }
         return FlowRunView(id: id, state: state, outcome: outcome, cursorStepId: cursor, environment: environment, pendingAction: action, branding: branding)

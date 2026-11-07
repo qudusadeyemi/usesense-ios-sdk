@@ -86,7 +86,8 @@ struct FaceGuideOverlay: View {
                             .padding(.top, 4)
                     }
                 }
-                .padding(.bottom, 48)
+                // Clears the "Powered by Sense" capture footer below.
+                .padding(.bottom, 80)
                 .padding(.top, 80)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                 .background(

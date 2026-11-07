@@ -105,6 +105,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         }()
         let serverLayer = FlowAppearance.merge(high: server, low: legacyServerColor)
         let merged = FlowAppearance.merge(high: options.appearance, low: serverLayer)
+        USTrace.log(BrandingResolver.describeSources(code: options.appearance, dashboard: serverLayer))
         FlowAppearanceResolver.set(merged)
         switch merged?.mode ?? .auto {
         case .light: overrideUserInterfaceStyle = .light

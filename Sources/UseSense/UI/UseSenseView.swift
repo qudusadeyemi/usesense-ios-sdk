@@ -117,11 +117,14 @@ public struct UseSenseView: View {
                 }
 
             case .done(let decision):
-                ResultView(decision: decision, onDismiss: {
+                ResultView(decision: decision,
+                           headerLogoURL: viewModel.showsHeader ? viewModel.headerLogoURL : nil,
+                           headerDisplayName: viewModel.showsHeader ? viewModel.headerDisplayName : nil,
+                           onDismiss: {
                     onComplete(.success(decision))
-                }, onRetry: {
+                }, onRetry: viewModel.canRetryFromResult ? {
                     viewModel.retry()
-                })
+                } : nil)
 
             case .error(let error):
                 FailureView(error: error, onRetry: {
@@ -139,6 +142,9 @@ public struct UseSenseView: View {
                     viewModel.resumeFinalization()
                 } : nil)
             }
+        }
+        .overlay(alignment: .bottom) {
+            if viewModel.showsCaptureFooter { CaptureFooter() }
         }
         .statusBarHidden(viewModel.isCameraActive)
     }
@@ -213,9 +219,11 @@ public struct UseSenseView: View {
                 if let guidance = viewModel.qualityGuidance.first {
                     QualityWarningBanner(guidance: guidance, qualityLevel: viewModel.qualityLevel)
                         .padding(.horizontal, 16)
-                        .padding(.bottom, 32)
+                        .padding(.bottom, 8)
                 }
             }
+            // Clears the "Powered by Sense" capture footer.
+            .padding(.bottom, CaptureFooter.clearance)
         }
     }
 
@@ -241,7 +249,7 @@ public struct UseSenseView: View {
                 ChallengeProgressBar(progress: viewModel.challengeProgress)
                     .padding(.horizontal, 16)
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, CaptureFooter.clearance)
         }
     }
 
@@ -375,6 +383,24 @@ public struct UseSenseView: View {
     }
 }
 
+// MARK: - Capture footer ("Powered by Sense", 50% white, as Android's capture footer)
+
+struct CaptureFooter: View {
+    /// Bottom space content above the footer must leave (12pt text + 2 x 12pt
+    /// padding, plus a small gap).
+    static let clearance: CGFloat = 44
+
+    var body: some View {
+        Text("Powered by Sense")
+            .font(.system(size: 12))
+            .foregroundColor(.white.opacity(0.5))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .allowsHitTesting(false)
+            .accessibilityIdentifier("usesense.capture.footer")
+    }
+}
+
 // MARK: - Verifying Badge (red pulsing dot + "Verifying" per spec)
 
 struct VerifyingBadge: View {
@@ -414,6 +440,27 @@ final class UseSenseViewModel: ObservableObject {
     var previewLayer: AVCaptureVideoPreviewLayer? {
         session.previewLayer
     }
+
+    /// Result header lockup. A Flow's resolved appearance (logo / placement)
+    /// wins over the session's own branding; placement `none` hides it.
+    var headerLogoURL: URL? { FlowAppearanceResolver.logoURL ?? session.brandLogoURL }
+    var headerDisplayName: String? { session.brandDisplayName }
+    var showsHeader: Bool {
+        FlowAppearanceResolver.logoPlacement != AppearanceLogo.Placement.none &&
+            (headerLogoURL != nil || headerDisplayName != nil)
+    }
+
+    /// The capture screens (camera up to the result) carry the
+    /// "Powered by Sense" footer, as on Android.
+    var showsCaptureFooter: Bool {
+        switch state {
+        case .faceGuide, .baseline, .zoom, .countdown, .challenge, .inlineStepUp, .uploading, .completing: return true
+        default: return false
+        }
+    }
+
+    /// "Try Again" on a reject: standalone sessions only (see isInjected).
+    var canRetryFromResult: Bool { !session.isInjected }
 
     var isCameraActive: Bool {
         switch state {
