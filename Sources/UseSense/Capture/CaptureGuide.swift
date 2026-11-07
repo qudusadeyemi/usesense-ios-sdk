@@ -13,7 +13,8 @@ import CoreGraphics
 
 /// The gate's checks, in priority order (lowest raw value = highest priority).
 enum GateCheck: Int, CaseIterable, Comparable, Sendable {
-    case faceFound, onePerson, inFrame, distance, pose, light, sharpness, eyesOpen, stillness
+    // Spec v1.2: distance runs before in-frame, so size problems get size guidance.
+    case faceFound, onePerson, distance, inFrame, pose, light, sharpness, eyesOpen, stillness
 
     static func < (lhs: GateCheck, rhs: GateCheck) -> Bool { lhs.rawValue < rhs.rawValue }
 
@@ -48,6 +49,8 @@ struct GateHint: Equatable, Sendable {
     static let centre = GateHint(check: .inFrame, title: "Move your face to the centre", subtitle: nil, icon: .centre)
     static let moveCloser = GateHint(check: .distance, title: "Move a little closer", subtitle: nil, icon: .closer)
     static let moveBack = GateHint(check: .distance, title: "Move back a little", subtitle: nil, icon: .back)
+    /// Spec v1.2.1: in-frame fails on a well-placed face that is too close.
+    static let moveBackToFit = GateHint(check: .inFrame, title: "Move back a little", subtitle: nil, icon: .back)
     static let lookStraight = GateHint(check: .pose, title: "Look straight ahead", subtitle: nil, icon: .pose)
     static let faceALight = GateHint(check: .light, title: "Find more light", subtitle: "Face a window or lamp", icon: .light)
     static let tooBright = GateHint(check: .light, title: "Too much light behind you",
@@ -60,11 +63,15 @@ struct GateHint: Equatable, Sendable {
 /// Pass thresholds. Starting points from the spec, to tune on session data.
 struct GateThresholds: Sendable {
     var faceFoundFrames = 3
-    /// Every landmark inside the oval shrunk by 4% of each radius.
-    var ovalLimit = 0.96
+    /// Spec v1.2: every FACE_OVAL silhouette landmark within 1.10 x the oval
+    /// radius (normalised ellipse distance).
+    var ovalLimit = 1.10
+    /// Spec v1.2.1: in-frame failing with the face centre within 8% (of rx
+    /// and of ry) of the expected face centre means too close, not off-centre.
+    var sizeNotPositionTolerance = 0.08
     /// Iris-centre distance / frame width.
     var minEyeDistance = 0.17
-    var maxEyeDistance = 0.30
+    var maxEyeDistance = 0.28
     var maxYaw = 15.0
     var maxPitch = 15.0
     var maxRoll = 12.0
@@ -86,11 +93,12 @@ struct GateObservation: Sendable {
     var time: TimeInterval
     /// Faces returned by the landmarker (0 = none).
     var faceCount: Int
-    /// The largest normalised ellipse radius of any landmark against the
-    /// on-screen oval (<= 1 = inside the drawn edge).
+    /// The largest normalised ellipse radius of any FACE_OVAL landmark
+    /// against the on-screen oval (<= 1 = inside the drawn edge).
     var ovalExtent: Double?
-    /// The face box is wider or taller than the oval (it can never fit).
-    var faceLargerThanOval = false
+    /// Face centre (mean of 10, 152, 234, 454) minus the expected face centre
+    /// (oval cx, oval cy + 0.25 ry), divided by (rx, ry).
+    var faceCentreOffset: CGPoint?
     /// Iris-centre distance / frame width.
     var eyeDistance: Double?
     /// ZYX Euler angles from the transformation matrix (degrees).
@@ -163,19 +171,23 @@ struct QualityGate: Sendable {
         // 2. One person.
         if o.faceCount > 1 { e.failing[.onePerson] = .onePerson }
 
-        // 3. Fully inside the oval. A face bigger than the oval can never
-        // fit, so that reads as distance ("Move back a little"), not centring
-        // (same on Android).
-        if (o.ovalExtent ?? .infinity) > t.ovalLimit {
-            if o.faceLargerThanOval { e.failing[.distance] = .moveBack } else { e.failing[.inFrame] = .centre }
-        }
-
-        // 4. Distance.
+        // 3. Distance (spec v1.2: before in-frame).
         if let d = o.eyeDistance {
             if d < t.minEyeDistance { e.failing[.distance] = .moveCloser }
             else if d > t.maxEyeDistance { e.failing[.distance] = .moveBack }
-        } else if e.failing[.distance] == nil {
+        } else {
             e.failing[.distance] = .moveCloser
+        }
+
+        // 4. In frame: the face silhouette inside 1.10 x the oval. When it
+        // doesn't fit but the face sits where it should, it is too close.
+        if (o.ovalExtent ?? .infinity) > t.ovalLimit {
+            if let c = o.faceCentreOffset,
+               abs(Double(c.x)) <= t.sizeNotPositionTolerance, abs(Double(c.y)) <= t.sizeNotPositionTolerance {
+                e.failing[.inFrame] = .moveBackToFit
+            } else {
+                e.failing[.inFrame] = .centre
+            }
         }
 
         // 5. Pose (no matrix = cannot be checked = blocks).

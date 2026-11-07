@@ -1630,6 +1630,22 @@ extension UseSenseSession {
         return hypot(r.0 - l.0, (r.1 - l.1) * aspect)
     }
 
+    /// MediaPipe FACEMESH_FACE_OVAL: the face silhouette ring.
+    static let faceOvalIndices = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378,
+                                  400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21,
+                                  54, 103, 67, 109]
+
+    /// Spec v1.2.1: face centre (mean of 10, 152, 234, 454) relative to the
+    /// expected face centre (oval cx, oval cy + 0.25 ry), in units of (rx, ry).
+    static func faceCentreOffset(_ points: [CGPoint], oval: CGRect) -> CGPoint? {
+        guard points.count > 454, oval.width > 0, oval.height > 0 else { return nil }
+        let ids = [10, 152, 234, 454]
+        let cx = ids.reduce(0) { $0 + points[$1].x } / 4
+        let cy = ids.reduce(0) { $0 + points[$1].y } / 4
+        let rx = oval.width / 2, ry = oval.height / 2
+        return CGPoint(x: (cx - oval.midX) / rx, y: (cy - (oval.midY + 0.25 * ry)) / ry)
+    }
+
     static func boundingBox(_ points: [CGPoint]) -> CGRect? {
         guard let first = points.first else { return nil }
         var r = CGRect(origin: first, size: .zero)
@@ -1663,10 +1679,9 @@ extension UseSenseSession {
             observation = GateObservation(
                 time: time,
                 faceCount: max(1, mesh.gate.faceCount),
-                ovalExtent: PreviewMapper.ovalExtent(of: points, in: oval),
-                faceLargerThanOval: Self.boundingBox(points).map {
-                    $0.width > oval.width * 0.96 || $0.height > oval.height * 0.96
-                } ?? false,
+                ovalExtent: PreviewMapper.ovalExtent(
+                    of: Self.faceOvalIndices.compactMap { $0 < points.count ? points[$0] : nil }, in: oval),
+                faceCentreOffset: Self.faceCentreOffset(points, oval: oval),
                 eyeDistance: Self.eyeDistance(mesh.landmarks, aspect: aspect),
                 yaw: mesh.gate.matrixPose?.yaw,
                 pitch: mesh.gate.matrixPose?.pitch,
@@ -1702,6 +1717,8 @@ extension UseSenseSession {
             USTrace.log("guide: failing [\(snapshot.failing.sorted().map(\.debugLabel).joined(separator: ","))]"
                 + " eye=\(observation.eyeDistance.map { String(format: "%.3f", $0) } ?? "-")"
                 + " oval=\(observation.ovalExtent.map { String(format: "%.2f", $0) } ?? "-")"
+                + " centreOff=\(observation.faceCentreOffset.map { String(format: "%.3f,%.3f", $0.x, $0.y) } ?? "-")"
+                + " hint=\(snapshot.hint?.title ?? "-")"
                 + " yaw=\(observation.yaw.map { String(format: "%.1f", $0) } ?? "-")"
                 + " pitch=\(observation.pitch.map { String(format: "%.1f", $0) } ?? "-")"
                 + " roll=\(observation.roll.map { String(format: "%.1f", $0) } ?? "-")"

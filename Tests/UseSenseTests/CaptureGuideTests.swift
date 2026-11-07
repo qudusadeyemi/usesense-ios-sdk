@@ -46,9 +46,9 @@ final class CaptureGuideTests: XCTestCase {
     func testEachCheckFailsWithItsCopy() {
         let cases: [(String, (inout GateObservation) -> Void, GateCheck, GateHint)] = [
             ("second face", { $0.faceCount = 2 }, .onePerson, .onePerson),
-            ("off centre", { $0.ovalExtent = 1.0 }, .inFrame, .centre),
+            ("off centre", { $0.ovalExtent = 1.2; $0.faceCentreOffset = CGPoint(x: 0.3, y: 0) }, .inFrame, .centre),
             ("too far", { $0.eyeDistance = 0.12 }, .distance, .moveCloser),
-            ("too close", { $0.eyeDistance = 0.34 }, .distance, .moveBack),
+            ("too close", { $0.eyeDistance = 0.29 }, .distance, .moveBack),
             ("yaw", { $0.yaw = 16 }, .pose, .lookStraight),
             ("pitch", { $0.pitch = -15 }, .pose, .lookStraight),
             ("roll", { $0.roll = 12.5 }, .pose, .lookStraight),
@@ -66,11 +66,27 @@ final class CaptureGuideTests: XCTestCase {
         }
     }
 
-    func testFaceBiggerThanOvalReadsAsMoveBack() {
+    func testInFrameSizeVersusPosition() {
+        // Silhouette outside 1.10 x oval, face centred where expected: too close.
         var gate = QualityGate()
-        let e = run(&gate, seconds: 0.5) { $0.ovalExtent = 1.2; $0.faceLargerThanOval = true }
-        XCTAssertEqual(e.failing[.distance], .moveBack)
+        var e = run(&gate, seconds: 0.5) { $0.ovalExtent = 1.15; $0.faceCentreOffset = CGPoint(x: 0.03, y: -0.05) }
+        XCTAssertEqual(e.failing[.inFrame]?.title, "Move back a little")
+        // Same overflow, face off to the side: centre it.
+        gate = QualityGate()
+        e = run(&gate, seconds: 0.5) { $0.ovalExtent = 1.15; $0.faceCentreOffset = CGPoint(x: 0.2, y: 0) }
+        XCTAssertEqual(e.failing[.inFrame], .centre)
+        // Within 1.10 passes (spec v1.2 slack).
+        gate = QualityGate()
+        e = run(&gate, seconds: 0.5) { $0.ovalExtent = 1.08; $0.faceCentreOffset = .zero }
         XCTAssertNil(e.failing[.inFrame])
+    }
+
+    func testDistanceRunsBeforeInFrame() {
+        XCTAssertLessThan(GateCheck.distance, GateCheck.inFrame)
+        var s = HintScheduler()
+        let failing: [GateCheck: GateHint] = [.inFrame: .centre, .distance: .moveBack]
+        _ = s.update(failing: failing, at: 0)
+        XCTAssertEqual(s.update(failing: failing, at: 0.5), .moveBack)
     }
 
     func testBlurIsNotJudgedOnADarkFace() {
