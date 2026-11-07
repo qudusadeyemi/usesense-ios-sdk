@@ -22,8 +22,9 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
     /// which turned every "Try again" into a camera error.
     private var isConfigured = false
     private var camera: AVCaptureDevice?
-    #if targetEnvironment(simulator) && canImport(UIKit)
-    private var simulated: SimulatedCamera?
+    #if DEBUG && canImport(UIKit)
+    /// Debug capture rig: a video or still replaces the camera.
+    private(set) var fake: DebugFakeCamera?
     #endif
     private var lastPointOfInterest: CGPoint?
 
@@ -41,10 +42,11 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
 
     func configure() throws {
         if isConfigured { return }
-        #if targetEnvironment(simulator) && canImport(UIKit)
-        if let path = SimulatedCamera.imagePath, let sim = SimulatedCamera(path: path) {
-            simulated = sim
-            sim.attach(to: previewLayer)
+        #if DEBUG && canImport(UIKit)
+        if let path = DebugCaptureRig.fakeCameraPath,
+           let cam = DebugFakeCamera(path: path, freezeAt: DebugCaptureRig.freezeAt) {
+            fake = cam
+            cam.attach(to: previewLayer)
             isConfigured = true
             return
         }
@@ -87,10 +89,10 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
     }
 
     func start() {
-        #if targetEnvironment(simulator) && canImport(UIKit)
-        if let sim = simulated {
+        #if DEBUG && canImport(UIKit)
+        if let cam = fake {
             isRunning = true
-            sim.start { [weak self] buffer, time in
+            cam.start { [weak self] buffer, time in
                 guard let self else { return }
                 self.delegate?.frameCaptureManager(self, didCapture: buffer, timestamp: time)
             }
@@ -105,9 +107,9 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
     }
 
     func stop() {
-        #if targetEnvironment(simulator) && canImport(UIKit)
-        if let sim = simulated {
-            sim.stop()
+        #if DEBUG && canImport(UIKit)
+        if let cam = fake {
+            cam.stop()
             isRunning = false
             return
         }

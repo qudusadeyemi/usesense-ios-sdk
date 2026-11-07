@@ -33,7 +33,8 @@ enum GateCheck: Int, CaseIterable, Comparable, Sendable {
     }
 }
 
-/// One user-facing hint. Copy is shared with Android and web: keep it exact.
+/// One user-facing hint. Copy is the capture test kit SPEC v1.1 "Guidance
+/// copy", shared with Android and web: keep it exact.
 struct GateHint: Equatable, Sendable {
     enum Icon: String, Sendable { case face, people, centre, closer, back, pose, light, steady, eyes, still }
 
@@ -43,16 +44,15 @@ struct GateHint: Equatable, Sendable {
     let icon: Icon
 
     static let showFace = GateHint(check: .faceFound, title: "Show your face in the oval", subtitle: nil, icon: .face)
-    static let onePerson = GateHint(check: .onePerson, title: "Only one person in view, please", subtitle: nil, icon: .people)
+    static let onePerson = GateHint(check: .onePerson, title: "Only you in the picture", subtitle: nil, icon: .people)
     static let centre = GateHint(check: .inFrame, title: "Move your face to the centre", subtitle: nil, icon: .centre)
-    static let moveCloser = GateHint(check: .distance, title: "Move closer", subtitle: nil, icon: .closer)
+    static let moveCloser = GateHint(check: .distance, title: "Move a little closer", subtitle: nil, icon: .closer)
     static let moveBack = GateHint(check: .distance, title: "Move back a little", subtitle: nil, icon: .back)
-    static let lookStraight = GateHint(check: .pose, title: "Look straight at the screen", subtitle: nil, icon: .pose)
-    static let brightening = GateHint(check: .light, title: "Brightening your screen",
-                                      subtitle: "If it's still dark, face a window or lamp", icon: .light)
-    static let faceALight = GateHint(check: .light, title: "Face a light", subtitle: nil, icon: .light)
-    static let tooBright = GateHint(check: .light, title: "Move out of direct light", subtitle: nil, icon: .light)
-    static let holdSteady = GateHint(check: .sharpness, title: "Hold the phone steady", subtitle: nil, icon: .steady)
+    static let lookStraight = GateHint(check: .pose, title: "Look straight ahead", subtitle: nil, icon: .pose)
+    static let faceALight = GateHint(check: .light, title: "Find more light", subtitle: "Face a window or lamp", icon: .light)
+    static let tooBright = GateHint(check: .light, title: "Too much light behind you",
+                                    subtitle: "Turn away from the window", icon: .light)
+    static let holdSteady = GateHint(check: .sharpness, title: "Hold your phone steady", subtitle: nil, icon: .steady)
     static let eyesOpen = GateHint(check: .eyesOpen, title: "Keep your eyes open", subtitle: nil, icon: .eyes)
     static let holdStill = GateHint(check: .stillness, title: "Hold still", subtitle: nil, icon: .still)
 }
@@ -303,7 +303,7 @@ struct CaptureGuide: Sendable {
     }
 
     mutating func update(_ o: GateObservation) -> GuideSnapshot {
-        var e = gate.evaluate(o)
+        let e = gate.evaluate(o)
 
         // Fill light first: once the face has been too dark for the hint
         // delay, the screen becomes a fill light. It stays on for the rest of
@@ -316,12 +316,15 @@ struct CaptureGuide: Sendable {
         } else {
             darkSince = nil
         }
-        if e.light == .tooDark, let since = fillLightSince {
-            e.failing[.light] = o.time - since < fillLightSettle ? .brightening : .faceALight
+        // The fill light works silently: while it settles the light check
+        // still blocks, but no hint asks the user for anything yet.
+        var hintable = e.failing
+        if e.light == .tooDark, let since = fillLightSince, o.time - since < fillLightSettle {
+            hintable[.light] = nil
         }
         lastEvaluation = e
 
-        let hint = hints.update(failing: e.failing, at: o.time)
+        let hint = hints.update(failing: hintable, at: o.time)
         return GuideSnapshot(
             allPass: e.failing.isEmpty,
             hint: hint,
@@ -336,11 +339,10 @@ struct CaptureGuide: Sendable {
 /// The face oval, shared by the overlay and the gate so they agree on where
 /// the oval is. Same size and offset the capture screens have always used.
 enum CaptureOvalLayout {
+    /// Capture kit SPEC: centre (0.5 W, 0.40 H), rx = 0.36 W, ry = 0.235 H.
     static func ovalRect(in size: CGSize) -> CGRect {
-        let w = min(size.width * 0.70, size.height * 0.45, 320)
-        let h = min(size.width * 0.93, size.height * 0.60, 420)
-        let cy = size.height / 2 - size.height * 0.1
-        return CGRect(x: size.width / 2 - w / 2, y: cy - h / 2, width: w, height: h)
+        let rx = size.width * 0.36, ry = size.height * 0.235
+        return CGRect(x: size.width * 0.5 - rx, y: size.height * 0.40 - ry, width: rx * 2, height: ry * 2)
     }
 }
 

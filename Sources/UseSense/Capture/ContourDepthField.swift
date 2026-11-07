@@ -1,61 +1,67 @@
 import Foundation
 import CoreGraphics
 
-/// The contour scan's depth texture: the mesh z rasterised into a 64x64 grid
-/// over the face (in view points) each frame, then smoothed over time.
+/// The contour scan's depth field (capture test kit SPEC "Depth field";
+/// reference `updateField` in capture-test-kit/reference/index.html).
+///
+/// A screen-space grid, 96 columns (rows follow the screen aspect):
+///  1. mesh detail: each landmark's normalised depth (nose tip ~1, face
+///     edge ~0) Gaussian-splatted (sigma 2.6 cells), masked by
+///     smoothstep(0, 0.35, weight), then blurred (sigma 1.8 cells);
+///  2. head dome: an ellipsoid from landmarks 10/152/234/454, so the lines
+///     also lift over the hair and the whole head;
+///  3. field = min(1, dome + 0.80 * mesh);
+///  4. EMA 0.30 per frame; the last field is kept while the face is gone
+///     for under 300 ms.
 ///
 /// Written from the capture queue, read by the contour view on the main
 /// thread, so every access goes through the lock. Display only: MediaPipe z
 /// is a prediction from one image and is not depth evidence.
 final class ContourDepthField: @unchecked Sendable {
-    static let size = 64
-    static let kernelRadius = 5
-    /// How strongly facial features stand out from the rounded base.
-    static let detailGain: Float = 2.2
-    /// > 1 lifts the nose and lips above the broad cheek/forehead plateau.
-    static let reliefGamma = 1.8
-    /// Gaussian splat kernel (sigma 2.4 cells), precomputed.
-    static let kernel: [Float] = {
-        let r = kernelRadius, s2: Float = 2 * 2.4 * 2.4
-        var k: [Float] = []
-        for dy in -r...r { for dx in -r...r { k.append(expf(-Float(dx * dx + dy * dy) / s2)) } }
-        return k
-    }()
+    enum Spec {
+        static let gridColumns = 96
+        static let splatSigma: Float = 2.6
+        static let blurSigma: Float = 1.8
+        static let emaAlpha: Float = 0.30
+        static let feather: Float = 0.35
+        static let meshWeight: Float = 0.80
+        static let domeRxOfFaceW: CGFloat = 0.62
+        static let domeRyOfFaceH: CGFloat = 0.78
+        static let domeCyShiftOfFaceH: CGFloat = -0.12
+        static let domeHeight: Float = 0.62
+        static let domeFeather: Float = 0.18
+        static let holdWithoutFace: TimeInterval = 0.3
+    }
 
     struct Snapshot: Sendable {
-        /// Face box the grid covers, in view points.
-        var rect: CGRect
-        /// Relief height, already faded at the face edge: 0 off the face ... ~1 at the nose tip.
-        var depth: [Float]
-        /// 0...1 coverage (how much mesh is under each cell).
-        var mask: [Float]
+        var viewSize: CGSize
+        var cols: Int
+        var rows: Int
+        var field: [Float]
+        /// Forehead (10) to chin (152) in screen points: the lift scale.
+        var faceHeight: CGFloat
         var hasFace: Bool
 
-        static let empty = Snapshot(rect: .zero, depth: [], mask: [], hasFace: false)
+        static let empty = Snapshot(viewSize: .zero, cols: 0, rows: 0, field: [], faceHeight: 0, hasFace: false)
 
-        /// Bilinear sample at a view point: (depth, mask). Zero off the face.
-        func sample(_ p: CGPoint) -> (depth: Float, mask: Float) {
-            guard hasFace, rect.width > 1, rect.height > 1 else { return (0, 0) }
-            let n = ContourDepthField.size
-            let gx = Float((p.x - rect.minX) / rect.width) * Float(n - 1)
-            let gy = Float((p.y - rect.minY) / rect.height) * Float(n - 1)
-            guard gx >= 0, gy >= 0, gx <= Float(n - 1), gy <= Float(n - 1) else { return (0, 0) }
-            let x0 = Int(gx), y0 = Int(gy)
-            let x1 = min(n - 1, x0 + 1), y1 = min(n - 1, y0 + 1)
-            let fx = gx - Float(x0), fy = gy - Float(y0)
-            func lerp(_ g: [Float]) -> Float {
-                let a = g[y0 * n + x0] * (1 - fx) + g[y0 * n + x1] * fx
-                let b = g[y1 * n + x0] * (1 - fx) + g[y1 * n + x1] * fx
-                return a * (1 - fy) + b * fy
+        /// Bilinear sample at a screen point (reference `sampleField`).
+        func sample(_ x: CGFloat, _ y: CGFloat) -> Float {
+            guard hasFace, cols > 0, viewSize.width > 0 else { return 0 }
+            let cell = viewSize.width / CGFloat(cols)
+            let gx = x / cell, gy = y / cell
+            let x0 = Int(floor(gx)), y0 = Int(floor(gy))
+            let fx = Float(gx - CGFloat(x0)), fy = Float(gy - CGFloat(y0))
+            func g(_ xx: Int, _ yy: Int) -> Float {
+                (xx < 0 || yy < 0 || xx >= cols || yy >= rows) ? 0 : field[yy * cols + xx]
             }
-            return (lerp(depth), lerp(mask))
+            return g(x0, y0) * (1 - fx) * (1 - fy) + g(x0 + 1, y0) * fx * (1 - fy)
+                + g(x0, y0 + 1) * (1 - fx) * fy + g(x0 + 1, y0 + 1) * fx * fy
         }
     }
 
     private let lock = NSLock()
     private var state = Snapshot.empty
-    /// Weight of the new frame in the temporal smoothing.
-    var smoothing: Float = 0.35
+    private var lastFaceTime: TimeInterval?
 
     func snapshot() -> Snapshot {
         lock.lock(); defer { lock.unlock() }
@@ -63,119 +69,127 @@ final class ContourDepthField: @unchecked Sendable {
     }
 
     func clear() {
-        lock.lock(); state = .empty; lock.unlock()
+        lock.lock(); state = .empty; lastFaceTime = nil; lock.unlock()
     }
 
-    /// Separable box blur (radius 2), repeated: ~Gaussian.
-    static func blur(_ g: inout [Float], n: Int, passes: Int) {
-        var tmp = [Float](repeating: 0, count: n * n)
-        let r = 2
-        for _ in 0..<passes {
-            for y in 0..<n {
-                for x in 0..<n {
-                    var sum: Float = 0, c: Float = 0
-                    for dx in -r...r where x + dx >= 0 && x + dx < n { sum += g[y * n + x + dx]; c += 1 }
-                    tmp[y * n + x] = sum / c
-                }
-            }
-            for y in 0..<n {
-                for x in 0..<n {
-                    var sum: Float = 0, c: Float = 0
-                    for dy in -r...r where y + dy >= 0 && y + dy < n { sum += tmp[(y + dy) * n + x]; c += 1 }
-                    g[y * n + x] = sum / c
-                }
-            }
-        }
+    /// No face this frame: keep the last field briefly, then drop it.
+    func noFace(at time: TimeInterval) {
+        lock.lock(); defer { lock.unlock() }
+        if let last = lastFaceTime, time - last < Spec.holdWithoutFace { return }
+        state.hasFace = false
     }
 
-    /// Rasterise one frame's landmarks (view points + raw MediaPipe z).
-    func update(points: [CGPoint], z: [Double]) {
-        guard points.count == z.count, points.count >= 100 else {
-            lock.lock(); state.hasFace = false; lock.unlock()
+    /// One frame: landmarks already mapped to screen points (aspect-fill,
+    /// mirrored: the preview's transform) plus their raw MediaPipe z.
+    func update(points: [CGPoint], z: [Double], viewSize: CGSize, time: TimeInterval, alpha: Float = Spec.emaAlpha) {
+        guard points.count == z.count, points.count > 454, viewSize.width > 0, viewSize.height > 0 else {
+            noFace(at: time)
             return
         }
-        var minX = CGFloat.infinity, maxX = -CGFloat.infinity
-        var minY = CGFloat.infinity, maxY = -CGFloat.infinity
-        for p in points {
-            minX = min(minX, p.x); maxX = max(maxX, p.x)
-            minY = min(minY, p.y); maxY = max(maxY, p.y)
-        }
-        let faceW = maxX - minX, faceH = maxY - minY
-        guard faceW > 4, faceH > 4 else { return }
-        let rect = CGRect(x: minX, y: minY, width: faceW, height: faceH).insetBy(dx: -faceW * 0.06, dy: -faceH * 0.06)
+        let cols = Spec.gridColumns
+        let rows = max(1, Int((CGFloat(cols) * viewSize.height / viewSize.width).rounded()))
+        let n = cols * rows
+        let cell = viewSize.width / CGFloat(cols)
 
-        // MediaPipe z is negative toward the camera. Height runs from 0 at
-        // the farthest point (face edge) to 1 at the nearest (nose tip), so
-        // the relief reads the same at any distance.
-        var zMin = Double.infinity, zMax = -Double.infinity
-        for v in z { zMin = min(zMin, v); zMax = max(zMax, v) }
-        let zRange = max(1e-6, zMax - zMin)
-        let heights = z.map { pow((zMax - $0) / zRange, Self.reliefGamma) }
-
-        // Splat each mesh landmark with a Gaussian, then normalise
-        // (normalised convolution). Iris points (468+) are skipped: their z
-        // doesn't follow the surface and they spike the eyes.
-        let n = Self.size
-        var acc = [Float](repeating: 0, count: n * n)
-        var wsum = [Float](repeating: 0, count: n * n)
-        let r = Self.kernelRadius
-        let kw = 2 * r + 1
-        for i in 0..<min(points.count, 468) {
-            let p = points[i]
-            let cx = Int((Float((p.x - rect.minX) / rect.width) * Float(n - 1)).rounded())
-            let cy = Int((Float((p.y - rect.minY) / rect.height) * Float(n - 1)).rounded())
-            let h = Float(heights[i])
-            for dy in -r...r {
-                let y = cy + dy
-                guard y >= 0, y < n else { continue }
-                for dx in -r...r {
-                    let x = cx + dx
-                    guard x >= 0, x < n else { continue }
-                    let w = Self.kernel[(dy + r) * kw + (dx + r)]
-                    acc[y * n + x] += w * h
-                    wsum[y * n + x] += w
+        // 1. Mesh detail.
+        var zmin = Double.infinity, zmax = -Double.infinity
+        for v in z { zmin = min(zmin, v); zmax = max(zmax, v) }
+        let zr = max(1e-6, zmax - zmin)
+        var acc = [Float](repeating: 0, count: n)
+        var wsum = [Float](repeating: 0, count: n)
+        let sig = Spec.splatSigma
+        let r = Int((sig * 2.5).rounded(.up))
+        let inv2s2 = 1 / (2 * sig * sig)
+        for (i, p) in points.enumerated() {
+            let d = Float((zmax - z[i]) / zr)
+            let gx = Float(p.x / cell), gy = Float(p.y / cell)
+            let ix = Int(gx.rounded()), iy = Int(gy.rounded())
+            let y0 = max(0, iy - r), y1 = min(rows - 1, iy + r)
+            let x0 = max(0, ix - r), x1 = min(cols - 1, ix + r)
+            guard y0 <= y1, x0 <= x1 else { continue }
+            for y in y0...y1 {
+                let dy = Float(y) - gy
+                for x in x0...x1 {
+                    let dx = Float(x) - gx
+                    let w = expf(-(dx * dx + dy * dy) * inv2s2)
+                    acc[y * cols + x] += w * d
+                    wsum[y * cols + x] += w
                 }
             }
         }
-        var depth = [Float](repeating: 0, count: n * n)
-        var mask = [Float](repeating: 0, count: n * n)
-        for k in 0..<(n * n) where wsum[k] > 1e-3 {
-            // Soft edge: coverage ramps the relief in over ~1 kernel width.
-            let t = max(0, min(1, (wsum[k] - 0.25) / 1.6))
-            mask[k] = t * t * (3 - 2 * t)
-            depth[k] = acc[k] / wsum[k] * mask[k]
+        var raw = [Float](repeating: 0, count: n)
+        for i in 0..<n where wsum[i] > 1e-6 {
+            raw[i] = acc[i] / wsum[i] * Self.smoothstep(0, Spec.feather, wsum[i])
         }
-        // Round the relief off: the mesh edge would otherwise read as a
-        // steep shelf with ripples where boundary landmarks are sparse.
-        var fine = depth
-        Self.blur(&fine, n: n, passes: 1)
-        Self.blur(&depth, n: n, passes: 3)
-        Self.blur(&mask, n: n, passes: 2)
-        // Put the features (nose ridge, eye sockets, lips) back on top of
-        // the rounded base, in the interior only so the edge stays clean.
-        for k in 0..<(n * n) {
-            let t = max(0, min(1, (mask[k] - 0.55) / 0.4))
-            let interior = t * t * (3 - 2 * t)
-            depth[k] += Self.detailGain * (fine[k] - depth[k]) * interior
+        raw = Self.gaussBlur(raw, cols: cols, rows: rows, sigma: Spec.blurSigma)
+
+        // 2. Head dome from forehead (10), chin (152), cheeks (234, 454).
+        let top = points[10], chin = points[152]
+        let faceH = hypot(chin.x - top.x, chin.y - top.y)
+        let faceW = abs(points[454].x - points[234].x)
+        let dcx = (top.x + chin.x) / 2
+        let dcy = (top.y + chin.y) / 2 + Spec.domeCyShiftOfFaceH * faceH
+        let drx = max(1, Spec.domeRxOfFaceW * faceW), dry = max(1, Spec.domeRyOfFaceH * faceH)
+        for gy in 0..<rows {
+            let y = (CGFloat(gy) + 0.5) * cell
+            for gx in 0..<cols {
+                let x = (CGFloat(gx) + 0.5) * cell
+                let ux = (x - dcx) / drx, uy = (y - dcy) / dry
+                let r2 = Float(ux * ux + uy * uy)
+                var dome: Float = 0
+                if r2 < 1 {
+                    dome = powf(1 - r2, 0.75) * Spec.domeHeight * Self.smoothstep(1, 1 - Spec.domeFeather, r2.squareRoot())
+                }
+                // 3. Combine.
+                let i = gy * cols + gx
+                raw[i] = min(1, dome + raw[i] * Spec.meshWeight)
+            }
         }
 
+        // 4. Temporal EMA.
         lock.lock()
         defer { lock.unlock() }
-        if state.hasFace, state.depth.count == n * n {
-            let a = smoothing, b = 1 - smoothing
-            for k in 0..<(n * n) {
-                depth[k] = a * depth[k] + b * state.depth[k]
-                mask[k] = a * mask[k] + b * state.mask[k]
-            }
-            let r0 = state.rect
-            let lerp = { (u: CGFloat, v: CGFloat) in u * CGFloat(b) + v * CGFloat(a) }
-            state.rect = CGRect(x: lerp(r0.minX, rect.minX), y: lerp(r0.minY, rect.minY),
-                                width: lerp(r0.width, rect.width), height: lerp(r0.height, rect.height))
-        } else {
-            state.rect = rect
+        if state.field.count != n || !state.hasFace {
+            state.field = [Float](repeating: 0, count: n)
+            state.faceHeight = faceH
         }
-        state.depth = depth
-        state.mask = mask
+        for i in 0..<n { state.field[i] += (raw[i] - state.field[i]) * alpha }
+        state.faceHeight += (faceH - state.faceHeight) * CGFloat(alpha)
+        state.viewSize = viewSize
+        state.cols = cols
+        state.rows = rows
         state.hasFace = true
+        lastFaceTime = time
+    }
+
+    static func smoothstep(_ e0: Float, _ e1: Float, _ x: Float) -> Float {
+        let t = max(0, min(1, (x - e0) / (e1 - e0)))
+        return t * t * (3 - 2 * t)
+    }
+
+    /// Separable Gaussian blur with clamped edges (reference `gaussBlur`).
+    static func gaussBlur(_ src: [Float], cols: Int, rows: Int, sigma: Float) -> [Float] {
+        let r = Int((sigma * 2.5).rounded(.up))
+        var k = [Float]()
+        for i in -r...r { k.append(expf(-Float(i * i) / (2 * sigma * sigma))) }
+        let sum = k.reduce(0, +)
+        k = k.map { $0 / sum }
+        var tmp = [Float](repeating: 0, count: src.count)
+        var out = [Float](repeating: 0, count: src.count)
+        for y in 0..<rows {
+            for x in 0..<cols {
+                var a: Float = 0
+                for i in -r...r { a += src[y * cols + min(cols - 1, max(0, x + i))] * k[i + r] }
+                tmp[y * cols + x] = a
+            }
+        }
+        for y in 0..<rows {
+            for x in 0..<cols {
+                var a: Float = 0
+                for i in -r...r { a += tmp[min(rows - 1, max(0, y + i)) * cols + x] * k[i + r] }
+                out[y * cols + x] = a
+            }
+        }
+        return out
     }
 }

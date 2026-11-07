@@ -24,6 +24,14 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - `FlowAppearance.capture` (`ring`, `contourStart`, `contourEnd`, `warning`)
   sets the capture colours. The defaults are Sense blue/violet, and a colour
   under 3:1 contrast on the camera scrim falls back to the default.
+- The capture screen follows the LiveSense capture test kit spec v1.1:
+  full-bleed mirrored camera, contour lines across the whole screen that lift
+  over the head (screen-space depth field with a head dome), a thin guide oval,
+  a ring 6 pt outside it during the ~3 s scan, plain instruction text under the
+  oval, back and help buttons, and no footer on the capture screens.
+- DEBUG-only capture rig: a fake camera fed by a video or image, plus
+  `FREEZE_AT`, `FORCE_STATE`, `FORCE_PROGRESS` and `FORCE_HINT`, to render the
+  screens against the kit's goldens without a camera.
 - `SDKOptions.guidedCaptureEnabled` (default `true`). Set it to `false` to keep
   the previous screen.
 

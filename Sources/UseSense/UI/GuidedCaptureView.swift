@@ -95,26 +95,32 @@ final class ScreenFillLight {
     }
 }
 
-// MARK: - Tokens (from the capture proposal mockups, scaled ~1.6x to a phone)
+// MARK: - Tokens (capture test kit SPEC; reference/index.html `SPEC`)
 
 enum CaptureTokens {
-    /// Camera-surface ink and panels (#0d0f14 family).
-    static let cam = Color(red: 13 / 255, green: 15 / 255, blue: 20 / 255)
+    static let cam = Color(red: 13 / 255, green: 15 / 255, blue: 20 / 255)     // #0d0f14
     static let panel = Color(red: 29 / 255, green: 32 / 255, blue: 41 / 255)   // #1d2029
     static let ink = Color(red: 244 / 255, green: 245 / 255, blue: 248 / 255)  // #f4f5f8
     static let ink2 = Color(red: 163 / 255, green: 169 / 255, blue: 184 / 255) // #a3a9b8
     static let warmLight = Color(red: 1, green: 250 / 255, blue: 240 / 255)    // #fffaf0
-    /// Hint card vertical anchor: its bottom sits 26% up from the screen bottom.
-    static let hintBottomFraction: CGFloat = 0.26
-    /// Contour lines run from the top to 78% of the screen height.
-    static let contourBottomFraction: CGFloat = 0.78
+    /// Camera darkening under the lines during the scan.
+    static let feedDimDuringScan = 0.12
+    static let guideFill = 0.14
+    static let guideStroke = 0.90
+    static let guideWidth: CGFloat = 2
+    static let ringTrack = 0.18
+    static let ringWidth: CGFloat = 3
+    static let ringGap: CGFloat = 6
+    static let hintGapBelowOval: CGFloat = 28
+    static let topBarTop: CGFloat = 54
+    static let shutterCopy = "Tap the button when you're ready"
 }
 
 // MARK: - Align + scan screen
 
-/// Screens 2-6 of the capture redesign: align (one hint at a time, auto
-/// start), low light (fill light), scan (full-screen contour lines + a ring
-/// that pauses), shutter fallback.
+/// Align (one instruction at a time, auto start), low light (fill light),
+/// scan (edge-to-edge contour lines + a ring that pauses) and the shutter
+/// fallback. Layout follows the capture test kit SPEC exactly.
 struct GuidedCaptureView<Camera: View>: View {
     enum Mode { case align, scan }
 
@@ -123,8 +129,8 @@ struct GuidedCaptureView<Camera: View>: View {
     @ObservedObject var viewModel: UseSenseViewModel
     let onClose: () -> Void
 
-    @State private var pulse = false
     @State private var scanStartedAt: Date
+    @State private var showHelp = false
     private let fixedDate: Date?
 
     init(mode: Mode, camera: Camera, viewModel: UseSenseViewModel, onClose: @escaping () -> Void,
@@ -143,24 +149,25 @@ struct GuidedCaptureView<Camera: View>: View {
     private var fillLight: Bool { viewModel.guide.snapshot.fillLight }
     private var showShutter: Bool { mode == .align && viewModel.guide.shutterAvailable }
 
+    /// The instruction shown, and whether it asks for an action.
+    private var guidance: (title: String, subtitle: String?, action: Bool) {
+        if showShutter { return (CaptureTokens.shutterCopy, nil, true) }
+        if let hint, mode == .align || paused || hint.check == .light {
+            return (hint.title, hint.subtitle, hint.check != .stillness)
+        }
+        return (GateHint.holdStill.title, nil, false)
+    }
+
     var body: some View {
         GeometryReader { geo in
             let size = geo.size
             let oval = CaptureOvalLayout.ovalRect(in: size)
             let insets = Self.windowInsets
-            ZStack {
-                camera
+            ZStack(alignment: .topLeading) {
+                camera.frame(width: size.width, height: size.height)
 
-                // Align: the feed stays visible, with a soft vignette so the
-                // chrome reads. Scan: the feed sinks under a dark wash so the
-                // contour lines carry the screen.
-                RadialGradient(colors: [.clear, CaptureTokens.cam.opacity(0.55)],
-                               center: UnitPoint(x: 0.5, y: 0.4),
-                               startRadius: oval.width * 0.55, endRadius: size.height * 0.75)
-                    .allowsHitTesting(false)
                 if mode == .scan {
-                    CaptureTokens.cam.opacity(paused ? 0.55 : 0.74)
-                        .animation(.easeInOut(duration: 0.25), value: paused)
+                    CaptureTokens.cam.opacity(CaptureTokens.feedDimDuringScan)
                         .allowsHitTesting(false)
                     ContourScanView(field: viewModel.contourField, colors: colors,
                                     startedAt: scanStartedAt, dimmed: paused, fixedDate: fixedDate)
@@ -168,45 +175,43 @@ struct GuidedCaptureView<Camera: View>: View {
                         .accessibilityHidden(true)
                 }
 
-                ovalAndRing(oval)
+                guideOrRing(oval)
 
                 if fillLight { FillLightBorder().allowsHitTesting(false) }
 
-                // Hint card: bottom edge 26% up from the screen bottom.
-                VStack {
-                    Spacer()
-                    hintCard.padding(.horizontal, 24)
-                    Spacer().frame(height: size.height * CaptureTokens.hintBottomFraction)
-                }
+                guidanceText
+                    .frame(width: size.width - 48)
+                    .offset(x: 24, y: oval.maxY + CaptureTokens.hintGapBelowOval)
 
-                VStack(spacing: 14) {
-                    Spacer()
-                    if USTrace.enabled { debugChips }
-                    if showShutter { shutterButton }
-                }
-                .padding(.bottom, insets.bottom + CaptureFooter.clearance + 10)
-
-                VStack {
-                    HStack {
-                        closeButton
+                if showShutter || USTrace.enabled {
+                    VStack(spacing: 14) {
                         Spacer()
+                        if USTrace.enabled { debugChips }
+                        if showShutter { shutterButton }
                     }
-                    .padding(.horizontal, 18)
-                    // Status bar is hidden here: sit beside the Dynamic Island.
-                    .padding(.top, max(16, insets.top - 36))
-                    Spacer()
+                    .frame(width: size.width, height: size.height - insets.bottom - 24)
                 }
+
+                CaptureTopBar(onBack: onClose, onHelp: { showHelp = true })
+                    .padding(.horizontal, 16)
+                    .frame(width: size.width)
+                    .padding(.top, max(CaptureTokens.topBarTop, insets.top))
             }
+            .frame(width: size.width, height: size.height)
             .animation(.easeInOut(duration: 0.3), value: fillLight)
             .animation(.easeInOut(duration: 0.3), value: showShutter)
             .onAppear {
                 viewModel.setViewport(size)
                 if fixedDate == nil { scanStartedAt = Date() }
-                pulse = true
             }
             .onChange(of: size) { viewModel.setViewport($0) }
         }
         .ignoresSafeArea()
+        .alert("Quick face scan", isPresented: $showHelp) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Look straight at the screen with a neutral face. Face the light; your screen will brighten to help. The scan starts by itself when your face is in the oval and still.")
+        }
     }
 
     /// The window's safe-area insets (the GeometryReader ignores the safe
@@ -214,126 +219,73 @@ struct GuidedCaptureView<Camera: View>: View {
     static var windowInsets: UIEdgeInsets {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let window = scenes.flatMap(\.windows).first { $0.isKeyWindow } ?? scenes.first?.windows.first
-        return window?.safeAreaInsets ?? UIEdgeInsets(top: 47, left: 0, bottom: 34, right: 0)
+        return window?.safeAreaInsets ?? UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0)
     }
 
-    // MARK: Oval + ring
+    // MARK: Guide (align) / ring (scan)
 
-    private func ovalAndRing(_ oval: CGRect) -> some View {
-        let failing = hint != nil && (mode == .align || paused)
-        return ZStack {
+    private func guideOrRing(_ oval: CGRect) -> some View {
+        ZStack {
             if mode == .align {
-                TopStartEllipse()
-                    .stroke(failing ? colors.warning.color : Color.white.opacity(0.92), lineWidth: 2.5)
-                    .opacity(failing && pulse ? 0.55 : 1)
-                    .animation(failing ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true) : .default,
-                               value: pulse)
+                Ellipse()
+                    .fill(Color.white.opacity(CaptureTokens.guideFill))
+                    .frame(width: oval.width, height: oval.height)
+                Ellipse()
+                    .stroke(guidance.action ? colors.warning.color : Color.white.opacity(CaptureTokens.guideStroke),
+                            lineWidth: CaptureTokens.guideWidth)
+                    .frame(width: oval.width, height: oval.height)
+                    .animation(.easeInOut(duration: 0.2), value: guidance.action)
             } else {
-                TopStartEllipse().stroke(Color.white.opacity(0.18), lineWidth: 4)
-                TopStartEllipse()
-                    .trim(from: 0, to: viewModel.scan.fraction)
-                    .stroke(paused ? colors.warning.color : colors.ring.color,
-                            style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                    .shadow(color: (paused ? colors.warning : colors.ring).color.opacity(0.6), radius: 6)
-                    .animation(.linear(duration: 0.1), value: viewModel.scan.fraction)
+                let g = CaptureTokens.ringGap
+                ZStack {
+                    TopStartEllipse()
+                        .stroke(Color.white.opacity(CaptureTokens.ringTrack), lineWidth: CaptureTokens.ringWidth)
+                    TopStartEllipse()
+                        .trim(from: 0, to: viewModel.scan.fraction)
+                        .stroke(paused ? colors.warning.color : colors.ring.color,
+                                style: StrokeStyle(lineWidth: CaptureTokens.ringWidth, lineCap: .round))
+                        .animation(.linear(duration: 0.1), value: viewModel.scan.fraction)
+                }
+                .frame(width: oval.width + 2 * g, height: oval.height + 2 * g)
             }
         }
-        .frame(width: oval.width, height: oval.height)
         .position(x: oval.midX, y: oval.midY)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 
-    // MARK: Hint card
+    // MARK: Guidance text (SPEC v1.1: plain text, no box, no icon, no counters)
 
-    private struct CardContent: Equatable {
-        var title: String
-        var subtitle: String?
-        var symbol: String
-        var warning: Bool
-    }
-
-    private var card: CardContent? {
-        // Fallback screen: the shutter's own card (mockup screen 6).
-        if showShutter {
-            return CardContent(title: "Tap the shutter when you're ready",
-                               subtitle: "We'll still scan for \(viewModel.scanSecondsForCopy) seconds",
-                               symbol: "camera.aperture", warning: false)
-        }
-        if let hint, mode == .align || paused || hint.check == .light {
-            return CardContent(title: hint.title, subtitle: hint.subtitle, symbol: Self.symbol(hint.icon),
-                               warning: hint.check == .light || hint.check == .onePerson)
-        }
-        if mode == .scan {
-            let total = max(1, Int(viewModel.scan.totalSeconds.rounded()))
-            let done = min(total, Int(viewModel.scan.bankedSeconds.rounded(.down)))
-            return CardContent(title: GateHint.holdStill.title, subtitle: "Scanning · \(done) of \(total) s",
-                               symbol: "scope", warning: false)
-        }
-        return nil
-    }
-
-    private var hintCard: some View {
-        let content = card
-        return ZStack {
-            if let content {
-                HStack(spacing: 12) {
-                    Image(systemName: content.symbol)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(content.warning ? Color(red: 28 / 255, green: 26 / 255, blue: 23 / 255) : CaptureTokens.ink)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(content.warning ? colors.warning.color : Color.white.opacity(0.12))
-                        )
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(content.title)
-                            .font(.usBody(16, .semibold))
-                            .foregroundColor(CaptureTokens.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if let sub = content.subtitle {
-                            Text(sub)
-                                .font(.usBody(13))
-                                .foregroundColor(CaptureTokens.ink2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
+    private var guidanceText: some View {
+        let g = guidance
+        let key = g.title + (g.subtitle ?? "")
+        return ZStack(alignment: .top) {
+            VStack(spacing: 6) {
+                Text(g.title)
+                    .font(.usBody(22, .semibold))
+                    .tracking(-0.22)
+                if let sub = g.subtitle {
+                    Text(sub)
+                        .font(.usBody(15, .medium))
+                        .foregroundColor(.white.opacity(0.82))
                 }
-                .padding(.vertical, 11)
-                .padding(.leading, 12)
-                .padding(.trailing, 18)
-                .background(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(CaptureTokens.cam.opacity(0.82))
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(Color.white.opacity(0.08), lineWidth: 1))
-                )
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("usesense.capture.hint")
-                .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                .id(content.title)
             }
+            .foregroundColor(.white)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+            .shadow(color: .black.opacity(0.35), radius: 1, y: 1)
+            .shadow(color: .black.opacity(0.45), radius: 7, y: 2)
+            .frame(maxWidth: .infinity)
+            .id(key)
+            .transition(.opacity)
         }
-        .animation(.easeInOut(duration: 0.2), value: content)
+        .animation(.easeInOut(duration: 0.2), value: key)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.updatesFrequently)
+        .accessibilityIdentifier("usesense.capture.hint")
     }
 
-    static func symbol(_ icon: GateHint.Icon) -> String {
-        switch icon {
-        case .face: return "face.dashed"
-        case .people: return "person.2.fill"
-        case .centre: return "arrow.left.and.right"
-        case .closer: return "arrow.up.left.and.arrow.down.right"
-        case .back: return "arrow.down.right.and.arrow.up.left"
-        case .pose: return "eye"
-        case .light: return "sun.max.fill"
-        case .steady: return "iphone"
-        case .eyes: return "eye.fill"
-        case .still: return "scope"
-        }
-    }
-
-    // MARK: Shutter, chips, close
+    // MARK: Shutter, chips
 
     private var shutterButton: some View {
         Button(action: { viewModel.shutterTapped() }) {
@@ -364,17 +316,31 @@ struct GuidedCaptureView<Camera: View>: View {
         }
         .accessibilityHidden(true)
     }
+}
 
-    private var closeButton: some View {
-        Button(action: onClose) {
-            Image(systemName: "xmark")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(CaptureTokens.ink)
-                .frame(width: 40, height: 40)
-                .background(Circle().fill(CaptureTokens.cam.opacity(0.45)))
-                .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
+/// Back (left) and help (right): 32 pt circles, 16 pt from the sides.
+struct CaptureTopBar: View {
+    let onBack: () -> Void
+    var onHelp: (() -> Void)?
+
+    var body: some View {
+        HStack {
+            circle("arrow.left", label: "Back", action: onBack)
+            Spacer()
+            if let onHelp { circle("questionmark", label: "Help", action: onHelp) }
         }
-        .accessibilityLabel("Close")
+    }
+
+    private func circle(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(CaptureTokens.ink)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(CaptureTokens.cam.opacity(0.55)))
+                .contentShape(Circle().inset(by: -6))
+        }
+        .accessibilityLabel(label)
     }
 }
 
@@ -413,24 +379,32 @@ struct FillLightBorder: View {
 
 // MARK: - Contour scan
 
-/// Thin horizontal lines across the whole screen, flat away from the face and
-/// lifted by the smoothed mesh depth over it (the proposal's scan mockup:
-/// 6.5 pt apart, 1.1 pt wide, down to 78% of the height). Lines sweep in from
-/// the top when the scan starts and follow the head as it moves. Drawn with
-/// Canvas (Core Graphics); ~100 lines x 130 points at 30 fps.
+/// Contour lines across the whole screen (SPEC "Contour lines"): 7 pt apart,
+/// 1 pt, from the top to 84% of the height (fading over the last 14%),
+/// sampled every 3 pt and lifted by the depth field x 0.16 x face height.
+/// Colour and alpha follow the local depth (#7A96FF @ 0.50 flat to
+/// #A878FC @ 0.95 at the peak). Lines sweep in top to bottom over 520 ms.
+/// Segments are bucketed by colour/alpha into a few paths per frame.
 struct ContourScanView: View {
     let field: ContourDepthField
     let colors: CaptureColors
     let startedAt: Date
     var dimmed: Bool
-    /// Draw one frame at this time instead of animating (snapshots).
+    /// Draw one frame at this time, fully swept in (screenshots).
     var fixedDate: Date? = nil
 
-    static let spacing: CGFloat = 6.5
+    static let spacing: CGFloat = 7
+    static let lineWidth: CGFloat = 1
     static let sampleStep: CGFloat = 3
-    static let sweepSeconds = 0.9
-    /// Lift at the nose tip, as a share of the face box height.
-    static let lift: CGFloat = 0.30
+    static let bottomOfH: CGFloat = 0.84
+    static let fadeOfH: CGFloat = 0.14
+    static let ampOfFaceH: CGFloat = 0.16
+    static let flatAlpha = 0.50
+    static let peakAlpha = 0.95
+    static let sweepMs = 520.0
+    static let lineFadeMs = 140.0
+    private static let tBuckets = 16
+    private static let aBuckets = 10
 
     var body: some View {
         Group {
@@ -448,33 +422,45 @@ struct ContourScanView: View {
     private func frame(at date: Date) -> some View {
         Canvas { g, size in
             let snap = field.snapshot()
-            let bottom = size.height * CaptureTokens.contourBottomFraction
-            let reveal = CGFloat(min(1, date.timeIntervalSince(startedAt) / Self.sweepSeconds))
-            let amp = max(snap.rect.height, 1) * Self.lift
-            var y = Self.spacing
-            while y < bottom {
-                guard y <= bottom * reveal else { break }
-                var path = Path()
-                var maxH: Float = 0
-                var x: CGFloat = 0
+            guard snap.hasFace else { return }
+            let amp = Self.ampOfFaceH * snap.faceHeight
+            let bottom = size.height * Self.bottomOfH
+            let fadeStart = bottom - size.height * Self.fadeOfH
+            let count = max(1, Int((bottom / Self.spacing).rounded(.down)))
+            let revealMs = fixedDate != nil ? 1e9 : date.timeIntervalSince(startedAt) * 1000
+            var paths = [Int: Path]()
+            for k in 0...count {
+                let y = CGFloat(k) * Self.spacing
+                let appearAt = Double(k) / Double(count) * Self.sweepMs
+                let a0 = min(1, max(0, (revealMs - appearAt) / Self.lineFadeMs))
+                guard a0 > 0 else { continue }
+                let edge = y > fadeStart ? Double(1 - (y - fadeStart) / (bottom - fadeStart)) : 1
+                let af = a0 * edge * (dimmed ? 0.55 : 1)
+                guard af > 0.01 else { continue }
+                let ab = min(Self.aBuckets - 1, Int(af * Double(Self.aBuckets)))
+                var pd = snap.sample(0, y)
+                var px: CGFloat = 0, py = y - CGFloat(pd) * amp
+                var x = Self.sampleStep
                 while x <= size.width + Self.sampleStep {
-                    let s = snap.sample(CGPoint(x: x, y: y))
-                    let h = s.depth
-                    maxH = max(maxH, h)
-                    let pt = CGPoint(x: x, y: y - CGFloat(h) * amp)
-                    if x == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+                    let d = snap.sample(x, y)
+                    let ny = y - CGFloat(d) * amp
+                    let t = min(1, (d + pd) / 2)
+                    let tb = min(Self.tBuckets - 1, Int(t * Float(Self.tBuckets)))
+                    let key = tb * Self.aBuckets + ab
+                    paths[key, default: Path()].move(to: CGPoint(x: px, y: py))
+                    paths[key, default: Path()].addLine(to: CGPoint(x: x, y: ny))
+                    px = x; py = ny; pd = d
                     x += Self.sampleStep
                 }
-                let k = Double(min(1, maxH * 1.6))
-                let c = colors.contourStart.mix(colors.contourEnd, k)
-                let alpha = (0.35 + 0.55 * k) * (dimmed ? 0.45 : 1)
-                g.stroke(path, with: .color(c.color.opacity(alpha)), lineWidth: 1.1)
-                y += Self.spacing
             }
-            if reveal < 1 {
-                let beamY = bottom * reveal
-                g.fill(Path(CGRect(x: 0, y: beamY - 1, width: size.width, height: 2)),
-                       with: .color(colors.contourEnd.color.opacity(0.9)))
+            let style = StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round, lineJoin: .round)
+            for (key, path) in paths {
+                let tb = key / Self.aBuckets, ab = key % Self.aBuckets
+                let t = (Double(tb) + 0.5) / Double(Self.tBuckets)
+                let af = (Double(ab) + 0.5) / Double(Self.aBuckets)
+                let c = colors.contourStart.mix(colors.contourEnd, t)
+                let alpha = (Self.flatAlpha + (Self.peakAlpha - Self.flatAlpha) * t) * af
+                g.stroke(path, with: .color(c.color.opacity(alpha)), style: style)
             }
         }
     }
@@ -482,58 +468,78 @@ struct ContourScanView: View {
 
 // MARK: - Upload
 
-/// Screen 7: the last frame blurred out for privacy behind one sheet, with
-/// one progress bar for upload and checking.
+/// Upload: the whole screen blurred (14 pt) under a bottom sheet with one
+/// progress bar for upload and checking (SPEC "Upload").
 struct GuidedUploadView: View {
     let backdrop: UIImage?
     let progress: Double
+    /// The scan's last contour field, drawn under the blur as on web.
+    var field: ContourDepthField?
+    let onBack: () -> Void
 
     private var colors: CaptureColors { .current }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            ZStack {
-                CaptureTokens.cam
-                if let backdrop {
-                    Image(uiImage: backdrop)
-                        .resizable()
-                        .scaledToFill()
-                        .scaleEffect(x: -1, y: 1)
-                        .blur(radius: 30, opaque: true)
-                        .overlay(CaptureTokens.cam.opacity(0.35))
-                }
-            }
-            .ignoresSafeArea()
-            .accessibilityHidden(true)
-
-            VStack(spacing: 10) {
-                Text("Checking it's you")
-                    .font(.usDisplay(22, .bold))
-                    .foregroundColor(CaptureTokens.ink)
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.12))
-                        Capsule().fill(colors.ring.color)
-                            .frame(width: geo.size.width * CGFloat(min(1, max(0.04, progress))))
-                            .animation(.easeOut(duration: 3), value: progress)
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                ZStack {
+                    ZStack {
+                        CaptureTokens.cam
+                        if let backdrop {
+                            Image(uiImage: backdrop)
+                                .resizable()
+                                .scaledToFill()
+                                .scaleEffect(x: -1, y: 1)
+                                .frame(width: geo.size.width, height: geo.size.height)
+                                .clipped()
+                        }
+                        CaptureTokens.cam.opacity(CaptureTokens.feedDimDuringScan)
+                        if let field {
+                            ContourScanView(field: field, colors: colors, startedAt: .distantPast,
+                                            dimmed: false, fixedDate: Date())
+                        }
                     }
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .drawingGroup(opaque: true)
+                    .blur(radius: 14, opaque: true)
+                    CaptureTokens.cam.opacity(0.25)
                 }
-                .frame(height: 6)
-                .padding(.top, 6)
-                .accessibilityElement()
-                .accessibilityLabel("Checking it's you")
-                .accessibilityValue("\(Int(progress * 100)) percent")
-                Text("Usually 3–5 seconds")
-                    .font(.usBody(14))
-                    .foregroundColor(CaptureTokens.ink2)
+                .frame(width: geo.size.width, height: geo.size.height)
+                .accessibilityHidden(true)
+
+                CaptureTopBar(onBack: onBack, onHelp: {})
+                    .padding(.horizontal, 16)
+                    .frame(width: geo.size.width)
+                    .padding(.top, max(CaptureTokens.topBarTop, GuidedCaptureView<EmptyView>.windowInsets.top))
+
+                VStack(spacing: 10) {
+                    Text("Checking it's you")
+                        .font(.usBody(18, .semibold))
+                        .foregroundColor(CaptureTokens.ink)
+                    GeometryReader { bar in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.12))
+                            Capsule().fill(colors.ring.color)
+                                .frame(width: bar.size.width * CGFloat(min(1, max(0.04, progress))))
+                                .animation(.easeOut(duration: 3), value: progress)
+                        }
+                    }
+                    .frame(height: 4)
+                    .accessibilityElement()
+                    .accessibilityLabel("Checking it's you")
+                    .accessibilityValue("\(Int(progress * 100)) percent")
+                    Text("Usually 3–5 seconds")
+                        .font(.usBody(13))
+                        .foregroundColor(CaptureTokens.ink2)
+                }
+                .padding(22)
+                .frame(width: geo.size.width - 16)
+                .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(CaptureTokens.panel))
+                .accessibilityIdentifier("usesense.capture.upload")
+                .frame(width: geo.size.width, height: geo.size.height - 8, alignment: .bottom)
             }
-            .padding(24)
-            .frame(maxWidth: .infinity)
-            .background(RoundedRectangle(cornerRadius: 34, style: .continuous).fill(CaptureTokens.panel))
-            .padding(.horizontal, 12)
-            .padding(.bottom, CaptureFooter.clearance)
-            .accessibilityIdentifier("usesense.capture.upload")
         }
+        .ignoresSafeArea()
     }
 }
 #endif

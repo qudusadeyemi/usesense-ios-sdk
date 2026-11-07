@@ -186,6 +186,9 @@ public final class UseSenseSession: @unchecked Sendable {
     static let shutterAfterSeconds: TimeInterval = 20
     static let shutterAfterPausedWindows = 3
     static let scanDiscardAfter: TimeInterval = 1.5
+    /// The guided passive scan (capture kit SPEC: ~3 s, as web).
+    static let guidedScanDuration: TimeInterval = 3
+    static let guidedMaxFps = 12
 
     // MARK: - Init
 
@@ -405,12 +408,16 @@ public final class UseSenseSession: @unchecked Sendable {
         guideLock.lock(); viewportSize = size; guideLock.unlock()
     }
 
-    /// Seconds the guided scan banks (the shutter copy names it).
+    /// Seconds the guided scan banks.
     var guidedScanSeconds: Int {
-        let ms = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 8000
         let single = sessionData?.policy.challenge == nil && config.options?.liveSenseV4Enabled != true
-        return Int((baselineDuration + (single ? Double(ms) / 1000 : 0)).rounded())
+        return Int((single ? Self.guidedScanDuration : baselineDuration).rounded())
     }
+
+    #if DEBUG
+    /// Debug rig: the fake camera's current frame (forced upload backdrop).
+    func debugCurrentFrame() -> UIImage? { frameCaptureManager.fake?.currentImage() }
+    #endif
 
     /// The last banked frame (for the blurred backdrop behind the upload sheet).
     func lastCapturedFrame() -> Data? { frameBuffer.getFrames().last }
@@ -776,7 +783,15 @@ public final class UseSenseSession: @unchecked Sendable {
                 && config.options?.liveSenseV4Enabled != true
             if singleGatedScan {
                 isCapturingFrames = false
-                guard try await runGatedScan(duration: baselineDuration + Double(captureDurationMs) / 1000) else {
+                // ~3 s scan (as web). Bank the same number of frames as the
+                // old 2 s + captureDurationMs window by raising the rate.
+                let maxFrames = serverMaxFrames ?? sessionData?.upload.maxFrames ?? 30
+                let oldWindow = baselineDuration + Double(captureDurationMs) / 1000
+                let serverFps = sessionData?.upload.targetFps ?? 3
+                let fps = min(Self.guidedMaxFps, max(serverFps,
+                    Int((Double(min(maxFrames, Int(oldWindow * Double(serverFps)))) / Self.guidedScanDuration).rounded(.up))))
+                frameBuffer.reconfigure(maxFrames: maxFrames, targetFps: fps)
+                guard try await runGatedScan(duration: Self.guidedScanDuration) else {
                     await returnToAlign()
                     return
                 }
@@ -1664,14 +1679,14 @@ extension UseSenseSession {
                         ? CGPoint(x: mesh.landmarks[i].x, y: mesh.landmarks[i].y * aspect) : nil
                 }
             )
-            contourField.update(points: points, z: mesh.landmarks.map(\.z))
+            contourField.update(points: points, z: mesh.landmarks.map(\.z), viewSize: viewport, time: time)
             facePoint = mapper.viewPoint(x: mesh.bbox.x + mesh.bbox.w / 2, y: mesh.bbox.y + mesh.bbox.h / 2)
             if mesh.gate.faceCount > 1, latestGuide.failing.contains(.onePerson) == false {
                 // Rising edge only. Not uploaded in Phase 1 (no wire change).
                 USTrace.log("guide: second face in view (\(mesh.gate.faceCount) faces)")
             }
         } else {
-            contourField.update(points: [], z: [])
+            contourField.noFace(at: time)
         }
 
         let isAlign: Bool
@@ -1708,7 +1723,11 @@ extension UseSenseSession {
             lastGuidePublished = update
             lastGuidePublishTime = now
         }
-        let startScan = isAlign && snapshot.allPass && !autoStartRequested
+        var startScan = isAlign && snapshot.allPass && !autoStartRequested
+        #if DEBUG
+        // Debug rig: a forced screen holds still for screenshots.
+        if DebugCaptureRig.forcedState != nil { startScan = false }
+        #endif
         if startScan { autoStartRequested = true }
         let refocus = facePoint != nil && now - lastFocusTime >= 0.5
         if refocus { lastFocusTime = now }

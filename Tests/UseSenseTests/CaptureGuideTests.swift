@@ -156,10 +156,12 @@ final class CaptureGuideTests: XCTestCase {
         while t < 0.45 { snap = guide.update(good(at: t) { $0.face = dark }); t += 1.0 / 30 }
         XCTAssertTrue(snap.fillLight, "fill light comes on after 400 ms of dark")
         while t < 1.0 { snap = guide.update(good(at: t) { $0.face = dark }); t += 1.0 / 30 }
-        XCTAssertEqual(snap.hint, .brightening)
-        XCTAssertEqual(snap.hint?.subtitle, "If it's still dark, face a window or lamp")
+        XCTAssertNil(snap.hint, "the fill light works silently while it settles")
+        XCTAssertFalse(snap.allPass, "but the dark face still blocks")
         while t < 3.2 { snap = guide.update(good(at: t) { $0.face = dark }); t += 1.0 / 30 }
         XCTAssertEqual(snap.hint, .faceALight, "still dark after the fill light settles")
+        XCTAssertEqual(snap.hint?.title, "Find more light")
+        XCTAssertEqual(snap.hint?.subtitle, "Face a window or lamp")
         // Light enough now: the fill light stays on (turning it off would undo it).
         while t < 5.0 { snap = guide.update(good(at: t)); t += 1.0 / 30 }
         XCTAssertTrue(snap.fillLight)
@@ -220,26 +222,62 @@ final class CaptureGuideTests: XCTestCase {
 
     // MARK: Contour depth
 
-    func testContourFieldRaisesTheNose() {
-        let field = ContourDepthField()
-        var points: [CGPoint] = []
-        var z: [Double] = []
-        for j in 0..<20 {
-            for i in 0..<20 {
-                let x = Double(i) / 19, y = Double(j) / 19
-                points.append(CGPoint(x: 100 + x * 200, y: 100 + y * 260))
-                // A dome: centre closest to the camera (most negative z).
-                z.append(-0.1 * max(0, 1 - ((x - 0.5) * (x - 0.5) + (y - 0.5) * (y - 0.5)) * 4))
-            }
+    func testContourFieldFollowsSpec() {
+        // A face-sized blob of 478 points, nose (index 1) closest to the camera.
+        let view = CGSize(width: 393, height: 852)
+        var points = [CGPoint](repeating: .zero, count: 478)
+        var z = [Double](repeating: 0, count: 478)
+        for i in 0..<478 {
+            let a = Double(i) * 2.399963, r = (Double(i) / 478).squareRoot()
+            points[i] = CGPoint(x: 196 + 110 * r * cos(a), y: 340 + 150 * r * sin(a))
+            z[i] = -0.08 * (1 - r * r)
         }
-        field.update(points: points, z: z)
+        points[10] = CGPoint(x: 196, y: 190)   // forehead
+        points[152] = CGPoint(x: 196, y: 490)  // chin
+        points[234] = CGPoint(x: 86, y: 340)   // cheeks
+        points[454] = CGPoint(x: 306, y: 340)
+        let field = ContourDepthField()
+        for k in 0..<20 { field.update(points: points, z: z, viewSize: view, time: Double(k) / 30) }
         let snap = field.snapshot()
         XCTAssertTrue(snap.hasFace)
-        let centre = snap.sample(CGPoint(x: 200, y: 230))
-        let edge = snap.sample(CGPoint(x: 110, y: 110))
-        XCTAssertGreaterThan(centre.depth, edge.depth)
-        XCTAssertGreaterThan(centre.mask, 0.5)
-        XCTAssertEqual(snap.sample(CGPoint(x: 10, y: 10)).mask, 0, "off the face")
+        XCTAssertEqual(snap.cols, 96)
+        XCTAssertEqual(snap.rows, Int((96 * 852 / 393.0).rounded()))
+        XCTAssertEqual(snap.faceHeight, 300, accuracy: 1)
+        let centre = snap.sample(196, 340)
+        XCTAssertGreaterThan(centre, 0.5)
+        XCTAssertLessThanOrEqual(centre, 1)
+        // The head dome lifts the hair above the forehead landmark.
+        XCTAssertGreaterThan(snap.sample(196, 160), 0.05)
+        // Flat far from the head.
+        XCTAssertEqual(snap.sample(10, 820), 0, accuracy: 1e-4)
+        // Face gone briefly: field kept; gone longer: dropped.
+        field.noFace(at: 19.0 / 30 + 0.2)
+        XCTAssertTrue(field.snapshot().hasFace)
+        field.noFace(at: 19.0 / 30 + 0.5)
+        XCTAssertFalse(field.snapshot().hasFace)
+    }
+
+    func testOvalMatchesSpec() {
+        let r = CaptureOvalLayout.ovalRect(in: CGSize(width: 393, height: 852))
+        XCTAssertEqual(r.midX, 196.5, accuracy: 0.01)
+        XCTAssertEqual(r.midY, 340.8, accuracy: 0.01)
+        XCTAssertEqual(r.width / 2, 393 * 0.36, accuracy: 0.01)
+        XCTAssertEqual(r.height / 2, 852 * 0.235, accuracy: 0.01)
+    }
+
+    func testGuidanceCopyIsSpecV1_1() {
+        XCTAssertEqual(GateHint.holdStill.title, "Hold still")
+        XCTAssertEqual(GateHint.centre.title, "Move your face to the centre")
+        XCTAssertEqual(GateHint.moveCloser.title, "Move a little closer")
+        XCTAssertEqual(GateHint.moveBack.title, "Move back a little")
+        XCTAssertEqual(GateHint.lookStraight.title, "Look straight ahead")
+        XCTAssertEqual(GateHint.faceALight.title, "Find more light")
+        XCTAssertEqual(GateHint.tooBright.title, "Too much light behind you")
+        XCTAssertEqual(GateHint.tooBright.subtitle, "Turn away from the window")
+        XCTAssertEqual(GateHint.holdSteady.title, "Hold your phone steady")
+        XCTAssertEqual(GateHint.eyesOpen.title, "Keep your eyes open")
+        XCTAssertEqual(GateHint.onePerson.title, "Only you in the picture")
+        XCTAssertEqual(GateHint.showFace.title, "Show your face in the oval")
     }
 
     // MARK: Colours

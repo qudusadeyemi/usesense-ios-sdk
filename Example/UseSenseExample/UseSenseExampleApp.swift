@@ -5,7 +5,7 @@ import UseSenseSDK
 struct UseSenseExampleApp: App {
     var body: some Scene {
         WindowGroup {
-            #if targetEnvironment(simulator)
+            #if DEBUG
             if CapturePreview.isEnabled {
                 CapturePreview()
             } else {
@@ -18,13 +18,17 @@ struct UseSenseExampleApp: App {
     }
 }
 
-#if targetEnvironment(simulator)
-/// Simulator-only capture preview for design work: launch with
-/// `USESENSE_SIM_CAMERA=<portrait photo path>` and `USESENSE_CAPTURE_PREVIEW=1`.
+#if DEBUG
+/// Debug-only capture preview for design work and the capture test kit:
+/// launch with `-USESENSE_CAPTURE_PREVIEW 1 -USESENSE_FAKE_CAMERA <video or
+/// photo>` (plus optional `-FREEZE_AT 4.0 -FORCE_STATE scan -FORCE_PROGRESS 0.5`).
 /// It opens the real capture screen on a stand-in session (no API key, no
-/// network), fed by the photo. The upload at the end fails, as expected.
+/// network), fed by the file. An upload at the end fails, as expected.
 struct CapturePreview: View {
-    static var isEnabled: Bool { ProcessInfo.processInfo.environment["USESENSE_CAPTURE_PREVIEW"] == "1" }
+    static var isEnabled: Bool {
+        UserDefaults.standard.string(forKey: "USESENSE_CAPTURE_PREVIEW") == "1"
+            || ProcessInfo.processInfo.environment["USESENSE_CAPTURE_PREVIEW"] == "1"
+    }
 
     private let session: UseSenseSession = {
         let session = UseSenseSession(
