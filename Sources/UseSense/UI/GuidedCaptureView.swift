@@ -102,7 +102,8 @@ enum CaptureTokens {
     static let panel = Color(red: 29 / 255, green: 32 / 255, blue: 41 / 255)   // #1d2029
     static let ink = Color(red: 244 / 255, green: 245 / 255, blue: 248 / 255)  // #f4f5f8
     static let ink2 = Color(red: 163 / 255, green: 169 / 255, blue: 184 / 255) // #a3a9b8
-    static let warmLight = Color(red: 1, green: 250 / 255, blue: 240 / 255)    // #fffaf0
+    /// Fill light veil colour (#FFF4E2, as Android).
+    static let fillVeil = Color(red: 1, green: 244 / 255, blue: 226 / 255)
     /// Camera darkening under the lines during the scan.
     static let feedDimDuringScan = 0.12
     static let guideFill = 0.14
@@ -175,9 +176,11 @@ struct GuidedCaptureView<Camera: View>: View {
                         .accessibilityHidden(true)
                 }
 
-                guideOrRing(oval)
+                // Fill light: a warm veil over the whole screen, under the
+                // guide (as Android). A border made the camera look inset.
+                if fillLight { FillLightVeil().allowsHitTesting(false) }
 
-                if fillLight { FillLightBorder().allowsHitTesting(false) }
+                guideOrRing(oval)
 
                 guidanceText
                     .frame(width: size.width - 48)
@@ -371,16 +374,12 @@ struct TopStartEllipse: Shape {
 }
 
 /// Warm white frame around the screen: with brightness at max it lights the face.
-struct FillLightBorder: View {
+/// Screen fill light: a warm white veil over the whole preview, with the
+/// screen at full brightness. Lights the face while the camera shows through.
+struct FillLightVeil: View {
+    static let opacity = 0.38
     var body: some View {
-        RoundedRectangle(cornerRadius: 46, style: .continuous)
-            .strokeBorder(CaptureTokens.warmLight, lineWidth: 34)
-            .overlay(
-                RoundedRectangle(cornerRadius: 46, style: .continuous)
-                    .inset(by: 34)
-                    .stroke(CaptureTokens.warmLight.opacity(0.6), lineWidth: 18)
-                    .blur(radius: 18)
-            )
+        CaptureTokens.fillVeil.opacity(Self.opacity)
             .ignoresSafeArea()
             .transition(.opacity)
             .accessibilityHidden(true)

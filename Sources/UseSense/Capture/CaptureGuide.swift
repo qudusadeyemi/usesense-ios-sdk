@@ -72,6 +72,9 @@ struct GateThresholds: Sendable {
     /// Eye ratio (spec v1.2.2): iris distance / (oval width / 0.72), screen space.
     var minEyeDistance = 0.17
     var maxEyeDistance = 0.32
+    /// Extra room each side of the distance band once the scan runs, so a
+    /// face sitting on a band edge doesn't flicker and drop the scan (as Android).
+    var distanceHoldMargin = 0.02
     var maxYaw = 15.0
     var maxPitch = 15.0
     var maxRoll = 12.0
@@ -153,9 +156,14 @@ struct QualityGate: Sendable {
         var light: LightFailure?
         /// The landmark jitter / eye distance over the window (debug).
         var jitter: Double?
+        /// The failures that hold the scan: everything except light. Light is
+        /// advice only (it turns the fill light on and gives a hint): a darker
+        /// face in ordinary room light reads under the luma floor and must
+        /// not be locked out (as Android, user decision).
+        var blocking: [GateCheck: GateHint] { failing.filter { $0.key != .light } }
     }
 
-    mutating func evaluate(_ o: GateObservation) -> Evaluation {
+    mutating func evaluate(_ o: GateObservation, scanning: Bool = false) -> Evaluation {
         var e = Evaluation()
         let t = thresholds
 
@@ -173,8 +181,9 @@ struct QualityGate: Sendable {
 
         // 3. Distance (spec v1.2: before in-frame).
         if let d = o.eyeDistance {
-            if d < t.minEyeDistance { e.failing[.distance] = .moveCloser }
-            else if d > t.maxEyeDistance { e.failing[.distance] = .moveBack }
+            let margin = scanning ? t.distanceHoldMargin : 0
+            if d < t.minEyeDistance - margin { e.failing[.distance] = .moveCloser }
+            else if d > t.maxEyeDistance + margin { e.failing[.distance] = .moveBack }
         } else {
             e.failing[.distance] = .moveCloser
         }
@@ -212,8 +221,9 @@ struct QualityGate: Sendable {
             }
             if e.light != nil {
                 e.failing[.light] = e.light == .tooDark ? .faceALight : .tooBright
-            } else if face.sharpness < t.minFaceSharpness {
-                // Blur is not judged on a badly lit face.
+            }
+            // Sharpness is judged in every light (light no longer blocks).
+            if face.sharpness < t.minFaceSharpness {
                 e.failing[.sharpness] = .holdSteady
             }
         } else {
@@ -314,8 +324,10 @@ struct CaptureGuide: Sendable {
         if !keepFillLight { fillLightSince = nil }
     }
 
-    mutating func update(_ o: GateObservation) -> GuideSnapshot {
-        let e = gate.evaluate(o)
+    /// - Parameter scanning: the scan is running: the distance band gets its
+    ///   hold margin, and the hint names only a check that holds the scan.
+    mutating func update(_ o: GateObservation, scanning: Bool = false) -> GuideSnapshot {
+        let e = gate.evaluate(o, scanning: scanning)
 
         // Fill light first: once the face has been too dark for the hint
         // delay, the screen becomes a fill light. It stays on for the rest of
@@ -329,8 +341,9 @@ struct CaptureGuide: Sendable {
             darkSince = nil
         }
         // The fill light works silently: while it settles the light check
-        // still blocks, but no hint asks the user for anything yet.
-        var hintable = e.failing
+        // gives no hint yet. Paused mid-scan, say what holds the scan, not
+        // the light advice.
+        var hintable = scanning ? e.blocking : e.failing
         if e.light == .tooDark, let since = fillLightSince, o.time - since < fillLightSettle {
             hintable[.light] = nil
         }
@@ -338,7 +351,7 @@ struct CaptureGuide: Sendable {
 
         let hint = hints.update(failing: hintable, at: o.time)
         return GuideSnapshot(
-            allPass: e.failing.isEmpty,
+            allPass: e.blocking.isEmpty,
             hint: hint,
             fillLight: fillLightSince != nil,
             failing: Set(e.failing.keys)

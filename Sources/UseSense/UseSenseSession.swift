@@ -1726,7 +1726,9 @@ extension UseSenseSession {
         #endif
 
         guideLock.lock()
-        let snapshot = guide.update(observation)
+        let isScanning: Bool
+        if case .baseline = state { isScanning = true } else { isScanning = false }
+        let snapshot = guide.update(observation, scanning: isScanning)
         guideTraceCounter &+= 1
         if USTrace.enabled, snapshot.failing != latestGuide.failing || guideTraceCounter % 15 == 0 {
             let e = guide.lastEvaluation

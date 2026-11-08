@@ -89,13 +89,49 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertEqual(s.update(failing: failing, at: 0.5), .moveBack)
     }
 
-    func testBlurIsNotJudgedOnADarkFace() {
+    func testBlurIsJudgedInAnyLight() {
         var gate = QualityGate()
         let e = run(&gate, seconds: 0.5) {
             $0.face = FaceRegionQuality(meanLuma: 40, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 1)
         }
         XCTAssertNotNil(e.failing[.light])
-        XCTAssertNil(e.failing[.sharpness])
+        XCTAssertEqual(e.failing[.sharpness], .holdSteady)
+    }
+
+    func testLightIsAdviceAndNeverBlocks() {
+        var gate = QualityGate()
+        let e = run(&gate, seconds: 0.5) {
+            $0.face = FaceRegionQuality(meanLuma: 50, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 80)
+        }
+        XCTAssertEqual(e.failing[.light], .faceALight)
+        XCTAssertTrue(e.blocking.isEmpty, "\(e.blocking)")
+    }
+
+    func testDistanceHoldMarginWhileScanning() {
+        // Entry band 0.17-0.32; once scanning 0.15-0.34.
+        var gate = QualityGate()
+        var e = run(&gate, seconds: 0.5) { $0.eyeDistance = 0.33 }
+        XCTAssertEqual(e.failing[.distance], .moveBack)
+        gate = QualityGate()
+        var t = 0.0
+        while t <= 0.5 { e = gate.evaluate(good(at: t) { $0.eyeDistance = 0.33 }, scanning: true); t += 1.0 / 30 }
+        XCTAssertNil(e.failing[.distance])
+        e = gate.evaluate(good(at: t) { $0.eyeDistance = 0.345 }, scanning: true)
+        XCTAssertEqual(e.failing[.distance], .moveBack)
+        e = gate.evaluate(good(at: t + 0.03) { $0.eyeDistance = 0.155 }, scanning: true)
+        XCTAssertNil(e.failing[.distance])
+        e = gate.evaluate(good(at: t + 0.06) { $0.eyeDistance = 0.145 }, scanning: true)
+        XCTAssertEqual(e.failing[.distance], .moveCloser)
+    }
+
+    func testPausedScanHintSkipsLightAdvice() {
+        var guide = CaptureGuide()
+        let dark = FaceRegionQuality(meanLuma: 40, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 80)
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        while t < 3.5 { snap = guide.update(good(at: t) { $0.face = dark; $0.yaw = 30 }, scanning: true); t += 1.0 / 30 }
+        XCTAssertEqual(snap.hint, .lookStraight)
+        XCTAssertFalse(snap.allPass)
     }
 
     func testMissingBlendshapesSkipsEyesCheck() {
@@ -173,7 +209,7 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertTrue(snap.fillLight, "fill light comes on after 400 ms of dark")
         while t < 1.0 { snap = guide.update(good(at: t) { $0.face = dark }); t += 1.0 / 30 }
         XCTAssertNil(snap.hint, "the fill light works silently while it settles")
-        XCTAssertFalse(snap.allPass, "but the dark face still blocks")
+        XCTAssertTrue(snap.allPass, "light is advice: a dark face doesn't block")
         while t < 3.2 { snap = guide.update(good(at: t) { $0.face = dark }); t += 1.0 / 30 }
         XCTAssertEqual(snap.hint, .faceALight, "still dark after the fill light settles")
         XCTAssertEqual(snap.hint?.title, "Find more light")
