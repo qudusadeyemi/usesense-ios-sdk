@@ -48,7 +48,7 @@ final class CaptureGuideTests: XCTestCase {
             ("second face", { $0.faceCount = 2 }, .onePerson, .onePerson),
             ("off centre", { $0.ovalExtent = 1.2; $0.faceCentreOffset = CGPoint(x: 0.3, y: 0) }, .inFrame, .centre),
             ("too far", { $0.eyeDistance = 0.12 }, .distance, .moveCloser),
-            ("too close", { $0.eyeDistance = 0.29 }, .distance, .moveBack),
+            ("too close", { $0.eyeDistance = 0.32 }, .distance, .moveBack),
             ("yaw", { $0.yaw = 16 }, .pose, .lookStraight),
             ("pitch", { $0.pitch = -15 }, .pose, .lookStraight),
             ("roll", { $0.roll = 12.5 }, .pose, .lookStraight),

@@ -71,7 +71,7 @@ struct GateThresholds: Sendable {
     var sizeNotPositionTolerance = 0.08
     /// Eye ratio (spec v1.2.2): iris distance / (oval width / 0.72), screen space.
     var minEyeDistance = 0.17
-    var maxEyeDistance = 0.28
+    var maxEyeDistance = 0.31
     var maxYaw = 15.0
     var maxPitch = 15.0
     var maxRoll = 12.0
