@@ -1630,6 +1630,15 @@ extension UseSenseSession {
         return hypot(r.0 - l.0, (r.1 - l.1) * aspect)
     }
 
+    /// Iris-centre distance in screen points (eye-corner midpoints without iris points).
+    static func screenEyeDistance(_ p: [CGPoint]) -> CGFloat? {
+        if p.count >= 478 { return hypot(p[473].x - p[468].x, p[473].y - p[468].y) }
+        guard p.count >= 468 else { return nil }
+        let l = CGPoint(x: (p[33].x + p[133].x) / 2, y: (p[33].y + p[133].y) / 2)
+        let r = CGPoint(x: (p[362].x + p[263].x) / 2, y: (p[362].y + p[263].y) / 2)
+        return hypot(r.x - l.x, r.y - l.y)
+    }
+
     /// MediaPipe FACEMESH_FACE_OVAL: the face silhouette ring.
     static let faceOvalIndices = [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378,
                                   400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21,
@@ -1672,17 +1681,20 @@ extension UseSenseSession {
         var observation = GateObservation.noFace(at: time)
         var facePoint: CGPoint?
         if let mesh, bufferW > 0, bufferH > 0 {
-            let aspect = bufferH / bufferW
             let mapper = PreviewMapper(bufferSize: CGSize(width: bufferW, height: bufferH), viewSize: viewport)
             let points = mesh.landmarks.map { mapper.viewPoint(x: $0.x, y: $0.y) }
             let oval = CaptureOvalLayout.ovalRect(in: viewport)
+            // Spec v1.2.2: eye ratio = eye distance / (oval width / 0.72), in
+            // screen space (= screen width on a phone). Stillness anchors use
+            // the same unit so jitter / eye distance stays consistent.
+            let unit = max(1, oval.width / 0.72)
             observation = GateObservation(
                 time: time,
                 faceCount: max(1, mesh.gate.faceCount),
                 ovalExtent: PreviewMapper.ovalExtent(
                     of: Self.faceOvalIndices.compactMap { $0 < points.count ? points[$0] : nil }, in: oval),
                 faceCentreOffset: Self.faceCentreOffset(points, oval: oval),
-                eyeDistance: Self.eyeDistance(mesh.landmarks, aspect: aspect),
+                eyeDistance: Self.screenEyeDistance(points).map { Double($0 / unit) },
                 yaw: mesh.gate.matrixPose?.yaw,
                 pitch: mesh.gate.matrixPose?.pitch,
                 roll: mesh.gate.matrixPose?.roll,
@@ -1690,8 +1702,7 @@ extension UseSenseSession {
                 eyeBlinkLeft: mesh.gate.eyeBlinkLeft,
                 eyeBlinkRight: mesh.gate.eyeBlinkRight,
                 anchors: Self.stillnessAnchors.compactMap { i in
-                    i < mesh.landmarks.count
-                        ? CGPoint(x: mesh.landmarks[i].x, y: mesh.landmarks[i].y * aspect) : nil
+                    i < points.count ? CGPoint(x: points[i].x / unit, y: points[i].y / unit) : nil
                 }
             )
             contourField.update(points: points, z: mesh.landmarks.map(\.z), viewSize: viewport, time: time)

@@ -69,15 +69,15 @@ final class CaptureGuideTests: XCTestCase {
     func testInFrameSizeVersusPosition() {
         // Silhouette outside 1.10 x oval, face centred where expected: too close.
         var gate = QualityGate()
-        var e = run(&gate, seconds: 0.5) { $0.ovalExtent = 1.15; $0.faceCentreOffset = CGPoint(x: 0.03, y: -0.05) }
+        var e = run(&gate, seconds: 0.5) { $0.ovalExtent = 1.2; $0.faceCentreOffset = CGPoint(x: 0.03, y: -0.05) }
         XCTAssertEqual(e.failing[.inFrame]?.title, "Move back a little")
         // Same overflow, face off to the side: centre it.
         gate = QualityGate()
-        e = run(&gate, seconds: 0.5) { $0.ovalExtent = 1.15; $0.faceCentreOffset = CGPoint(x: 0.2, y: 0) }
+        e = run(&gate, seconds: 0.5) { $0.ovalExtent = 1.2; $0.faceCentreOffset = CGPoint(x: 0.2, y: 0) }
         XCTAssertEqual(e.failing[.inFrame], .centre)
-        // Within 1.10 passes (spec v1.2 slack).
+        // Within 1.15 passes (spec v1.2.2: the golden frame measures 1.12).
         gate = QualityGate()
-        e = run(&gate, seconds: 0.5) { $0.ovalExtent = 1.08; $0.faceCentreOffset = .zero }
+        e = run(&gate, seconds: 0.5) { $0.ovalExtent = 1.12; $0.faceCentreOffset = .zero }
         XCTAssertNil(e.failing[.inFrame])
     }
 
@@ -227,6 +227,15 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertEqual(PreviewMapper.ovalExtent(of: [CGPoint(x: 100, y: 150)], in: oval), 0, accuracy: 1e-9)
         XCTAssertEqual(PreviewMapper.ovalExtent(of: [CGPoint(x: 200, y: 150)], in: oval), 1, accuracy: 1e-9)
         XCTAssertEqual(PreviewMapper.ovalExtent(of: [CGPoint(x: 100, y: 0), CGPoint(x: 150, y: 150)], in: oval), 1, accuracy: 1e-9)
+    }
+
+    func testScreenEyeDistanceUsesIrisCentres() {
+        var p = [CGPoint](repeating: .zero, count: 478)
+        p[468] = CGPoint(x: 100, y: 300); p[473] = CGPoint(x: 220, y: 300)
+        XCTAssertEqual(UseSenseSession.screenEyeDistance(p) ?? 0, 120, accuracy: 1e-9)
+        // Eye ratio on a 393 pt phone: oval width / 0.72 = screen width.
+        let oval = CaptureOvalLayout.ovalRect(in: CGSize(width: 393, height: 852))
+        XCTAssertEqual(oval.width / 0.72, 393, accuracy: 1e-6)
     }
 
     func testEyeDistanceUsesIrisCentres() {

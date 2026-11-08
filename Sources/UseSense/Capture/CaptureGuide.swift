@@ -63,13 +63,13 @@ struct GateHint: Equatable, Sendable {
 /// Pass thresholds. Starting points from the spec, to tune on session data.
 struct GateThresholds: Sendable {
     var faceFoundFrames = 3
-    /// Spec v1.2: every FACE_OVAL silhouette landmark within 1.10 x the oval
-    /// radius (normalised ellipse distance).
-    var ovalLimit = 1.10
+    /// Spec v1.2.2: every FACE_OVAL silhouette landmark within 1.15 x the
+    /// oval radius (normalised ellipse distance).
+    var ovalLimit = 1.15
     /// Spec v1.2.1: in-frame failing with the face centre within 8% (of rx
     /// and of ry) of the expected face centre means too close, not off-centre.
     var sizeNotPositionTolerance = 0.08
-    /// Iris-centre distance / frame width.
+    /// Eye ratio (spec v1.2.2): iris distance / (oval width / 0.72), screen space.
     var minEyeDistance = 0.17
     var maxEyeDistance = 0.28
     var maxYaw = 15.0
