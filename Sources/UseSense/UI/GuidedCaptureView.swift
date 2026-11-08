@@ -114,6 +114,7 @@ enum CaptureTokens {
     static let ringGap: CGFloat = 6
     static let hintGapBelowOval: CGFloat = 28
     static let topBarTop: CGFloat = 54
+    static let uploadCopy = "Usually under 10 seconds"
     static let shutterCopy = "Tap the button when you're ready"
 }
 
@@ -477,11 +478,55 @@ struct ContourScanView: View {
 
 // MARK: - Upload
 
+/// The upload bar's motion. It never sits still while waiting: each stage
+/// eases toward a cap it never reaches, so a slow server check (6-7 s seen on
+/// device) reads as working, not stuck. Display only: the real progress is
+/// just "sending" then "checking" then "done".
+struct UploadBar: Equatable {
+    enum Stage: Equatable { case sending, checking, done }
+
+    var stage: Stage
+    /// Where this stage started from (the bar never jumps back).
+    var startValue: Double
+    var since: Date
+    /// Hold one value (debug rig screenshots).
+    var fixed: Double?
+
+    static let sendingCap = 0.6, sendingTau: TimeInterval = 1.5
+    static let checkingCap = 0.95, checkingTau: TimeInterval = 5
+    static let floor = 0.04
+
+    static func start(at date: Date = Date()) -> UploadBar {
+        UploadBar(stage: .sending, startValue: floor, since: date)
+    }
+
+    func value(at date: Date) -> Double {
+        if let fixed { return fixed }
+        let t = max(0, date.timeIntervalSince(since))
+        func ease(_ cap: Double, _ tau: TimeInterval) -> Double {
+            let from = min(startValue, cap)
+            return cap - (cap - from) * exp(-t / tau)
+        }
+        switch stage {
+        case .sending: return ease(Self.sendingCap, Self.sendingTau)
+        case .checking: return ease(Self.checkingCap, Self.checkingTau)
+        case .done: return 1
+        }
+    }
+
+    /// Move to a later stage from where the bar is now; earlier or equal
+    /// stages are ignored.
+    func advanced(to next: Stage, at date: Date = Date()) -> UploadBar {
+        guard fixed == nil, next != stage, !(stage == .checking && next == .sending), stage != .done else { return self }
+        return UploadBar(stage: next, startValue: value(at: date), since: date)
+    }
+}
+
 /// Upload: the whole screen blurred (14 pt) under a bottom sheet with one
 /// progress bar for upload and checking (SPEC "Upload").
 struct GuidedUploadView: View {
     let backdrop: UIImage?
-    let progress: Double
+    let bar: UploadBar
     /// The scan's last contour field, drawn under the blur as on web.
     var field: ContourDepthField?
     let onBack: () -> Void
@@ -525,19 +570,21 @@ struct GuidedUploadView: View {
                     Text("Checking it's you")
                         .font(.usBody(18, .semibold))
                         .foregroundColor(CaptureTokens.ink)
-                    GeometryReader { bar in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.white.opacity(0.12))
-                            Capsule().fill(colors.ring.color)
-                                .frame(width: bar.size.width * CGFloat(min(1, max(0.04, progress))))
-                                .animation(.easeOut(duration: 3), value: progress)
+                    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: bar.stage == .done || bar.fixed != nil)) { tl in
+                        let progress = min(1, max(UploadBar.floor, bar.value(at: tl.date)))
+                        GeometryReader { track in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.white.opacity(0.12))
+                                Capsule().fill(colors.ring.color)
+                                    .frame(width: track.size.width * CGFloat(progress))
+                            }
                         }
+                        .frame(height: 4)
+                        .accessibilityElement()
+                        .accessibilityLabel("Checking it's you")
+                        .accessibilityValue("\(Int(progress * 10) * 10) percent")
                     }
-                    .frame(height: 4)
-                    .accessibilityElement()
-                    .accessibilityLabel("Checking it's you")
-                    .accessibilityValue("\(Int(progress * 100)) percent")
-                    Text("Usually 3–5 seconds")
+                    Text(CaptureTokens.uploadCopy)
                         .font(.usBody(13))
                         .foregroundColor(CaptureTokens.ink2)
                 }

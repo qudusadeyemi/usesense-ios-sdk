@@ -107,7 +107,7 @@ public struct UseSenseView: View {
                 }
 
             case .uploading where viewModel.guided, .completing where viewModel.guided:
-                GuidedUploadView(backdrop: viewModel.uploadBackdropImage, progress: viewModel.uploadProgress,
+                GuidedUploadView(backdrop: viewModel.uploadBackdropImage, bar: viewModel.uploadBar,
                                  field: viewModel.contourField, onBack: close)
 
             case .uploading:
@@ -489,17 +489,17 @@ final class UseSenseViewModel: ObservableObject {
         return uploadBackdrop
     }
 
-    var uploadProgress: Double {
+    /// The upload bar: sending, then checking, eased so it never sits still.
+    var uploadBar: UploadBar {
         #if DEBUG
-        if DebugCaptureRig.forcedState == .upload { return 0.64 }
-        #endif
-        switch state {
-        case .uploading(let p): return p >= 1 ? 0.7 : 0.55
-        case .completing: return 0.95
-        case .done: return 1
-        default: return 0.04
+        if DebugCaptureRig.forcedState == .upload {
+            return UploadBar(stage: .sending, startValue: 0.64, since: Date(), fixed: 0.64)
         }
+        #endif
+        return uploadBarState ?? .start()
     }
+    /// Starts when the upload does (nil before).
+    private var uploadBarState: UploadBar?
 
     var previewLayer: AVCaptureVideoPreviewLayer? {
         session.previewLayer
@@ -573,6 +573,7 @@ final class UseSenseViewModel: ObservableObject {
         switch newState {
         case .faceGuide:
             uploadBackdrop = nil
+            uploadBarState = nil
             #if DEBUG
             if DebugCaptureRig.forcedState != nil { break }
             #endif
@@ -580,8 +581,15 @@ final class UseSenseViewModel: ObservableObject {
             readyHaptic.prepare()
         case .baseline, .zoom, .countdown, .challenge, .inlineStepUp:
             doneHaptic.prepare()
-        case .uploading, .completing:
+        case .uploading(let p):
             fillLight.restore()
+            uploadBarState = (uploadBarState ?? .start()).advanced(to: p >= 1 ? .checking : .sending)
+            if guided, uploadBackdrop == nil {
+                uploadBackdrop = session.lastCapturedFrame().flatMap { UIImage(data: $0) }
+            }
+        case .completing:
+            fillLight.restore()
+            uploadBarState = (uploadBarState ?? .start()).advanced(to: .checking)
             if guided, uploadBackdrop == nil {
                 uploadBackdrop = session.lastCapturedFrame().flatMap { UIImage(data: $0) }
             }

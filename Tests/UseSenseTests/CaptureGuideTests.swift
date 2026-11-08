@@ -384,3 +384,33 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertFalse(UseSenseSession(config: config, sessionType: .enrollment).guidedCapture)
     }
 }
+
+final class UploadBarTests: XCTestCase {
+    private let t0 = Date(timeIntervalSince1970: 1_000)
+
+    func testBarKeepsMovingWhileTheServerChecks() {
+        var bar = UploadBar.start(at: t0)
+        XCTAssertEqual(bar.value(at: t0), UploadBar.floor, accuracy: 1e-9)
+        // Upload accepted after 2.3 s (device trace), then a 6.7 s check.
+        let accepted = t0.addingTimeInterval(2.3)
+        let sent = bar.value(at: accepted)
+        XCTAssertGreaterThan(sent, 0.4)
+        XCTAssertLessThan(sent, UploadBar.sendingCap)
+        bar = bar.advanced(to: .checking, at: accepted)
+        XCTAssertEqual(bar.value(at: accepted), sent, accuracy: 1e-9, "no jump between stages")
+        var last = sent
+        for s in stride(from: 1.0, through: 7.0, by: 1.0) {
+            let v = bar.value(at: accepted.addingTimeInterval(s))
+            XCTAssertGreaterThan(v - last, 0.005, "still visibly moving at \(s) s")
+            last = v
+        }
+        XCTAssertLessThan(bar.value(at: accepted.addingTimeInterval(60)), UploadBar.checkingCap)
+        XCTAssertEqual(bar.advanced(to: .done, at: accepted).value(at: accepted), 1)
+    }
+
+    func testBarNeverGoesBack() {
+        let bar = UploadBar.start(at: t0).advanced(to: .checking, at: t0.addingTimeInterval(1))
+        let back = bar.advanced(to: .sending, at: t0.addingTimeInterval(2))
+        XCTAssertEqual(back, bar)
+    }
+}
