@@ -16,6 +16,7 @@ xcrun simctl launch booted ai.usesense.example \
 | `FORCE_STATE` | `align`, `scan` or `upload`: hold the screen in that state (no auto start). |
 | `FORCE_PROGRESS` | Scan ring progress when forced (0–1). |
 | `FORCE_HINT` | Pin one instruction, using the reference's `?hint=` keys (`centre`, `dark`, `closer`, ...). |
+| `USESENSE_DEBUG_GATE` | `1` shows the gate debug chips (off by default; never in release). |
 | `USESENSE_CAPTURE_PREVIEW` | Example app only: opens the capture screen on a stand-in session (no API key, no network). |
 
 Every option is read from launch arguments or the environment, and all of it is compiled out of release builds (`#if DEBUG`).

@@ -183,10 +183,10 @@ struct GuidedCaptureView<Camera: View>: View {
                     .frame(width: size.width - 48)
                     .offset(x: 24, y: oval.maxY + CaptureTokens.hintGapBelowOval)
 
-                if showShutter || USTrace.enabled {
+                if showShutter || Self.showsGateChips {
                     VStack(spacing: 14) {
                         Spacer()
-                        if USTrace.enabled { debugChips }
+                        if Self.showsGateChips { debugChips }
                         if showShutter { shutterButton }
                     }
                     .frame(width: size.width, height: size.height - insets.bottom - 24)
@@ -212,6 +212,16 @@ struct GuidedCaptureView<Camera: View>: View {
         } message: {
             Text("Look straight at the screen with a neutral face. Face the light; your screen will brighten to help. The scan starts by itself when your face is in the oval and still.")
         }
+    }
+
+    /// Gate debug chips: off by default in every build. DEBUG builds show them
+    /// only with the explicit opt-in `USESENSE_DEBUG_GATE=1`; Release can't.
+    static var showsGateChips: Bool {
+        #if DEBUG
+        return DebugCaptureRig.value("USESENSE_DEBUG_GATE") == "1"
+        #else
+        return false
+        #endif
     }
 
     /// The window's safe-area insets (the GeometryReader ignores the safe

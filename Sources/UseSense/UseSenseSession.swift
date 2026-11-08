@@ -170,6 +170,7 @@ public final class UseSenseSession: @unchecked Sendable {
     private var lastGuidePublished: GuidedCaptureUpdate?
     private var lastGuidePublishTime: CFAbsoluteTime = 0
     private var lastFocusTime: CFAbsoluteTime = 0
+    private var guideTraceCounter = 0
     private var viewportSize = CGSize(width: 390, height: 844)
     /// The auto start has been asked for from the current align screen.
     private var autoStartRequested = false
@@ -1722,7 +1723,8 @@ extension UseSenseSession {
 
         guideLock.lock()
         let snapshot = guide.update(observation)
-        if USTrace.enabled, snapshot.failing != latestGuide.failing {
+        guideTraceCounter &+= 1
+        if USTrace.enabled, snapshot.failing != latestGuide.failing || guideTraceCounter % 15 == 0 {
             let e = guide.lastEvaluation
             let f = observation.face
             USTrace.log("guide: failing [\(snapshot.failing.sorted().map(\.debugLabel).joined(separator: ","))]"
