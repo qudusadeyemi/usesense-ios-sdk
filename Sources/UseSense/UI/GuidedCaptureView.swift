@@ -389,12 +389,14 @@ struct FillLightVeil: View {
 
 // MARK: - Contour scan
 
-/// Contour lines across the whole screen (SPEC "Contour lines"): 7 pt apart,
-/// 1 pt, from the top to 84% of the height (fading over the last 14%),
-/// sampled every 3 pt and lifted by the depth field x 0.16 x face height.
-/// Colour and alpha follow the local depth (#7A96FF @ 0.50 flat to
-/// #A878FC @ 0.95 at the peak). Lines sweep in top to bottom over 520 ms.
-/// Segments are bucketed by colour/alpha into a few paths per frame.
+/// Contour lines across the whole screen (SPEC "Contour lines", relief v2;
+/// reference `drawLines`): 7 pt apart, 1 pt, from the top to 84% of the
+/// height (fading over the last 14%), sampled every 3 pt and lifted by the
+/// depth field x 0.28 x face height. Lines are laid out top to bottom and
+/// never come within 3 pt of the line above, so they never cross. Colour and
+/// alpha follow the local depth (#7A96FF @ 0.50 flat to #A878FC @ 0.95 at
+/// 0.8 depth), times a top-lit shade 1 + 0.30 x slope. Lines sweep in top to
+/// bottom over 520 ms. Segments are bucketed into a few paths per frame.
 struct ContourScanView: View {
     let field: ContourDepthField
     let colors: CaptureColors
@@ -408,13 +410,18 @@ struct ContourScanView: View {
     static let sampleStep: CGFloat = 3
     static let bottomOfH: CGFloat = 0.84
     static let fadeOfH: CGFloat = 0.14
-    static let ampOfFaceH: CGFloat = 0.16
+    static let ampOfFaceH: CGFloat = 0.28
+    static let minGap: CGFloat = 3
+    static let light = 0.30
+    static let slopeGain: Float = 12
+    static let peakDepth: Float = 0.8
     static let flatAlpha = 0.50
     static let peakAlpha = 0.95
     static let sweepMs = 520.0
     static let lineFadeMs = 140.0
     private static let tBuckets = 16
     private static let aBuckets = 10
+    private static let lBuckets = 8
 
     var body: some View {
         Group {
@@ -429,18 +436,50 @@ struct ContourScanView: View {
         .ignoresSafeArea()
     }
 
+    /// Lines as y values per sample, top to bottom, with the no-crossing
+    /// rule applied to every line (shown or not). Also returns each sample's
+    /// depth and top-lit slope.
+    static func layout(_ snap: ContourDepthField.Snapshot, size: CGSize)
+        -> (ys: [[CGFloat]], depth: [[Float]], lit: [[Float]], baseY: [CGFloat]) {
+        let amp = ampOfFaceH * snap.faceHeight
+        let bottom = size.height * bottomOfH
+        let count = max(1, Int((bottom / spacing).rounded(.down)))
+        let nS = Int((size.width / sampleStep).rounded(.up)) + 2
+        let cell = snap.cols > 0 ? snap.viewSize.width / CGFloat(snap.cols) : sampleStep
+        var prev = [CGFloat](repeating: -1e9, count: nS)
+        var ys: [[CGFloat]] = [], depth: [[Float]] = [], lit: [[Float]] = [], baseY: [CGFloat] = []
+        ys.reserveCapacity(count + 1)
+        for k in 0...count {
+            let y = CGFloat(k) * spacing
+            var cur = [CGFloat](repeating: 0, count: nS)
+            var dep = [Float](repeating: 0, count: nS)
+            var l = [Float](repeating: 0, count: nS)
+            for j in 0..<nS {
+                let x = CGFloat(j) * sampleStep
+                let d = snap.sample(x, y)
+                cur[j] = max(y - CGFloat(d) * amp, prev[j] + minGap)
+                dep[j] = d
+                let slope = (snap.sample(x, y + cell) - snap.sample(x, y - cell)) / 2
+                l[j] = max(-1, min(1, slope * slopeGain))
+            }
+            prev = cur
+            ys.append(cur); depth.append(dep); lit.append(l); baseY.append(y)
+        }
+        return (ys, depth, lit, baseY)
+    }
+
     private func frame(at date: Date) -> some View {
         Canvas { g, size in
             let snap = field.snapshot()
             guard snap.hasFace else { return }
-            let amp = Self.ampOfFaceH * snap.faceHeight
             let bottom = size.height * Self.bottomOfH
             let fadeStart = bottom - size.height * Self.fadeOfH
-            let count = max(1, Int((bottom / Self.spacing).rounded(.down)))
+            let lines = Self.layout(snap, size: size)
+            let count = lines.ys.count - 1
             let revealMs = fixedDate != nil ? 1e9 : date.timeIntervalSince(startedAt) * 1000
             var paths = [Int: Path]()
             for k in 0...count {
-                let y = CGFloat(k) * Self.spacing
+                let y = lines.baseY[k]
                 let appearAt = Double(k) / Double(count) * Self.sweepMs
                 let a0 = min(1, max(0, (revealMs - appearAt) / Self.lineFadeMs))
                 guard a0 > 0 else { continue }
@@ -448,29 +487,30 @@ struct ContourScanView: View {
                 let af = a0 * edge * (dimmed ? 0.55 : 1)
                 guard af > 0.01 else { continue }
                 let ab = min(Self.aBuckets - 1, Int(af * Double(Self.aBuckets)))
-                var pd = snap.sample(0, y)
-                var px: CGFloat = 0, py = y - CGFloat(pd) * amp
-                var x = Self.sampleStep
-                while x <= size.width + Self.sampleStep {
-                    let d = snap.sample(x, y)
-                    let ny = y - CGFloat(d) * amp
-                    let t = min(1, (d + pd) / 2)
+                let cur = lines.ys[k], dep = lines.depth[k], lit = lines.lit[k]
+                for j in 1..<cur.count {
+                    let t = min(1, (dep[j] + dep[j - 1]) / 2 / Self.peakDepth)
+                    let l = (lit[j] + lit[j - 1]) / 2
                     let tb = min(Self.tBuckets - 1, Int(t * Float(Self.tBuckets)))
-                    let key = tb * Self.aBuckets + ab
-                    paths[key, default: Path()].move(to: CGPoint(x: px, y: py))
-                    paths[key, default: Path()].addLine(to: CGPoint(x: x, y: ny))
-                    px = x; py = ny; pd = d
-                    x += Self.sampleStep
+                    let lb = min(Self.lBuckets - 1, max(0, Int((l + 1) / 2 * Float(Self.lBuckets))))
+                    let key = (tb * Self.lBuckets + lb) * Self.aBuckets + ab
+                    paths[key, default: Path()].move(to: CGPoint(x: CGFloat(j - 1) * Self.sampleStep, y: cur[j - 1]))
+                    paths[key, default: Path()].addLine(to: CGPoint(x: CGFloat(j) * Self.sampleStep, y: cur[j]))
                 }
             }
             let style = StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round, lineJoin: .round)
             for (key, path) in paths {
-                let tb = key / Self.aBuckets, ab = key % Self.aBuckets
+                let ab = key % Self.aBuckets
+                let lb = (key / Self.aBuckets) % Self.lBuckets
+                let tb = key / Self.aBuckets / Self.lBuckets
                 let t = (Double(tb) + 0.5) / Double(Self.tBuckets)
+                let l = (Double(lb) + 0.5) / Double(Self.lBuckets) * 2 - 1
                 let af = (Double(ab) + 0.5) / Double(Self.aBuckets)
-                let c = colors.contourStart.mix(colors.contourEnd, t)
-                let alpha = (Self.flatAlpha + (Self.peakAlpha - Self.flatAlpha) * t) * af
-                g.stroke(path, with: .color(c.color.opacity(alpha)), style: style)
+                let shade = 1 + Self.light * l
+                let m = colors.contourStart.mix(colors.contourEnd, t)
+                let c = Color(red: min(1, m.r * shade), green: min(1, m.g * shade), blue: min(1, m.b * shade))
+                let alpha = min(1, (Self.flatAlpha + (Self.peakAlpha - Self.flatAlpha) * t) * shade) * af
+                g.stroke(path, with: .color(c.opacity(alpha)), style: style)
             }
         }
     }

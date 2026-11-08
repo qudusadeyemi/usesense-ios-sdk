@@ -283,32 +283,45 @@ final class CaptureGuideTests: XCTestCase {
 
     // MARK: Contour depth
 
-    func testContourFieldFollowsSpec() {
-        // A face-sized blob of 478 points, nose (index 1) closest to the camera.
-        let view = CGSize(width: 393, height: 852)
+    /// A 22 x 22 lattice of 484 points over the face box (478 used), nose
+    /// bump in the middle, split into 2 triangles per cell.
+    private func latticeFace(skipCentre: Bool = false) -> (points: [CGPoint], z: [Double], tris: [(Int, Int, Int)]) {
+        let n = 22
         var points = [CGPoint](repeating: .zero, count: 478)
         var z = [Double](repeating: 0, count: 478)
         for i in 0..<478 {
-            let a = Double(i) * 2.399963, r = (Double(i) / 478).squareRoot()
-            points[i] = CGPoint(x: 196 + 110 * r * cos(a), y: 340 + 150 * r * sin(a))
-            z[i] = -0.08 * (1 - r * r)
+            let gx = Double(i % n), gy = Double(i / n)
+            points[i] = CGPoint(x: 86 + 220 * gx / Double(n - 1), y: 190 + 300 * gy / Double(n - 1))
+            let dx = gx / Double(n - 1) - 0.5, dy = gy / Double(n - 1) - 0.5
+            z[i] = -0.08 * max(0, 1 - 4 * (dx * dx + dy * dy))
         }
-        points[10] = CGPoint(x: 196, y: 190)   // forehead
-        points[152] = CGPoint(x: 196, y: 490)  // chin
-        points[234] = CGPoint(x: 86, y: 340)   // cheeks
-        points[454] = CGPoint(x: 306, y: 340)
+        var tris: [(Int, Int, Int)] = []
+        for gy in 0..<(n - 1) {
+            for gx in 0..<(n - 1) {
+                let a = gy * n + gx, b = a + 1, c = a + n, d = c + 1
+                guard d < 478 else { continue }
+                if skipCentre, gx == 10, gy == 10 { continue }
+                tris.append((a, b, c)); tris.append((b, d, c))
+            }
+        }
+        return (points, z, tris)
+    }
+
+    func testReliefV2FieldFollowsSpec() {
+        let view = CGSize(width: 393, height: 852)
+        let face = latticeFace()
         let field = ContourDepthField()
-        for k in 0..<20 { field.update(points: points, z: z, viewSize: view, time: Double(k) / 30) }
+        for k in 0..<20 {
+            field.update(points: face.points, z: face.z, viewSize: view, time: Double(k) / 30, triangles: face.tris)
+        }
         let snap = field.snapshot()
         XCTAssertTrue(snap.hasFace)
-        XCTAssertEqual(snap.cols, 96)
-        XCTAssertEqual(snap.rows, Int((96 * 852 / 393.0).rounded()))
-        XCTAssertEqual(snap.faceHeight, 300, accuracy: 1)
-        let centre = snap.sample(196, 340)
-        XCTAssertGreaterThan(centre, 0.5)
-        XCTAssertLessThanOrEqual(centre, 1)
-        // The head dome lifts the hair above the forehead landmark.
-        XCTAssertGreaterThan(snap.sample(196, 160), 0.05)
+        XCTAssertEqual(snap.cols, 130)
+        XCTAssertEqual(snap.rows, Int((130 * 852 / 393.0).rounded()))
+        // Nose bump well above the face sides: the relief reads, not one hump.
+        let centre = snap.sample(196, 340), side = snap.sample(100, 340)
+        XCTAssertGreaterThan(centre, 0.6)
+        XCTAssertGreaterThan(centre - side, 0.3)
         // Flat far from the head.
         XCTAssertEqual(snap.sample(10, 820), 0, accuracy: 1e-4)
         // Face gone briefly: field kept; gone longer: dropped.
@@ -316,6 +329,45 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertTrue(field.snapshot().hasFace)
         field.noFace(at: 19.0 / 30 + 0.5)
         XCTAssertFalse(field.snapshot().hasFace)
+    }
+
+    func testReliefV2FillsOpenings() {
+        // No triangles over the middle (an "open mouth"): filled from around it.
+        let view = CGSize(width: 393, height: 852)
+        let face = latticeFace(skipCentre: true)
+        let field = ContourDepthField()
+        for k in 0..<20 {
+            field.update(points: face.points, z: face.z, viewSize: view, time: Double(k) / 30, triangles: face.tris)
+        }
+        let hole = field.snapshot().sample(86 + 220 * 10.5 / 21, 190 + 300 * 10.5 / 21)
+        XCTAssertGreaterThan(hole, 0.4, "the opening is filled from around it")
+    }
+
+    func testTrianglesFromTessellationEdges() {
+        let edges: [(start: Int, end: Int)] = [(1, 2), (2, 3), (3, 1), (4, 5), (5, 6), (6, 4), (7, 8)]
+        let tris = ContourDepthField.triangles(fromEdges: edges)
+        XCTAssertEqual(tris.count, 2)
+        XCTAssertTrue(tris[0] == (1, 2, 3))
+        XCTAssertTrue(tris[1] == (4, 5, 6))
+    }
+
+    func testContourLinesNeverCross() {
+        let view = CGSize(width: 393, height: 852)
+        let face = latticeFace()
+        let field = ContourDepthField()
+        for k in 0..<20 {
+            field.update(points: face.points, z: face.z, viewSize: view, time: Double(k) / 30, triangles: face.tris)
+        }
+        let lines = ContourScanView.layout(field.snapshot(), size: view)
+        XCTAssertEqual(ContourScanView.ampOfFaceH, 0.28)
+        for k in 1..<lines.ys.count {
+            for j in 0..<lines.ys[k].count {
+                XCTAssertGreaterThanOrEqual(lines.ys[k][j] - lines.ys[k - 1][j], ContourScanView.minGap - 1e-6)
+            }
+        }
+        // The face lifts some line by a good part of the spacing.
+        let maxLift = zip(lines.ys, lines.baseY).map { ys, y in ys.map { y - $0 }.max() ?? 0 }.max() ?? 0
+        XCTAssertGreaterThan(maxLift, 15)
     }
 
     func testOvalMatchesSpec() {

@@ -1706,7 +1706,7 @@ extension UseSenseSession {
                     i < points.count ? CGPoint(x: points[i].x / unit, y: points[i].y / unit) : nil
                 }
             )
-            contourField.update(points: points, z: mesh.landmarks.map(\.z), viewSize: viewport, time: time)
+            contourField.submit(points: points, z: mesh.landmarks.map(\.z), viewSize: viewport, time: time)
             facePoint = mapper.viewPoint(x: mesh.bbox.x + mesh.bbox.w / 2, y: mesh.bbox.y + mesh.bbox.h / 2)
             if mesh.gate.faceCount > 1, latestGuide.failing.contains(.onePerson) == false {
                 // Rising edge only. Not uploaded in Phase 1 (no wire change).

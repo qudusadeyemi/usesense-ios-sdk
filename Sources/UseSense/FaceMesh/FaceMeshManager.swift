@@ -112,6 +112,12 @@ final class FaceMeshManager: @unchecked Sendable {
                 options.outputFaceBlendshapes = true
                 self.landmarker = try FaceLandmarker(options: options)
                 self.isReady = true
+                // Contour relief v2: the tessellation's triangles (display only).
+                if ContourDepthField.triangles.isEmpty {
+                    let edges = FaceLandmarker.tesselationConnections().map { (start: Int($0.start), end: Int($0.end)) }
+                    ContourDepthField.triangles = ContourDepthField.triangles(fromEdges: edges)
+                    USTrace.log("contour: \(edges.count) tessellation edges, \(ContourDepthField.triangles.count) triangles")
+                }
             } catch {
                 // FaceLandmarker initialization failed (corrupt bytes, unsupported
                 // device, etc.). SDK gracefully degrades to no face mesh signals.
