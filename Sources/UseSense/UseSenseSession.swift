@@ -1718,8 +1718,12 @@ extension UseSenseSession {
 
         let isAlign: Bool
         if case .faceGuide = state { isAlign = true } else { isAlign = false }
-        let shutter = isAlign && (pausedWindows >= Self.shutterAfterPausedWindows
+        var shutter = isAlign && (pausedWindows >= Self.shutterAfterPausedWindows
             || (alignStartedAt.map { Date().timeIntervalSince($0) >= Self.shutterAfterSeconds } ?? false))
+        #if DEBUG
+        // Debug rig: a forced screen holds still (no shutter fallback).
+        if DebugCaptureRig.forcedState != nil { shutter = false }
+        #endif
 
         guideLock.lock()
         let snapshot = guide.update(observation)
