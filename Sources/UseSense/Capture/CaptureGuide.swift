@@ -153,6 +153,18 @@ struct QualityGate: Sendable {
     private var history: [(time: TimeInterval, anchors: [CGPoint], eyeDistance: Double)] = []
     private(set) var coverWatch = CoverWatch()
     private var wasScanning = false
+    /// COVER-v1 "Fill light and the change watch": when the screen light last
+    /// changed, still waiting for the watch to settle and re-baseline.
+    private var lightChangedAt: TimeInterval?
+    /// The pending light change happened during the scan (so its new
+    /// baseline counts as a re-baseline, not the scan's first baseline).
+    private var lightChangedMidScan = false
+    /// The change watch ran on this frame (for the upload's covered_check).
+    private(set) var watchRan = false
+    /// This frame took a new baseline after a fill-light change.
+    private(set) var rebaselined = false
+    /// Exposure settles for this long after the light changes.
+    static let lightSettle: TimeInterval = 0.5
 
     init(thresholds: GateThresholds = GateThresholds()) { self.thresholds = thresholds }
 
@@ -161,6 +173,17 @@ struct QualityGate: Sendable {
         history.removeAll()
         coverWatch.reset()
         wasScanning = false
+        lightChangedAt = nil
+        lightChangedMidScan = false
+    }
+
+    /// The screen fill light changed (on or off) at `time`. During a scan the
+    /// change watch's baseline no longer holds; just before a scan its first
+    /// baseline must wait for exposure to settle. A brightness change alone is
+    /// never a reason to re-baseline (a hand moves mean luma too).
+    mutating func lightChanged(at time: TimeInterval, scanning: Bool) {
+        lightChangedAt = time
+        lightChangedMidScan = scanning
     }
 
     /// Light failure direction for this frame, if any.
@@ -199,7 +222,32 @@ struct QualityGate: Sendable {
 
         // 2b. Covered (COVER-v1): the segmenter sees a hand or an object over
         // the face, or (scan only) a face region changed since the scan began.
-        let changed = scanning && coverWatch.covered(o.regions)
+        watchRan = false
+        rebaselined = false
+        var changed = false
+        if scanning {
+            if let since = lightChangedAt {
+                // Light changed: ignore the watch while exposure settles, then
+                // take a new baseline, but only on a face the segmenter says
+                // is clear (or with no segmenter at all). Covered or no
+                // result yet: wait, with the scan held.
+                let segmenterClear = o.cover.map { !$0.covered } ?? !o.coverPending
+                if o.time - since >= Self.lightSettle && segmenterClear {
+                    coverWatch.reset()
+                    rebaselined = lightChangedMidScan
+                    lightChangedAt = nil
+                    lightChangedMidScan = false
+                } else if o.time - since >= Self.lightSettle {
+                    e.failing[.stillness] = .holdStill
+                }
+            }
+            if lightChangedAt == nil {
+                changed = coverWatch.covered(o.regions)
+                watchRan = o.regions != nil
+            }
+        } else if let since = lightChangedAt, o.time - since >= Self.lightSettle, !lightChangedMidScan {
+            lightChangedAt = nil   // settled before any scan started
+        }
         if o.cover?.covered == true || changed { e.failing[.covered] = .uncovered }
 
         // 3. Distance (spec v1.2: before in-frame).
@@ -353,13 +401,16 @@ struct CaptureGuide: Sendable {
     ///   hold margin, and the hint names only a check that holds the scan.
     mutating func update(_ o: GateObservation, scanning: Bool = false) -> GuideSnapshot {
         let e = gate.evaluate(o, scanning: scanning)
+        let lightWasOn = fillLightSince != nil
 
         // Fill light first: once the face has been too dark for the hint
         // delay, the screen becomes a fill light. It stays on for the rest of
         // the capture (turning it off would make the face dark again).
         if e.light == .tooDark {
             if darkSince == nil { darkSince = o.time }
-            if fillLightSince == nil, let since = darkSince, o.time - since >= hints.showDelay {
+            // Frozen during a scan (COVER-v1): decided before it starts, no
+            // toggle until it ends, so the change watch's baseline holds.
+            if fillLightSince == nil, !scanning, let since = darkSince, o.time - since >= hints.showDelay {
                 fillLightSince = o.time
             }
         } else {
@@ -373,6 +424,7 @@ struct CaptureGuide: Sendable {
             hintable[.light] = nil
         }
         lastEvaluation = e
+        if (fillLightSince != nil) != lightWasOn { gate.lightChanged(at: o.time, scanning: scanning) }
 
         let hint = hints.update(failing: hintable, at: o.time)
         return GuideSnapshot(

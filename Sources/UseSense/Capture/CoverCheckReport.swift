@@ -25,6 +25,7 @@ struct CoverCheckReport: Sendable {
     private(set) var scanDrops = 0
     private(set) var watchTrips = 0
     private(set) var singleFrameFlags = 0
+    private(set) var rebaselines = 0
     private(set) var tripRegions: [String] = []
     private var watchTripping = false
 
@@ -44,12 +45,15 @@ struct CoverCheckReport: Sendable {
     }
 
     /// One scan frame: the segmenter result in force and the change watch.
-    mutating func scanFrame(cover: FaceCover?, watch: CoverWatch) {
+    /// `watchRan` is false while the watch waits out a fill-light change;
+    /// `rebaselined` marks the frame that took a new baseline after one.
+    mutating func scanFrame(cover: FaceCover?, watch: CoverWatch, watchRan: Bool = true, rebaselined: Bool = false) {
         if let cover {
             scanMaxBodySkin = max(scanMaxBodySkin, cover.bodySkin)
             scanMaxOther = max(scanMaxOther, cover.other)
         }
-        guard watch.compared else { return }
+        if rebaselined { rebaselines += 1 }
+        guard watchRan, watch.compared else { return }
         watchMaxLuma = max(watchMaxLuma, watch.lastLumaDelta)
         watchMaxChroma = max(watchMaxChroma, watch.lastChromaDelta)
         watchMaxEdge = max(watchMaxEdge, watch.lastEdgeFactor)
@@ -134,6 +138,7 @@ struct CoverCheckReport: Sendable {
             "change_watch": [
                 "trips": watchTrips,
                 "single_frame_flags": singleFrameFlags,
+                "rebaselines": rebaselines,
                 "max": [
                     "luma_ratio_delta": r3(watchMaxLuma),
                     "chroma_delta": r3(watchMaxChroma),

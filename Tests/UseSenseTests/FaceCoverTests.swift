@@ -269,6 +269,84 @@ final class FaceCoverTests: XCTestCase {
         XCTAssertTrue(s.allPass)
     }
 
+    // MARK: Fill light and the change watch (COVER-v1 s2)
+
+    /// Feed scan frames from `t0` for `count` frames at 30 fps.
+    private func feed(_ gate: inout QualityGate, from t0: TimeInterval, count: Int, regions: FaceRegions,
+                      cover: FaceCover? = FaceCover(bodySkin: 0, other: 0)) -> [QualityGate.Evaluation] {
+        (0..<count).map { i in
+            let t = t0 + Double(i) / 30
+            let e = gate.evaluate(good(at: t) { $0.regions = regions; $0.cover = cover }, scanning: true)
+            return e
+        }
+    }
+
+    func testNoFillLightToggleWhileScanning() {
+        let dark = FaceRegionQuality(meanLuma: 30, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 80)
+        var guide = CaptureGuide()
+        let scanning = run(&guide, seconds: 2, scanning: true) { $0.face = dark }
+        XCTAssertFalse(scanning.fillLight, "decided before the scan; no toggle during it")
+        let aligning = run(&guide, from: 2.1, seconds: 1) { $0.face = dark }
+        XCTAssertTrue(aligning.fillLight, "outside a scan the dark face still gets the light")
+    }
+
+    func testLightChangeRebaselinesAfterSettlingWhenClear() {
+        var gate = QualityGate()
+        let even = frameWith(failing: nil), noseLit = frameWith(failing: 3)
+        _ = feed(&gate, from: 0, count: 6, regions: even)
+        gate.lightChanged(at: 0.2, scanning: true)
+        // The light brightened the nose for good: within 500 ms the watch is off.
+        let settling = feed(&gate, from: 0.21, count: 12, regions: noseLit)
+        XCTAssertTrue(settling.allSatisfy { $0.failing[.covered] == nil })
+        XCTAssertFalse(gate.watchRan)
+        // After 500 ms on a clear face: one new baseline, then no trip.
+        var rebaselines = 0
+        for i in 0..<15 {
+            let e = gate.evaluate(good(at: 0.71 + Double(i) / 30) {
+                $0.regions = noseLit; $0.cover = FaceCover(bodySkin: 0, other: 0)
+            }, scanning: true)
+            XCTAssertNil(e.failing[.covered], "frame \(i)")
+            XCTAssertTrue(gate.watchRan)
+            if gate.rebaselined { rebaselines += 1 }
+        }
+        XCTAssertEqual(rebaselines, 1)
+    }
+
+    func testLightChangeWhileCoveredWaits() {
+        var gate = QualityGate()
+        let even = frameWith(failing: nil), noseLit = frameWith(failing: 3)
+        let hand = FaceCover(bodySkin: 0.4, other: 0)
+        _ = feed(&gate, from: 0, count: 6, regions: even)
+        gate.lightChanged(at: 0.2, scanning: true)
+        let waiting = feed(&gate, from: 0.75, count: 10, regions: noseLit, cover: hand)
+        XCTAssertFalse(gate.rebaselined, "no baseline on a covered face")
+        XCTAssertTrue(waiting.allSatisfy { $0.failing[.stillness] != nil }, "the scan is held while it waits")
+        // No segmenter result yet: still waits.
+        _ = gate.evaluate(good(at: 1.2) { $0.regions = noseLit; $0.cover = nil; $0.coverPending = true }, scanning: true)
+        XCTAssertFalse(gate.rebaselined)
+        // Clear again: the baseline is taken now.
+        _ = gate.evaluate(good(at: 1.3) { $0.regions = noseLit; $0.cover = FaceCover(bodySkin: 0, other: 0) }, scanning: true)
+        XCTAssertTrue(gate.rebaselined)
+    }
+
+    func testBrightnessJumpWithoutLightChangeDoesNotRebaseline() {
+        var gate = QualityGate()
+        _ = feed(&gate, from: 0, count: 6, regions: frameWith(failing: nil))
+        let after = feed(&gate, from: 0.3, count: 4, regions: frameWith(failing: 3))
+        XCTAssertNotNil(after.last?.failing[.covered], "a lasting change still trips the watch")
+        XCTAssertFalse(gate.rebaselined)
+    }
+
+    func testLightJustBeforeTheScanDelaysTheFirstBaseline() {
+        var gate = QualityGate()
+        gate.lightChanged(at: 0.0, scanning: false)
+        _ = feed(&gate, from: 0.1, count: 3, regions: frameWith(failing: nil))
+        XCTAssertFalse(gate.watchRan, "exposure still settling")
+        _ = gate.evaluate(good(at: 0.6) { $0.regions = frameWith(failing: nil); $0.cover = FaceCover(bodySkin: 0, other: 0) }, scanning: true)
+        XCTAssertTrue(gate.watchRan)
+        XCTAssertFalse(gate.rebaselined, "the scan's first baseline is not a re-baseline")
+    }
+
     func testChangeWatchPausesTheScan() {
         let clear = regions(image())
         let hand = regions(image(hand: true))

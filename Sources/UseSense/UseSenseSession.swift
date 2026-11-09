@@ -1827,7 +1827,10 @@ extension UseSenseSession {
             coverReport.scanStarted(cover: coverSegmenter.latest(at: time),
                                     ageMs: at.isFinite ? Int(((time - at) * 1000).rounded()) : nil)
         }
-        if isScanning { coverReport.scanFrame(cover: observation.cover, watch: guide.gate.coverWatch) }
+        if isScanning {
+            coverReport.scanFrame(cover: observation.cover, watch: guide.gate.coverWatch,
+                                  watchRan: guide.gate.watchRan, rebaselined: guide.gate.rebaselined)
+        }
         if case .faceGuide = state, snapshot.hint == .uncovered { coverReport.alignCovered(seconds: dt) }
         coverReportScanning = isScanning
         guideTraceCounter &+= 1

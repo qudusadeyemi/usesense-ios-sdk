@@ -56,7 +56,7 @@ final class CoverCheckReportTests: XCTestCase {
         XCTAssertEqual(Set((j["scan_max"] as? [String: Any])?.keys ?? [:].keys), ["body_skin", "other"])
         XCTAssertEqual(Set((j["final"] as? [String: Any])?.keys ?? [:].keys), six.union(["waited_ms", "outcome"]))
         let watch = try XCTUnwrap(j["change_watch"] as? [String: Any])
-        XCTAssertEqual(Set(watch.keys), ["trips", "single_frame_flags", "max", "trip_regions"])
+        XCTAssertEqual(Set(watch.keys), ["trips", "single_frame_flags", "rebaselines", "max", "trip_regions"])
         XCTAssertEqual(Set((watch["max"] as? [String: Any])?.keys ?? [:].keys),
                        ["luma_ratio_delta", "chroma_delta", "edge_factor"])
     }
