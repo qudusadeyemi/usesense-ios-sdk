@@ -32,6 +32,9 @@ struct FaceCover: Equatable, Sendable {
     var bodySkin: Float
     /// Share labelled background, clothes or other objects (a phone, paper).
     var other: Float
+    /// The full split by category (background, hair, body skin, face skin,
+    /// clothes, others), each a share of the area; nil when not measured.
+    var classes: [Float]? = nil
 
     static let bodySkinMax: Float = 0.12
     static let otherMax: Float = 0.25
@@ -59,7 +62,8 @@ struct FaceCover: Equatable, Sendable {
         guard let minX = px.min(), let maxX = px.max(), let minY = py.min(), let maxY = py.max() else { return nil }
         let sx = CGFloat(mw) / imageSize.width, sy = CGFloat(mh) / imageSize.height
         let step = max(1, (maxX - minX) / 40)
-        var total = 0, body = 0, other = 0
+        var total = 0
+        var counts = [Int](repeating: 0, count: 6)
         var y = minY
         while y <= maxY {
             var x = minX
@@ -67,11 +71,8 @@ struct FaceCover: Equatable, Sendable {
                 if inside(px, py, x, y) {
                     let mx = min(mw - 1, max(0, Int(x * sx)))
                     let my = min(mh - 1, max(0, Int(y * sy)))
-                    switch mask(my * mw + mx) {
-                    case bodySkinClass: body += 1
-                    case background, clothes, others: other += 1
-                    default: break
-                    }
+                    let c = Int(mask(my * mw + mx))
+                    if c < counts.count { counts[c] += 1 }
                     total += 1
                 }
                 x += step
@@ -79,7 +80,10 @@ struct FaceCover: Equatable, Sendable {
             y += step
         }
         guard total > 0 else { return nil }
-        return FaceCover(bodySkin: Float(body) / Float(total), other: Float(other) / Float(total))
+        let share = counts.map { Float($0) / Float(total) }
+        return FaceCover(bodySkin: share[Int(bodySkinClass)],
+                         other: share[Int(background)] + share[Int(clothes)] + share[Int(others)],
+                         classes: share)
     }
 
     private static func inside(_ px: [CGFloat], _ py: [CGFloat], _ x: CGFloat, _ y: CGFloat) -> Bool {
@@ -102,7 +106,8 @@ struct FaceCover: Equatable, Sendable {
 struct FaceRegions: Equatable, Sendable {
     /// Forehead, two cheeks, nose, mouth, chin (MediaPipe 478-point mesh).
     static let anchors = [151, 50, 280, 5, 13, 199]
-    static let names = ["forehead", "cheekA", "cheekB", "nose", "mouth", "chin"]
+    /// COVER-v1 names. Landmark 50 is on the subject's right cheek, 280 on the left.
+    static let names = ["forehead", "cheek_r", "cheek_l", "nose", "mouth", "chin"]
     /// Patch half-size as a fraction of face width (|L454 - L234|).
     static let patchOfFaceW: CGFloat = 0.07
 
@@ -191,6 +196,14 @@ struct CoverWatch: Sendable {
     /// The largest change on the last frame (>= 1 fails) and its region, for the trace.
     private(set) var lastScore: Float = 0
     private(set) var lastRegion: Int?
+    /// Raw changes on the last frame after the baseline, largest over the
+    /// regions (for the upload's covered_check): luma ratio change, red/blue
+    /// chromaticity change, and edge energy factor (larger of up/down).
+    private(set) var lastLumaDelta: Float = 0
+    private(set) var lastChromaDelta: Float = 0
+    private(set) var lastEdgeFactor: Float = 1
+    /// The last frame was compared with a finished baseline.
+    private(set) var compared = false
 
     mutating func reset() { self = CoverWatch() }
 
@@ -210,16 +223,25 @@ struct CoverWatch: Sendable {
             frames += 1
             lastScore = 0
             lastRegion = nil
+            compared = false
             return false
         }
         guard let base = baseline else { return false }
         var worst: Float = 0
         var worstRegion: Int?
+        lastLumaDelta = 0; lastChromaDelta = 0; lastEdgeFactor = 1
+        compared = true
         for r in v.indices where r < base.count {
-            let luma = abs(v[r].luma - base[r].luma) / Self.lumaLimit
-            let chroma = max(abs(v[r].red - base[r].red), abs(v[r].blue - base[r].blue)) / Self.chromaLimit
+            let lumaDelta = abs(v[r].luma - base[r].luma)
+            let chromaDelta = max(abs(v[r].red - base[r].red), abs(v[r].blue - base[r].blue))
             let e0 = base[r].edge + Self.edgeFloor, e1 = v[r].edge + Self.edgeFloor
-            let edge = (max(e1 / e0, e0 / e1) - 1) / (Self.edgeRatioLimit - 1)
+            let factor = max(e1 / e0, e0 / e1)
+            lastLumaDelta = max(lastLumaDelta, lumaDelta)
+            lastChromaDelta = max(lastChromaDelta, chromaDelta)
+            lastEdgeFactor = max(lastEdgeFactor, factor)
+            let luma = lumaDelta / Self.lumaLimit
+            let chroma = chromaDelta / Self.chromaLimit
+            let edge = (factor - 1) / (Self.edgeRatioLimit - 1)
             let score = max(luma, chroma, edge)
             if score > worst { worst = score; worstRegion = r }
         }
@@ -272,6 +294,22 @@ final class FaceCoverSegmenter: @unchecked Sendable {
     private var _latestAt: TimeInterval = -.infinity
     private var runs = 0
     private(set) var meanMs: Double = 0
+    private var _loadMs: Int?
+    private var _loadError: String?
+    private var _runMs: [Double] = []
+
+    /// Model load result and run timings, for the upload's covered_check.
+    struct Stats: Sendable {
+        var loaded: Bool
+        var loadMs: Int?
+        var loadError: String?
+        var runMs: [Double]
+    }
+
+    var stats: Stats {
+        lock.lock(); defer { lock.unlock() }
+        return Stats(loaded: _available, loadMs: _loadMs, loadError: _loadError, runMs: _runMs)
+    }
     #if canImport(MediaPipeTasksVision)
     private var segmenter: ImageSegmenter?
     #endif
@@ -290,8 +328,10 @@ final class FaceCoverSegmenter: @unchecked Sendable {
     func setup() {
         queue.async { [self] in
             #if canImport(MediaPipeTasksVision)
+            let t0 = CFAbsoluteTimeGetCurrent()
             guard let url = Bundle.useSenseResources.url(forResource: SegmenterModelInfo.resourceName,
                                                          withExtension: SegmenterModelInfo.resourceExtension) else {
+                lock.lock(); _loadError = "model not bundled"; lock.unlock()
                 USTrace.log("cover: segmentation model not bundled, check off")
                 return
             }
@@ -302,11 +342,15 @@ final class FaceCoverSegmenter: @unchecked Sendable {
                 options.shouldOutputCategoryMask = true
                 options.shouldOutputConfidenceMasks = false
                 let s = try ImageSegmenter(options: options)
-                lock.lock(); segmenter = s; _available = !released; lock.unlock()
+                let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+                lock.lock(); segmenter = s; _available = !released; _loadMs = ms; lock.unlock()
                 USTrace.log("cover: segmentation on (\(SegmenterModelInfo.resourceName))")
             } catch {
+                lock.lock(); _loadError = error.localizedDescription; lock.unlock()
                 USTrace.log("cover: segmentation unavailable: \(error.localizedDescription)")
             }
+            #else
+            lock.lock(); _loadError = "MediaPipe not linked"; lock.unlock()
             #endif
         }
     }
@@ -359,6 +403,9 @@ final class FaceCoverSegmenter: @unchecked Sendable {
                                                         height: CVPixelBufferGetHeight(buffer)),
                                       points: points)
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+        lock.lock()
+        if _runMs.count < 2000 { _runMs.append(ms) }
+        lock.unlock()
         runs += 1
         meanMs = runs == 1 ? ms : meanMs * 0.9 + ms * 0.1
         if runs % 20 == 1 {

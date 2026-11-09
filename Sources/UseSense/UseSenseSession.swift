@@ -20,6 +20,10 @@ public final class UseSenseSession: @unchecked Sendable {
     let coverSegmenter = FaceCoverSegmenter()
     /// Camera time of the latest frame the guide saw (for the final covered check).
     private var latestGuideFrameTime: TimeInterval = -.infinity
+    /// COVER-v1 section 3: the covered-face scores sent with the upload
+    /// (guarded by `guideLock`).
+    private var coverReport = CoverCheckReport()
+    private var coverReportScanning = false
 
     var previewLayer: AVCaptureVideoPreviewLayer? {
         frameCaptureManager.previewLayer
@@ -687,6 +691,7 @@ public final class UseSenseSession: @unchecked Sendable {
                     isCapturingFrames = false
                     pausedWindows += 1
                     USTrace.log("scan: pause > \(Self.scanDiscardAfter)s, window \(pausedWindows) dropped")
+                    recordScanDrop()
                     return false
                 }
             }
@@ -703,13 +708,17 @@ public final class UseSenseSession: @unchecked Sendable {
     /// for a result from a frame at or after the scan's end: covered drops the
     /// window back to align, clear (or no result in time) finishes.
     private func finalCoverCheck() async throws -> Bool {
-        guard coverSegmenter.available else { return true }
+        guard coverSegmenter.available else {
+            recordFinalCover(nil, waited: 0, outcome: .skipped)
+            return true
+        }
         let since = guideFrameTime()
         let started = Date()
         while Date().timeIntervalSince(started) < Self.finalCoverWait {
             if coverSegmenter.latestAt >= since {
                 let cover = coverSegmenter.latest(at: coverSegmenter.latestAt)
                 let covered = cover?.covered == true
+                recordFinalCover(cover, waited: Date().timeIntervalSince(started), outcome: covered ? .covered : .clear)
                 USTrace.log("scan: final cover check covered=\(covered)"
                     + " body=\(cover.map { String(format: "%.2f", $0.bodySkin) } ?? "-")"
                     + " other=\(cover.map { String(format: "%.2f", $0.other) } ?? "-")")
@@ -719,7 +728,32 @@ public final class UseSenseSession: @unchecked Sendable {
             try Task.checkCancellation()
         }
         USTrace.log("scan: final cover check timed out, finishing")
+        recordFinalCover(nil, waited: Date().timeIntervalSince(started), outcome: .timeout)
         return true
+    }
+
+    private func recordFinalCover(_ cover: FaceCover?, waited: TimeInterval, outcome: CoverCheckReport.FinalOutcome) {
+        guideLock.lock(); defer { guideLock.unlock() }
+        coverReport.finalCheck(cover: cover, waitedMs: Int((waited * 1000).rounded()), outcome: outcome)
+        if outcome == .covered { coverReport.scanDroppedForCover() }
+    }
+
+    /// A paused scan was dropped: count it when cover was what held it.
+    private func recordScanDrop() {
+        guideLock.lock(); defer { guideLock.unlock() }
+        if latestGuide.failing.contains(.covered) { coverReport.scanDroppedForCover() }
+    }
+
+    /// The `covered_check` metadata object (guided capture only).
+    private func coveredCheckJSON() -> [String: Any]? {
+        guard guidedCapture else { return nil }
+        let stats = coverSegmenter.stats
+        guideLock.lock(); defer { guideLock.unlock() }
+        let json = coverReport.json(segmenter: stats)
+        USTrace.log("cover: covered_check runs=\(stats.runMs.count)"
+            + " final=\(coverReport.finalOutcome?.rawValue ?? "-") drops=\(coverReport.scanDrops)"
+            + " trips=\(coverReport.watchTrips) align_covered_ms=\(Int(coverReport.alignCoveredMs))")
+        return json
     }
 
     private func guideFrameTime() -> TimeInterval {
@@ -1225,7 +1259,8 @@ public final class UseSenseSession: @unchecked Sendable {
                     : nil,
                 zoomMotion: config.options?.liveSenseV4Enabled == true
                     ? buildZoomMotionStats(framePhases: frameBuffer.getFramePhases())
-                    : nil
+                    : nil,
+                coveredCheck: coveredCheckJSON()
             )
         } catch {
             handleError(UseSenseError(code: .unknownError, message: "Failed to build metadata."))
@@ -1784,8 +1819,17 @@ extension UseSenseSession {
         #endif
 
         guideLock.lock()
+        let dt = latestGuideFrameTime.isFinite ? min(0.25, max(0, time - latestGuideFrameTime)) : 0
         latestGuideFrameTime = time
         let snapshot = guide.update(observation, scanning: isScanning)
+        if isScanning && !coverReportScanning {
+            let at = coverSegmenter.latestAt
+            coverReport.scanStarted(cover: coverSegmenter.latest(at: time),
+                                    ageMs: at.isFinite ? Int(((time - at) * 1000).rounded()) : nil)
+        }
+        if isScanning { coverReport.scanFrame(cover: observation.cover, watch: guide.gate.coverWatch) }
+        if case .faceGuide = state, snapshot.hint == .uncovered { coverReport.alignCovered(seconds: dt) }
+        coverReportScanning = isScanning
         guideTraceCounter &+= 1
         if USTrace.enabled, snapshot.failing != latestGuide.failing || guideTraceCounter % 15 == 0 {
             let e = guide.lastEvaluation
