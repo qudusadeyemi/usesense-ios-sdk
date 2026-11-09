@@ -141,9 +141,11 @@ final class FaceCoverTests: XCTestCase {
         let clear = regions(image())
         for _ in 0..<CoverWatch.baselineFrames { XCTAssertFalse(watch.covered(clear)) }
         XCTAssertFalse(watch.covered(clear), "unchanged face stays clear")
-        XCTAssertTrue(watch.covered(regions(image(hand: true))), "the drawn hand trips the watch")
+        let hand = regions(image(hand: true))
+        XCTAssertFalse(watch.covered(hand), "one frame is not enough")
         XCTAssertGreaterThanOrEqual(watch.lastScore, 1)
-        let region = watch.lastRegion.map { FaceRegions.names[$0] }
+        XCTAssertTrue(watch.covered(hand), "the drawn hand on a second frame trips the watch")
+        let region = watch.lastCoveredRegion.map { FaceRegions.names[$0] }
         XCTAssertTrue(region == "mouth" || region == "chin", "\(region ?? "-")")
     }
 
@@ -162,6 +164,51 @@ final class FaceCoverTests: XCTestCase {
         var watch = CoverWatch()
         let covered = regions(image(hand: true))
         for _ in 0..<5 { XCTAssertFalse(watch.covered(covered)) }
+    }
+
+    // MARK: Two-frame rule (COVER-v1 s2)
+
+    /// Six even regions, with region `r` (if any) pushed past the luma limit.
+    private func frameWith(failing r: Int?) -> FaceRegions {
+        var regs = Array(repeating: FaceRegions.Region(luma: 1, red: 0.42, blue: 0.26, edge: 6), count: 6)
+        if let r { regs[r].luma = 1.3 }
+        return FaceRegions(regions: regs)
+    }
+
+    private func baselined() -> CoverWatch {
+        var w = CoverWatch()
+        for _ in 0..<CoverWatch.baselineFrames { _ = w.covered(frameWith(failing: nil)) }
+        return w
+    }
+
+    func testOneFailingFrameDoesNotPause() {
+        var w = baselined()
+        XCTAssertFalse(w.covered(frameWith(failing: 3)))
+        XCTAssertFalse(w.covered(frameWith(failing: nil)))
+        XCTAssertEqual(w.lastSingleFrameFlags, 1, "the one-frame exceedance is counted")
+    }
+
+    func testTwoFramesInARowOnTheSameRegionPause() {
+        var w = baselined()
+        XCTAssertFalse(w.covered(frameWith(failing: 4)))
+        XCTAssertTrue(w.covered(frameWith(failing: 4)))
+        XCTAssertEqual(w.lastCoveredRegion, 4)
+        XCTAssertTrue(w.covered(frameWith(failing: 4)), "stays covered while it persists")
+    }
+
+    func testAlternatingRegionsDoNotPause() {
+        var w = baselined()
+        for i in 0..<6 {
+            XCTAssertFalse(w.covered(frameWith(failing: i % 2 == 0 ? 3 : 5)), "frame \(i)")
+        }
+    }
+
+    func testRegionCounterResetsOnAPass() {
+        var w = baselined()
+        XCTAssertFalse(w.covered(frameWith(failing: 0)))
+        XCTAssertFalse(w.covered(frameWith(failing: nil)))
+        XCTAssertFalse(w.covered(frameWith(failing: 0)), "the pass reset the count")
+        XCTAssertTrue(w.covered(frameWith(failing: 0)))
     }
 
     // MARK: Gate
@@ -227,13 +274,16 @@ final class FaceCoverTests: XCTestCase {
         let hand = regions(image(hand: true))
         var guide = CaptureGuide()
         XCTAssertTrue(run(&guide, seconds: 0.5, scanning: true) { $0.regions = clear }.allPass)
-        let s = guide.update(good(at: 0.6) { $0.regions = hand }, scanning: true)
-        XCTAssertFalse(s.allPass, "a hand arriving mid-scan pauses it within one frame")
+        XCTAssertTrue(guide.update(good(at: 0.6) { $0.regions = hand }, scanning: true).allPass,
+                      "one frame is not enough")
+        let s = guide.update(good(at: 0.633) { $0.regions = hand }, scanning: true)
+        XCTAssertFalse(s.allPass, "a hand that stays a second frame pauses the scan")
         XCTAssertTrue(s.failing.contains(.covered))
         // Not scanning: the watch is off.
         var align = CaptureGuide()
         _ = run(&align, seconds: 0.5) { $0.regions = clear }
-        XCTAssertFalse(align.update(good(at: 0.6) { $0.regions = hand }).failing.contains(.covered))
+        _ = align.update(good(at: 0.6) { $0.regions = hand })
+        XCTAssertFalse(align.update(good(at: 0.633) { $0.regions = hand }).failing.contains(.covered))
     }
 
     // MARK: One person

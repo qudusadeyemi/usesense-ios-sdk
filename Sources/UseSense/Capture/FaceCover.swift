@@ -180,7 +180,11 @@ struct FaceRegions: Equatable, Sendable {
 
 /// Watches the face regions through one scan: the first 3 frames set a
 /// baseline (running mean); afterwards a region that changes beyond the
-/// limits means something covered the face. Pure, so tested.
+/// limits on 2 consecutive frames means something covered the face (the same
+/// region; its count resets when it passes). A one-frame exceedance is
+/// ignored but counted: on an iPhone 17 Pro a clear face crossed the luma
+/// limit for single frames on the nose and chin, while a real hand persists.
+/// Pure, so tested.
 struct CoverWatch: Sendable {
     static let baselineFrames = 3
     /// Change in a region's luma relative to the face mean.
@@ -190,6 +194,8 @@ struct CoverWatch: Sendable {
     /// Edge energy may rise or fall by this factor (with a +4 floor).
     static let edgeRatioLimit: Float = 2.2
     static let edgeFloor: Float = 4
+    /// Consecutive failing frames a region needs before it counts as covered.
+    static let framesToCover = 2
 
     private var baseline: [FaceRegions.Region]?
     private var frames = 0
@@ -204,6 +210,13 @@ struct CoverWatch: Sendable {
     private(set) var lastEdgeFactor: Float = 1
     /// The last frame was compared with a finished baseline.
     private(set) var compared = false
+    /// Consecutive failing frames per region.
+    private(set) var streaks: [Int] = []
+    /// The last frame counted as covered, and the region that made it so.
+    private(set) var lastCovered = false
+    private(set) var lastCoveredRegion: Int?
+    /// Regions that failed for exactly one frame and then passed, on the last frame.
+    private(set) var lastSingleFrameFlags = 0
 
     mutating func reset() { self = CoverWatch() }
 
@@ -224,6 +237,9 @@ struct CoverWatch: Sendable {
             lastScore = 0
             lastRegion = nil
             compared = false
+            lastCovered = false
+            lastCoveredRegion = nil
+            lastSingleFrameFlags = 0
             return false
         }
         guard let base = baseline else { return false }
@@ -231,6 +247,11 @@ struct CoverWatch: Sendable {
         var worstRegion: Int?
         lastLumaDelta = 0; lastChromaDelta = 0; lastEdgeFactor = 1
         compared = true
+        if streaks.count != v.count { streaks = [Int](repeating: 0, count: v.count) }
+        lastCovered = false
+        lastCoveredRegion = nil
+        lastSingleFrameFlags = 0
+        var coveredScore: Float = 0
         for r in v.indices where r < base.count {
             let lumaDelta = abs(v[r].luma - base[r].luma)
             let chromaDelta = max(abs(v[r].red - base[r].red), abs(v[r].blue - base[r].blue))
@@ -244,10 +265,21 @@ struct CoverWatch: Sendable {
             let edge = (factor - 1) / (Self.edgeRatioLimit - 1)
             let score = max(luma, chroma, edge)
             if score > worst { worst = score; worstRegion = r }
+            if score >= 1 {
+                streaks[r] += 1
+                if streaks[r] >= Self.framesToCover, score > coveredScore {
+                    coveredScore = score
+                    lastCovered = true
+                    lastCoveredRegion = r
+                }
+            } else {
+                if streaks[r] == 1 { lastSingleFrameFlags += 1 }
+                streaks[r] = 0
+            }
         }
         lastScore = worst
         lastRegion = worstRegion
-        return worst >= 1
+        return lastCovered
     }
 }
 

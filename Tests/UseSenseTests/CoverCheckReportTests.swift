@@ -28,7 +28,15 @@ final class CoverCheckReportTests: XCTestCase {
         let same = FaceRegions(regions: Array(repeating: .init(luma: 1, red: 0.42, blue: 0.26, edge: 6), count: 6))
         for _ in 0..<CoverWatch.baselineFrames { _ = watch.covered(same) }
         var moved = same
-        moved.regions[4] = .init(luma: 1.4, red: 0.5, blue: 0.2, edge: 30)   // mouth
+        var blip = same
+        blip.regions[3] = .init(luma: 1.25, red: 0.42, blue: 0.26, edge: 6)  // nose, one frame only
+        _ = watch.covered(blip)
+        r.scanFrame(cover: nil, watch: watch)
+        _ = watch.covered(same)
+        r.scanFrame(cover: nil, watch: watch)
+        moved.regions[4] = .init(luma: 1.4, red: 0.5, blue: 0.2, edge: 30)   // mouth, two frames
+        _ = watch.covered(moved)
+        r.scanFrame(cover: nil, watch: watch)
         _ = watch.covered(moved)
         r.scanFrame(cover: cover([0, 0.02, 0.3, 0.6, 0, 0.08]), watch: watch)
         r.finalCheck(cover: cover(split), waitedMs: 380, outcome: .clear)
@@ -48,7 +56,7 @@ final class CoverCheckReportTests: XCTestCase {
         XCTAssertEqual(Set((j["scan_max"] as? [String: Any])?.keys ?? [:].keys), ["body_skin", "other"])
         XCTAssertEqual(Set((j["final"] as? [String: Any])?.keys ?? [:].keys), six.union(["waited_ms", "outcome"]))
         let watch = try XCTUnwrap(j["change_watch"] as? [String: Any])
-        XCTAssertEqual(Set(watch.keys), ["trips", "max", "trip_regions"])
+        XCTAssertEqual(Set(watch.keys), ["trips", "single_frame_flags", "max", "trip_regions"])
         XCTAssertEqual(Set((watch["max"] as? [String: Any])?.keys ?? [:].keys),
                        ["luma_ratio_delta", "chroma_delta", "edge_factor"])
     }
@@ -77,7 +85,8 @@ final class CoverCheckReportTests: XCTestCase {
         XCTAssertEqual(j["align_covered_ms"] as? Int, 500)
         XCTAssertEqual(j["scan_drops"] as? Int, 0)
         let watch = try XCTUnwrap(j["change_watch"] as? [String: Any])
-        XCTAssertEqual(watch["trips"] as? Int, 1)
+        XCTAssertEqual(watch["trips"] as? Int, 1, "only the two-frame mouth change paused")
+        XCTAssertEqual(watch["single_frame_flags"] as? Int, 1, "the nose blip")
         XCTAssertEqual(watch["trip_regions"] as? [String], ["mouth"])
         let max = try XCTUnwrap(watch["max"] as? [String: Any])
         XCTAssertEqual(max["luma_ratio_delta"] as? Double ?? 0, 0.4, accuracy: 1e-3)

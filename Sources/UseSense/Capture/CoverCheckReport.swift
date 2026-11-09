@@ -24,6 +24,7 @@ struct CoverCheckReport: Sendable {
     private(set) var alignCoveredMs: Double = 0
     private(set) var scanDrops = 0
     private(set) var watchTrips = 0
+    private(set) var singleFrameFlags = 0
     private(set) var tripRegions: [String] = []
     private var watchTripping = false
 
@@ -52,10 +53,11 @@ struct CoverCheckReport: Sendable {
         watchMaxLuma = max(watchMaxLuma, watch.lastLumaDelta)
         watchMaxChroma = max(watchMaxChroma, watch.lastChromaDelta)
         watchMaxEdge = max(watchMaxEdge, watch.lastEdgeFactor)
-        let tripped = watch.lastScore >= 1
+        singleFrameFlags += watch.lastSingleFrameFlags
+        let tripped = watch.lastCovered
         if tripped && !watchTripping {
             watchTrips += 1
-            if let r = watch.lastRegion, r < FaceRegions.names.count {
+            if let r = watch.lastCoveredRegion, r < FaceRegions.names.count {
                 let name = FaceRegions.names[r]
                 if !tripRegions.contains(name) { tripRegions.append(name) }
             }
@@ -131,6 +133,7 @@ struct CoverCheckReport: Sendable {
             "scan_drops": scanDrops,
             "change_watch": [
                 "trips": watchTrips,
+                "single_frame_flags": singleFrameFlags,
                 "max": [
                     "luma_ratio_delta": r3(watchMaxLuma),
                     "chroma_delta": r3(watchMaxChroma),
