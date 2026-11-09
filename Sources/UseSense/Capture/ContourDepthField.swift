@@ -1,21 +1,21 @@
 import Foundation
 import CoreGraphics
 
-/// The contour scan's depth field, relief v3 (capture test kit
-/// RELIEF-v3.md; reference `updateField` in capture-test-kit/reference/index.html).
+/// The contour scan's fields, relief v3.1 (capture test kit RELIEF-v3.md,
+/// "v3.1 changes"; reference `updateField` in capture-test-kit/reference/index.html).
 ///
-/// A screen-space grid, 64 columns (rows follow the screen aspect):
-///  1. depth per landmark relative to the face outline: 0 on the FACE_OVAL
-///     ring (mean z), 1 at the nearest point (nose tip);
-///  2. MediaPipe's 852 tessellation triangles rasterised into the grid with
-///     barycentric depth (larger value wins where they overlap), then
-///     low-passed: meshLow = blur(mesh, 4);
-///  3. a smooth bump (1 - r^2)^2 in an ellipse (rx 0.58 faceW, ry 0.65 faceH)
-///     centred at the 10/152 midpoint + 0.05 faceH;
-///  4. raw = bump + 0.15 meshLow, blurred (0.9), EMA 0.30. The bump's centre y
-///     and y radius are eased the same way for the line bulge. The last field
-///     is kept while the face is gone for under 300 ms.
-/// Sigmas are in v2's 130-column cells, scaled by cols / 130 (min 0.3).
+/// A screen-space grid, 64 columns (rows follow the screen aspect), two fields:
+///  - **bulge**: a smooth bump (1 - r^2)^2 in an ellipse, rx 0.58 faceW,
+///    ry 0.85 faceH above the centre and 0.65 below, centred at the 10/152
+///    midpoint + 0.05 faceH; blurred 0.9;
+///  - **detail**: depth from the face outline (0 on the FACE_OVAL ring, 1 at
+///    the nose tip), MediaPipe's 852 tessellation triangles rasterised with
+///    barycentric depth, eye and mouth openings filled (sigma 3), soft edge
+///    smoothstep(0.15, 0.95, blur(cover, 2)), then blurred 2.5.
+/// Both eased with an EMA (0.30), as are the bump's centre y and its 0.65
+/// faceH radius (the bulge's displacement scale). The last fields are kept
+/// while the face is gone for under 300 ms. Sigmas are in v2's 130-column
+/// cells, scaled by cols / 130 (min 0.3).
 ///
 /// Built on its own queue (off the camera queue and the main thread), read by
 /// the contour view on the main thread, so every access goes through the
@@ -26,12 +26,16 @@ final class ContourDepthField: @unchecked Sendable {
         static let gridColumns = 64
         static let emaAlpha: Float = 0.30
         static let sigmaScale: Float = Float(gridColumns) / 130
-        static let meshLowSigma: Float = 4.0
+        static let fillSigma: Float = 3.0
+        static let edgeSigma: Float = 2.0
+        static let edgeLo: Float = 0.15
+        static let edgeHi: Float = 0.95
+        static let detailSigma: Float = 2.5
         static let blurSigma: Float = 0.9
-        static let meshHint: Float = 0.15
         static let barycentricSlack: Float = -0.02
         static let bumpRxOfFaceW: CGFloat = 0.58
         static let bumpRyOfFaceH: CGFloat = 0.65
+        static let bumpRyUpOfFaceH: CGFloat = 0.85
         static let bumpCyShiftOfFaceH: CGFloat = 0.05
         static let holdWithoutFace: TimeInterval = 0.3
 
@@ -70,7 +74,10 @@ final class ContourDepthField: @unchecked Sendable {
         var viewSize: CGSize
         var cols: Int
         var rows: Int
+        /// The bulge (bump) field.
         var field: [Float]
+        /// Face detail (mesh depth), same grid.
+        var detail: [Float]
         /// Forehead (10) to chin (152) in screen points.
         var faceHeight: CGFloat
         /// The bump's centre y and y radius in screen points, eased (EMA).
@@ -78,12 +85,17 @@ final class ContourDepthField: @unchecked Sendable {
         var bumpRy: CGFloat
         var hasFace: Bool
 
-        static let empty = Snapshot(viewSize: .zero, cols: 0, rows: 0, field: [], faceHeight: 0,
+        static let empty = Snapshot(viewSize: .zero, cols: 0, rows: 0, field: [], detail: [], faceHeight: 0,
                                     bumpCy: 0, bumpRy: 0, hasFace: false)
 
-        /// Bilinear sample at a screen point (reference `sampleField`).
-        func sample(_ x: CGFloat, _ y: CGFloat) -> Float {
-            guard hasFace, cols > 0, viewSize.width > 0 else { return 0 }
+        /// Bilinear sample of the bulge at a screen point (reference `sampleField`).
+        func sample(_ x: CGFloat, _ y: CGFloat) -> Float { Self.bilinear(field, x, y, self) }
+        /// Bilinear sample of the detail field (reference `sampleDetail`).
+        func sampleDetail(_ x: CGFloat, _ y: CGFloat) -> Float { Self.bilinear(detail, x, y, self) }
+
+        private static func bilinear(_ field: [Float], _ x: CGFloat, _ y: CGFloat, _ s: Snapshot) -> Float {
+            let cols = s.cols, rows = s.rows, viewSize = s.viewSize
+            guard s.hasFace, cols > 0, viewSize.width > 0, field.count == cols * rows else { return 0 }
             let cell = viewSize.width / CGFloat(cols)
             let gx = x / cell, gy = y / cell
             let x0 = Int(floor(gx)), y0 = Int(floor(gy))
@@ -207,40 +219,56 @@ final class ContourDepthField: @unchecked Sendable {
             }
         }}}}}
 
-        // 3. Low-pass the mesh: only a hint of the nose and brow shows.
-        let meshLow = Self.gaussBlur(mesh, cols: cols, rows: rows, sigma: Spec.scaled(Spec.meshLowSigma))
+        // 3. Detail: fill the eye and mouth openings, soft edge, blur 2.5.
+        // Uncovered cells are 0 already, so mesh * cover == mesh.
+        let num = Self.gaussBlur(mesh, cols: cols, rows: rows, sigma: Spec.scaled(Spec.fillSigma))
+        let dnm = Self.gaussBlur(cover, cols: cols, rows: rows, sigma: Spec.scaled(Spec.fillSigma))
+        let edge = Self.gaussBlur(cover, cols: cols, rows: rows, sigma: Spec.scaled(Spec.edgeSigma))
+        var filled = [Float](repeating: 0, count: n)
+        filled.withUnsafeMutableBufferPointer { FB in
+        mesh.withUnsafeBufferPointer { M in
+        cover.withUnsafeBufferPointer { C in
+        num.withUnsafeBufferPointer { NU in
+        dnm.withUnsafeBufferPointer { DE in
+        edge.withUnsafeBufferPointer { ED in
+            for i in 0..<n {
+                let v = C[i] > 0 ? M[i] : (DE[i] > 1e-4 ? NU[i] / DE[i] : 0)
+                FB[i] = v * Self.smoothstep(Spec.edgeLo, Spec.edgeHi, ED[i])
+            }
+        }}}}}}
+        let det = Self.gaussBlur(filled, cols: cols, rows: rows, sigma: Spec.scaled(Spec.detailSigma))
 
-        // 4. Bump from forehead (10), chin (152), cheeks (234, 454); combine.
+        // 4. Bulge: the bump alone, taller above the centre.
         let top = points[10], chin = points[152]
         let faceH = hypot(chin.x - top.x, chin.y - top.y)
         let faceW = abs(points[454].x - points[234].x)
         let cyT = (top.y + chin.y) / 2 + Spec.bumpCyShiftOfFaceH * faceH
         let ryT = max(1, Spec.bumpRyOfFaceH * faceH)
         let bcx = Float((top.x + chin.x) / 2), bcy = Float(cyT)
-        let brx = Float(max(1, Spec.bumpRxOfFaceW * faceW)), bry = Float(ryT)
+        let brx = Float(max(1, Spec.bumpRxOfFaceW * faceW))
+        let bryDown = Float(ryT), bryUp = Float(max(1, Spec.bumpRyUpOfFaceH * faceH))
         let fcell = Float(cell)
         var raw = [Float](repeating: 0, count: n)
         raw.withUnsafeMutableBufferPointer { rb in
-        meshLow.withUnsafeBufferPointer { ML in
             let r = rb.baseAddress!
             for gy in 0..<rows {
-                let uy = ((Float(gy) + 0.5) * fcell - bcy) / bry
+                let y = (Float(gy) + 0.5) * fcell
+                let uy = (y - bcy) / (y < bcy ? bryUp : bryDown)
                 for gx in 0..<cols {
                     let ux = ((Float(gx) + 0.5) * fcell - bcx) / brx
                     let r2 = ux * ux + uy * uy
-                    let bump: Float = r2 < 1 ? (1 - r2) * (1 - r2) : 0
-                    let i = gy * cols + gx
-                    r[i] = bump + Spec.meshHint * ML[i]
+                    r[gy * cols + gx] = r2 < 1 ? (1 - r2) * (1 - r2) : 0
                 }
             }
-        }}
+        }
         raw = Self.gaussBlur(raw, cols: cols, rows: rows, sigma: Spec.scaled(Spec.blurSigma))
 
-        // Temporal EMA (field, face height, bump centre y and radius).
+        // Temporal EMA (both fields, face height, bump centre y and radius).
         lock.lock()
         defer { lock.unlock() }
-        if state.field.count != n || !state.hasFace {
+        if state.field.count != n || state.detail.count != n || !state.hasFace {
             state.field = [Float](repeating: 0, count: n)
+            state.detail = [Float](repeating: 0, count: n)
             state.faceHeight = faceH
             state.bumpCy = cyT
             state.bumpRy = ryT
@@ -248,6 +276,11 @@ final class ContourDepthField: @unchecked Sendable {
         raw.withUnsafeBufferPointer { R in
             state.field.withUnsafeMutableBufferPointer { F in
                 for i in 0..<n { F[i] += (R[i] - F[i]) * alpha }
+            }
+        }
+        det.withUnsafeBufferPointer { D in
+            state.detail.withUnsafeMutableBufferPointer { F in
+                for i in 0..<n { F[i] += (D[i] - F[i]) * alpha }
             }
         }
         let a = CGFloat(alpha)

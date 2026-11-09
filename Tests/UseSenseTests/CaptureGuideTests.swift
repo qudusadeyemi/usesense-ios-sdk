@@ -328,31 +328,46 @@ final class CaptureGuideTests: XCTestCase {
         return field
     }
 
-    func testReliefV3FieldFollowsSpec() {
+    func testReliefV31FieldsFollowSpec() {
         let view = CGSize(width: 393, height: 852)
         let field = settledField(reliefFace(), view: view)
         let snap = field.snapshot()
         XCTAssertTrue(snap.hasFace)
         XCTAssertEqual(snap.cols, 64)
         XCTAssertEqual(snap.rows, Int((64 * 852 / 393.0).rounded()))
-        // Bump centred 0.05 faceH below the 10/152 midpoint, ry 0.65 faceH.
+        XCTAssertEqual(snap.detail.count, snap.field.count)
+        // Bump centred 0.05 faceH below the 10/152 midpoint; displacement
+        // scale ry 0.65 faceH.
         XCTAssertEqual(snap.bumpCy, 340 + 0.05 * 300, accuracy: 0.5)
         XCTAssertEqual(snap.bumpRy, 0.65 * 300, accuracy: 0.5)
-        // Peak about 1 (bump) plus a little mesh; smooth, falling to 0 at
-        // rx = 0.58 faceW and flat beyond.
+        // Bulge is the bump alone: peak about 1, 0 beyond rx 0.58 faceW.
         let centre = snap.sample(196, 355)
         XCTAssertGreaterThan(centre, 0.9)
-        XCTAssertLessThan(centre, 1.2)
-        let half = snap.sample(196 + 0.29 * 220, 355)
-        XCTAssertGreaterThan(half, 0.4)
-        XCTAssertLessThan(half, centre)
+        XCTAssertLessThanOrEqual(centre, 1.0)
         XCTAssertEqual(snap.sample(196 + 0.58 * 220 + 20, 355), 0, accuracy: 0.02)
-        XCTAssertEqual(snap.sample(10, 820), 0, accuracy: 1e-4)
-        // Face gone briefly: field kept; gone longer: dropped.
+        // Taller above the centre (ry_up 0.85 faceH): 0.9 x 0.65 faceH above
+        // is still inside the bump; the same distance below is outside it.
+        XCTAssertGreaterThan(snap.sample(196, 355 - 0.9 * 195), 0.15)
+        XCTAssertLessThan(snap.sample(196, 355 + 0.9 * 195), 0.1)
+        // Detail: the nose (centre of the lattice face) stands out, 0 far away.
+        XCTAssertGreaterThan(snap.sampleDetail(196, 340), 0.5)
+        XCTAssertGreaterThan(snap.sampleDetail(196, 340) - snap.sampleDetail(100, 340), 0.3)
+        XCTAssertEqual(snap.sampleDetail(10, 820), 0, accuracy: 1e-4)
+        // Face gone briefly: fields kept; gone longer: dropped.
         field.noFace(at: 23.0 / 30 + 0.2)
         XCTAssertTrue(field.snapshot().hasFace)
         field.noFace(at: 23.0 / 30 + 0.5)
         XCTAssertFalse(field.snapshot().hasFace)
+    }
+
+    func testReliefV31FillsOpenings() {
+        // No triangles over the middle (an "open mouth"): the detail is filled.
+        let view = CGSize(width: 393, height: 852)
+        var face = latticeFace(skipCentre: true)
+        let clean = reliefFace()
+        face.points = clean.points
+        let snap = settledField(face, view: view).snapshot()
+        XCTAssertGreaterThan(snap.sampleDetail(86 + 220 * 10.5 / 21, 190 + 300 * 10.5 / 21), 0.4)
     }
 
     func testTrianglesFromTessellationEdges() {
@@ -363,30 +378,44 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertTrue(tris[1] == (4, 5, 6))
     }
 
-    func testContourLinesBulgeAwayFromCentre() {
+    func testContourLinesBulgeAndShowTheNose() {
         let view = CGSize(width: 393, height: 852)
         let snap = settledField(reliefFace(), view: view).snapshot()
         let lines = ContourScanView.layout(snap, size: view)
         XCTAssertEqual(ContourScanView.spacing, 9)
+        XCTAssertEqual(ContourScanView.minGap, 2.5)
         let mid = Int((196 / ContourScanView.sampleStep).rounded())
         let side = lines.ys[0].count - 2   // right edge, beyond the bump
         var maxUp: CGFloat = 0, maxDown: CGFloat = 0
         for k in 0..<lines.ys.count {
             let y = lines.baseY[k], dy = lines.ys[k][mid] - y
             if y < snap.bumpCy - 20 { XCTAssertLessThanOrEqual(dy, 1e-6, "above the centre lines arch up") }
-            if y > snap.bumpCy + 20 { XCTAssertGreaterThanOrEqual(dy, -1e-6, "below it they sag down") }
             maxUp = max(maxUp, -dy); maxDown = max(maxDown, dy)
             XCTAssertEqual(lines.ys[k][side], y, accuracy: 1.5, "flat beside the head")
             if k > 0 {
                 for j in 0..<lines.ys[k].count {
                     XCTAssertGreaterThanOrEqual(lines.ys[k][j] - lines.ys[k - 1][j], ContourScanView.minGap - 1e-6)
+                    XCTAssertEqual(lines.gaps[k][j], lines.ys[k][j] - lines.ys[k - 1][j], accuracy: 1e-6)
                 }
             }
         }
-        // More up than down (A 0.50 vs 0.32), both clearly visible.
         XCTAssertGreaterThan(maxUp, 30)
-        XCTAssertGreaterThan(maxDown, 15)
-        XCTAssertGreaterThan(maxUp, maxDown)
+        XCTAssertGreaterThan(maxDown, 5, "lines below the face sag")
+        // At the bump's centre the bulge is 0 (tanh 0), but the detail still
+        // lifts the line over the nose: it shows where it is.
+        let k = Int((snap.bumpCy / ContourScanView.spacing).rounded())
+        let atNose = lines.baseY[k] - lines.ys[k][mid]
+        let beside = lines.baseY[k] - lines.ys[k][Int((100 / ContourScanView.sampleStep).rounded())]
+        XCTAssertGreaterThan(atNose, 8)
+        XCTAssertGreaterThan(atNose - beside, 3)
+    }
+
+    func testPackedLinesFade() {
+        let s = ContourScanView.spacing
+        XCTAssertEqual(ContourScanView.packedFactor([s, s], 1), 1)
+        XCTAssertEqual(ContourScanView.packedFactor([2 * s, s], 1), 1)
+        XCTAssertEqual(ContourScanView.packedFactor([0, s], 1), 0.25)
+        XCTAssertEqual(ContourScanView.packedFactor([s / 2, s], 1), 0.65, accuracy: 0.026)
     }
 
     func testOvalMatchesSpec() {

@@ -169,7 +169,7 @@ struct GuidedCaptureView<Camera: View>: View {
             ZStack(alignment: .topLeading) {
                 camera.frame(width: size.width, height: size.height)
 
-                // Relief v3: 0.8 s into the scan the camera blurs (18 pt) so
+                // Relief v3.1: 1.5 s into the scan the camera blurs (18 pt) so
                 // the lines carry the shape. Align mode never shows it.
                 if mode == .scan && (cameraBlurred || fixedDate != nil) {
                     CameraBlurView()
@@ -407,11 +407,11 @@ struct FillLightVeil: View {
 
 /// Blurs whatever is behind it (the live camera layer, which SwiftUI's
 /// `.blur` can't reach). A system blur held part way by a paused animator,
-/// so its strength is about 18 pt (RELIEF-v3 "Camera blur"), without the
+/// so its strength is about 18 pt (RELIEF-v3 "Camera blur", at 1.5 s in v3.1), without the
 /// full material tint. Re-applied when the view returns to a window, since
 /// iOS finishes paused animators on backgrounding.
 struct CameraBlurView: UIViewRepresentable {
-    static let afterSeconds = 0.8
+    static let afterSeconds = 1.5
     static let fraction: CGFloat = 0.42
 
     final class Host: UIVisualEffectView {
@@ -454,14 +454,16 @@ struct CameraBlurView: UIViewRepresentable {
     func updateUIView(_ uiView: Host, context: Context) {}
 }
 
-/// Contour lines across the whole screen (SPEC "Contour lines", relief v3;
+/// Contour lines across the whole screen (SPEC "Contour lines", relief v3.1;
 /// reference `drawLines`): 9 pt apart, 1.3 pt, from the top to 84% of the
-/// height (fading over the last 14%), sampled every 3 pt. Lines bulge away
-/// from the bump's centre: y' = y + A ry f(x, y) tanh((y - cy) / (0.25 ry)),
-/// A 0.50 above the centre and 0.32 below, so they arch over the head and
-/// sag under the chin. A 1 pt "never above the line above" clamp is only a
-/// safety net. One colour (the ring colour) at alpha 0.90, no shading.
-/// Lines sweep in top to bottom over 520 ms.
+/// height (fading over the last 14%), sampled every 3 pt. Each line bulges
+/// away from the bump's centre and lifts over the face detail:
+///   y' = max(y + A ry f tanh((y - cy) / (0.25 ry)) - 0.12 ry detail, yAbove + 2.5)
+/// with A 0.50 above the centre and 0.32 below. The detail lift isn't scaled
+/// by the tanh, so the nose, brow and lips show where they are. Packed lines
+/// fade: alpha x (0.25 + 0.75 clamp(gap / spacing)). One colour (the ring
+/// colour) at alpha 0.90. Lines sweep in top to bottom over 520 ms. Runs of
+/// equal alpha are stroked as one path, so joints don't double up.
 struct ContourScanView: View {
     let field: ContourDepthField
     let colors: CaptureColors
@@ -478,11 +480,14 @@ struct ContourScanView: View {
     static let ampUp: CGFloat = 0.50
     static let ampDown: CGFloat = 0.32
     static let tanhOfRy: CGFloat = 0.25
-    static let minGap: CGFloat = 1
+    static let detailLiftOfRy: CGFloat = 0.12
+    static let minGap: CGFloat = 2.5
+    static let packedAlphaFloor = 0.25
     static let alpha = 0.90
     static let sweepMs = 520.0
     static let lineFadeMs = 140.0
-    private static let aBuckets = 12
+    /// Final alpha is quantised to this many steps; one path per step.
+    private static let aBuckets = 40
 
     var body: some View {
         Group {
@@ -497,29 +502,42 @@ struct ContourScanView: View {
         .ignoresSafeArea()
     }
 
-    /// Lines as y values per sample, top to bottom, with the safety clamp
-    /// applied to every line (shown or not).
-    static func layout(_ snap: ContourDepthField.Snapshot, size: CGSize) -> (ys: [[CGFloat]], baseY: [CGFloat]) {
+    /// Lines as y values per sample, top to bottom, with the minimum gap
+    /// applied to every line (shown or not), plus each sample's gap to the
+    /// line above.
+    static func layout(_ snap: ContourDepthField.Snapshot, size: CGSize)
+        -> (ys: [[CGFloat]], gaps: [[CGFloat]], baseY: [CGFloat]) {
         let bottom = size.height * bottomOfH
         let count = max(1, Int((bottom / spacing).rounded(.down)))
         let nS = Int((size.width / sampleStep).rounded(.up)) + 2
         let ry = max(1, snap.bumpRy)
         var prev = [CGFloat](repeating: -1e9, count: nS)
-        var ys: [[CGFloat]] = [], baseY: [CGFloat] = []
-        ys.reserveCapacity(count + 1)
+        var ys: [[CGFloat]] = [], gaps: [[CGFloat]] = [], baseY: [CGFloat] = []
+        ys.reserveCapacity(count + 1); gaps.reserveCapacity(count + 1)
         for k in 0...count {
             let y = CGFloat(k) * spacing
             let t = CGFloat(tanh(Double((y - snap.bumpCy) / (tanhOfRy * ry))))
             let push = (t < 0 ? ampUp : ampDown) * ry * t
+            let lift = detailLiftOfRy * ry
             var cur = [CGFloat](repeating: 0, count: nS)
+            var gap = [CGFloat](repeating: 0, count: nS)
             for j in 0..<nS {
-                let f = CGFloat(snap.sample(CGFloat(j) * sampleStep, y))
-                cur[j] = max(y + push * f, prev[j] + minGap)
+                let x = CGFloat(j) * sampleStep
+                let yb = y + push * CGFloat(snap.sample(x, y)) - lift * CGFloat(snap.sampleDetail(x, y))
+                cur[j] = max(yb, prev[j] + minGap)
+                gap[j] = cur[j] - prev[j]
             }
             prev = cur
-            ys.append(cur); baseY.append(y)
+            ys.append(cur); gaps.append(gap); baseY.append(y)
         }
-        return (ys, baseY)
+        return (ys, gaps, baseY)
+    }
+
+    /// Packed-line alpha factor for segment j (min gap of its two ends),
+    /// quantised to 1/20 as the reference.
+    static func packedFactor(_ gap: [CGFloat], _ j: Int) -> Double {
+        let squeeze = min(1, max(0, Double(min(gap[j - 1], gap[j]) / spacing)))
+        return (20 * (packedAlphaFloor + (1 - packedAlphaFloor) * squeeze)).rounded() / 20
     }
 
     private func frame(at date: Date) -> some View {
@@ -531,27 +549,33 @@ struct ContourScanView: View {
             let lines = Self.layout(snap, size: size)
             let count = lines.ys.count - 1
             let revealMs = fixedDate != nil ? 1e9 : date.timeIntervalSince(startedAt) * 1000
-            var paths = [Path](repeating: Path(), count: Self.aBuckets)
+            var paths = [Path](repeating: Path(), count: Self.aBuckets + 1)
             for k in 0...count {
                 let y = lines.baseY[k]
                 let appearAt = Double(k) / Double(count) * Self.sweepMs
                 let a0 = min(1, max(0, (revealMs - appearAt) / Self.lineFadeMs))
                 guard a0 > 0 else { continue }
                 let edge = y > fadeStart ? Double(1 - (y - fadeStart) / (bottom - fadeStart)) : 1
-                let af = a0 * edge * (dimmed ? 0.55 : 1)
-                guard af > 0.01 else { continue }
-                let ab = min(Self.aBuckets - 1, Int(af * Double(Self.aBuckets)))
-                let cur = lines.ys[k]
-                paths[ab].move(to: CGPoint(x: 0, y: cur[0]))
-                for j in 1..<cur.count {
-                    paths[ab].addLine(to: CGPoint(x: CGFloat(j) * Self.sampleStep, y: cur[j]))
+                let base = a0 * edge * (dimmed ? 0.55 : 1)
+                guard base > 0.01 else { continue }
+                let cur = lines.ys[k], gap = lines.gaps[k]
+                var j = 1
+                while j < cur.count {
+                    let a = Self.packedFactor(gap, j)
+                    var e = j
+                    while e + 1 < cur.count, Self.packedFactor(gap, e + 1) == a { e += 1 }
+                    let bucket = min(Self.aBuckets, Int((base * a * Double(Self.aBuckets)).rounded()))
+                    if bucket > 0 {
+                        paths[bucket].move(to: CGPoint(x: CGFloat(j - 1) * Self.sampleStep, y: cur[j - 1]))
+                        for m in j...e { paths[bucket].addLine(to: CGPoint(x: CGFloat(m) * Self.sampleStep, y: cur[m])) }
+                    }
+                    j = e + 1
                 }
             }
             let style = StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round, lineJoin: .round)
             let c = colors.ring.color
-            for (ab, path) in paths.enumerated() where !path.isEmpty {
-                let af = (Double(ab) + 0.5) / Double(Self.aBuckets)
-                g.stroke(path, with: .color(c.opacity(Self.alpha * af)), style: style)
+            for (bucket, path) in paths.enumerated() where bucket > 0 && !path.isEmpty {
+                g.stroke(path, with: .color(c.opacity(Self.alpha * Double(bucket) / Double(Self.aBuckets))), style: style)
             }
         }
     }
