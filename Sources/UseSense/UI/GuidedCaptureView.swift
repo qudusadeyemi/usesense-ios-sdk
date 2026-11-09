@@ -133,6 +133,7 @@ struct GuidedCaptureView<Camera: View>: View {
 
     @State private var scanStartedAt: Date
     @State private var showHelp = false
+    @State private var cameraBlurred = false
     private let fixedDate: Date?
 
     init(mode: Mode, camera: Camera, viewModel: UseSenseViewModel, onClose: @escaping () -> Void,
@@ -167,6 +168,15 @@ struct GuidedCaptureView<Camera: View>: View {
             let insets = Self.windowInsets
             ZStack(alignment: .topLeading) {
                 camera.frame(width: size.width, height: size.height)
+
+                // Relief v3: 0.8 s into the scan the camera blurs (18 pt) so
+                // the lines carry the shape. Align mode never shows it.
+                if mode == .scan && (cameraBlurred || fixedDate != nil) {
+                    CameraBlurView()
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                        .transition(.opacity)
+                }
 
                 if mode == .scan {
                     CaptureTokens.cam.opacity(CaptureTokens.feedDimDuringScan)
@@ -204,6 +214,12 @@ struct GuidedCaptureView<Camera: View>: View {
             .frame(width: size.width, height: size.height)
             .animation(.easeInOut(duration: 0.3), value: fillLight)
             .animation(.easeInOut(duration: 0.3), value: showShutter)
+            .animation(.easeInOut(duration: 0.3), value: cameraBlurred)
+            .task(id: mode == .scan) {
+                guard mode == .scan else { cameraBlurred = false; return }
+                try? await Task.sleep(nanoseconds: UInt64(CameraBlurView.afterSeconds * 1e9))
+                if !Task.isCancelled, mode == .scan { cameraBlurred = true }
+            }
             .onAppear {
                 viewModel.setViewport(size)
                 if fixedDate == nil { scanStartedAt = Date() }
@@ -389,14 +405,63 @@ struct FillLightVeil: View {
 
 // MARK: - Contour scan
 
-/// Contour lines across the whole screen (SPEC "Contour lines", relief v2;
-/// reference `drawLines`): 7 pt apart, 1 pt, from the top to 84% of the
-/// height (fading over the last 14%), sampled every 3 pt and lifted by the
-/// depth field x 0.28 x face height. Lines are laid out top to bottom and
-/// never come within 3 pt of the line above, so they never cross. Colour and
-/// alpha follow the local depth (#7A96FF @ 0.50 flat to #A878FC @ 0.95 at
-/// 0.8 depth), times a top-lit shade 1 + 0.30 x slope. Lines sweep in top to
-/// bottom over 520 ms. Segments are bucketed into a few paths per frame.
+/// Blurs whatever is behind it (the live camera layer, which SwiftUI's
+/// `.blur` can't reach). A system blur held part way by a paused animator,
+/// so its strength is about 18 pt (RELIEF-v3 "Camera blur"), without the
+/// full material tint. Re-applied when the view returns to a window, since
+/// iOS finishes paused animators on backgrounding.
+struct CameraBlurView: UIViewRepresentable {
+    static let afterSeconds = 0.8
+    static let fraction: CGFloat = 0.42
+
+    final class Host: UIVisualEffectView {
+        private var animator: UIViewPropertyAnimator?
+        private var observer: NSObjectProtocol?
+        override init(effect: UIVisualEffect?) {
+            super.init(effect: effect)
+            isUserInteractionEnabled = false
+            observer = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                                              object: nil, queue: .main) { [weak self] _ in
+                self?.apply()
+            }
+        }
+        required init?(coder: NSCoder) { fatalError() }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            apply()
+        }
+        func apply() {
+            animator?.stopAnimation(true)
+            effect = nil
+            let a = UIViewPropertyAnimator(duration: 1, curve: .linear) { [weak self] in
+                self?.effect = UIBlurEffect(style: .systemUltraThinMaterialDark)
+            }
+            a.pausesOnCompletion = true
+            a.fractionComplete = CameraBlurView.fraction
+            animator = a
+        }
+        deinit {
+            animator?.stopAnimation(true)
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+        }
+    }
+
+    func makeUIView(context: Context) -> Host {
+        Host(effect: nil)
+    }
+
+    func updateUIView(_ uiView: Host, context: Context) {}
+}
+
+/// Contour lines across the whole screen (SPEC "Contour lines", relief v3;
+/// reference `drawLines`): 9 pt apart, 1.3 pt, from the top to 84% of the
+/// height (fading over the last 14%), sampled every 3 pt. Lines bulge away
+/// from the bump's centre: y' = y + A ry f(x, y) tanh((y - cy) / (0.25 ry)),
+/// A 0.50 above the centre and 0.32 below, so they arch over the head and
+/// sag under the chin. A 1 pt "never above the line above" clamp is only a
+/// safety net. One colour (the ring colour) at alpha 0.90, no shading.
+/// Lines sweep in top to bottom over 520 ms.
 struct ContourScanView: View {
     let field: ContourDepthField
     let colors: CaptureColors
@@ -405,23 +470,19 @@ struct ContourScanView: View {
     /// Draw one frame at this time, fully swept in (screenshots).
     var fixedDate: Date? = nil
 
-    static let spacing: CGFloat = 7
-    static let lineWidth: CGFloat = 1
+    static let spacing: CGFloat = 9
+    static let lineWidth: CGFloat = 1.3
     static let sampleStep: CGFloat = 3
     static let bottomOfH: CGFloat = 0.84
     static let fadeOfH: CGFloat = 0.14
-    static let ampOfFaceH: CGFloat = 0.28
-    static let minGap: CGFloat = 3
-    static let light = 0.30
-    static let slopeGain: Float = 12
-    static let peakDepth: Float = 0.8
-    static let flatAlpha = 0.50
-    static let peakAlpha = 0.95
+    static let ampUp: CGFloat = 0.50
+    static let ampDown: CGFloat = 0.32
+    static let tanhOfRy: CGFloat = 0.25
+    static let minGap: CGFloat = 1
+    static let alpha = 0.90
     static let sweepMs = 520.0
     static let lineFadeMs = 140.0
-    private static let tBuckets = 16
-    private static let aBuckets = 10
-    private static let lBuckets = 8
+    private static let aBuckets = 12
 
     var body: some View {
         Group {
@@ -436,36 +497,29 @@ struct ContourScanView: View {
         .ignoresSafeArea()
     }
 
-    /// Lines as y values per sample, top to bottom, with the no-crossing
-    /// rule applied to every line (shown or not). Also returns each sample's
-    /// depth and top-lit slope.
-    static func layout(_ snap: ContourDepthField.Snapshot, size: CGSize)
-        -> (ys: [[CGFloat]], depth: [[Float]], lit: [[Float]], baseY: [CGFloat]) {
-        let amp = ampOfFaceH * snap.faceHeight
+    /// Lines as y values per sample, top to bottom, with the safety clamp
+    /// applied to every line (shown or not).
+    static func layout(_ snap: ContourDepthField.Snapshot, size: CGSize) -> (ys: [[CGFloat]], baseY: [CGFloat]) {
         let bottom = size.height * bottomOfH
         let count = max(1, Int((bottom / spacing).rounded(.down)))
         let nS = Int((size.width / sampleStep).rounded(.up)) + 2
-        let cell = snap.cols > 0 ? snap.viewSize.width / CGFloat(snap.cols) : sampleStep
+        let ry = max(1, snap.bumpRy)
         var prev = [CGFloat](repeating: -1e9, count: nS)
-        var ys: [[CGFloat]] = [], depth: [[Float]] = [], lit: [[Float]] = [], baseY: [CGFloat] = []
+        var ys: [[CGFloat]] = [], baseY: [CGFloat] = []
         ys.reserveCapacity(count + 1)
         for k in 0...count {
             let y = CGFloat(k) * spacing
+            let t = CGFloat(tanh(Double((y - snap.bumpCy) / (tanhOfRy * ry))))
+            let push = (t < 0 ? ampUp : ampDown) * ry * t
             var cur = [CGFloat](repeating: 0, count: nS)
-            var dep = [Float](repeating: 0, count: nS)
-            var l = [Float](repeating: 0, count: nS)
             for j in 0..<nS {
-                let x = CGFloat(j) * sampleStep
-                let d = snap.sample(x, y)
-                cur[j] = max(y - CGFloat(d) * amp, prev[j] + minGap)
-                dep[j] = d
-                let slope = (snap.sample(x, y + cell) - snap.sample(x, y - cell)) / 2
-                l[j] = max(-1, min(1, slope * slopeGain))
+                let f = CGFloat(snap.sample(CGFloat(j) * sampleStep, y))
+                cur[j] = max(y + push * f, prev[j] + minGap)
             }
             prev = cur
-            ys.append(cur); depth.append(dep); lit.append(l); baseY.append(y)
+            ys.append(cur); baseY.append(y)
         }
-        return (ys, depth, lit, baseY)
+        return (ys, baseY)
     }
 
     private func frame(at date: Date) -> some View {
@@ -477,7 +531,7 @@ struct ContourScanView: View {
             let lines = Self.layout(snap, size: size)
             let count = lines.ys.count - 1
             let revealMs = fixedDate != nil ? 1e9 : date.timeIntervalSince(startedAt) * 1000
-            var paths = [Int: Path]()
+            var paths = [Path](repeating: Path(), count: Self.aBuckets)
             for k in 0...count {
                 let y = lines.baseY[k]
                 let appearAt = Double(k) / Double(count) * Self.sweepMs
@@ -487,30 +541,17 @@ struct ContourScanView: View {
                 let af = a0 * edge * (dimmed ? 0.55 : 1)
                 guard af > 0.01 else { continue }
                 let ab = min(Self.aBuckets - 1, Int(af * Double(Self.aBuckets)))
-                let cur = lines.ys[k], dep = lines.depth[k], lit = lines.lit[k]
+                let cur = lines.ys[k]
+                paths[ab].move(to: CGPoint(x: 0, y: cur[0]))
                 for j in 1..<cur.count {
-                    let t = min(1, (dep[j] + dep[j - 1]) / 2 / Self.peakDepth)
-                    let l = (lit[j] + lit[j - 1]) / 2
-                    let tb = min(Self.tBuckets - 1, Int(t * Float(Self.tBuckets)))
-                    let lb = min(Self.lBuckets - 1, max(0, Int((l + 1) / 2 * Float(Self.lBuckets))))
-                    let key = (tb * Self.lBuckets + lb) * Self.aBuckets + ab
-                    paths[key, default: Path()].move(to: CGPoint(x: CGFloat(j - 1) * Self.sampleStep, y: cur[j - 1]))
-                    paths[key, default: Path()].addLine(to: CGPoint(x: CGFloat(j) * Self.sampleStep, y: cur[j]))
+                    paths[ab].addLine(to: CGPoint(x: CGFloat(j) * Self.sampleStep, y: cur[j]))
                 }
             }
             let style = StrokeStyle(lineWidth: Self.lineWidth, lineCap: .round, lineJoin: .round)
-            for (key, path) in paths {
-                let ab = key % Self.aBuckets
-                let lb = (key / Self.aBuckets) % Self.lBuckets
-                let tb = key / Self.aBuckets / Self.lBuckets
-                let t = (Double(tb) + 0.5) / Double(Self.tBuckets)
-                let l = (Double(lb) + 0.5) / Double(Self.lBuckets) * 2 - 1
+            let c = colors.ring.color
+            for (ab, path) in paths.enumerated() where !path.isEmpty {
                 let af = (Double(ab) + 0.5) / Double(Self.aBuckets)
-                let shade = 1 + Self.light * l
-                let m = colors.contourStart.mix(colors.contourEnd, t)
-                let c = Color(red: min(1, m.r * shade), green: min(1, m.g * shade), blue: min(1, m.b * shade))
-                let alpha = min(1, (Self.flatAlpha + (Self.peakAlpha - Self.flatAlpha) * t) * shade) * af
-                g.stroke(path, with: .color(c.opacity(alpha)), style: style)
+                g.stroke(path, with: .color(c.opacity(Self.alpha * af)), style: style)
             }
         }
     }

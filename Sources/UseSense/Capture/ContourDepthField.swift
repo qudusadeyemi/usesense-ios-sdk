@@ -1,40 +1,41 @@
 import Foundation
 import CoreGraphics
 
-/// The contour scan's depth field, relief v2 (capture test kit
-/// RELIEF-v2.md; reference `updateField` in capture-test-kit/reference/index.html).
+/// The contour scan's depth field, relief v3 (capture test kit
+/// RELIEF-v3.md; reference `updateField` in capture-test-kit/reference/index.html).
 ///
-/// A screen-space grid, 130 columns (rows follow the screen aspect):
+/// A screen-space grid, 64 columns (rows follow the screen aspect):
 ///  1. depth per landmark relative to the face outline: 0 on the FACE_OVAL
 ///     ring (mean z), 1 at the nearest point (nose tip);
 ///  2. MediaPipe's 852 tessellation triangles rasterised into the grid with
-///     barycentric depth (larger value wins where they overlap);
-///  3. eye and mouth openings filled by normalised convolution (sigma 3);
-///  4. soft edge: smoothstep(0.15, 0.95, blur(cover, 2));
-///  5. head dome (unit height) so lines also lift over the hair;
-///  6. raw = 0.5 dome + 0.7 mesh, blurred (0.9), EMA 0.30. The last field is
-///     kept while the face is gone for under 300 ms.
+///     barycentric depth (larger value wins where they overlap), then
+///     low-passed: meshLow = blur(mesh, 4);
+///  3. a smooth bump (1 - r^2)^2 in an ellipse (rx 0.58 faceW, ry 0.65 faceH)
+///     centred at the 10/152 midpoint + 0.05 faceH;
+///  4. raw = bump + 0.15 meshLow, blurred (0.9), EMA 0.30. The bump's centre y
+///     and y radius are eased the same way for the line bulge. The last field
+///     is kept while the face is gone for under 300 ms.
+/// Sigmas are in v2's 130-column cells, scaled by cols / 130 (min 0.3).
 ///
-/// Written from the capture queue (off the main thread), read by the contour
-/// view on the main thread, so every access goes through the lock. Display
-/// only: MediaPipe z is a prediction from one image and is not depth evidence.
+/// Built on its own queue (off the camera queue and the main thread), read by
+/// the contour view on the main thread, so every access goes through the
+/// lock. Display only: MediaPipe z is a prediction from one image and is not
+/// depth evidence.
 final class ContourDepthField: @unchecked Sendable {
     enum Spec {
-        static let gridColumns = 130
+        static let gridColumns = 64
         static let emaAlpha: Float = 0.30
-        static let fillSigma: Float = 3.0
-        static let edgeSigma: Float = 2.0
-        static let edgeLo: Float = 0.15
-        static let edgeHi: Float = 0.95
+        static let sigmaScale: Float = Float(gridColumns) / 130
+        static let meshLowSigma: Float = 4.0
         static let blurSigma: Float = 0.9
-        static let domeHeight: Float = 0.50
-        static let meshHeight: Float = 0.70
+        static let meshHint: Float = 0.15
         static let barycentricSlack: Float = -0.02
-        static let domeRxOfFaceW: CGFloat = 0.62
-        static let domeRyOfFaceH: CGFloat = 0.78
-        static let domeCyShiftOfFaceH: CGFloat = -0.12
-        static let domeFeather: Float = 0.18
+        static let bumpRxOfFaceW: CGFloat = 0.58
+        static let bumpRyOfFaceH: CGFloat = 0.65
+        static let bumpCyShiftOfFaceH: CGFloat = 0.05
         static let holdWithoutFace: TimeInterval = 0.3
+
+        static func scaled(_ sigma: Float) -> Float { max(0.3, sigma * sigmaScale) }
     }
 
     /// FACE_OVAL ring (36 landmarks), as the reference.
@@ -44,7 +45,7 @@ final class ContourDepthField: @unchecked Sendable {
 
     /// MediaPipe's tessellation triangles. Set once from the landmarker's
     /// tessellation connections (3 edges per triangle, in order); empty when
-    /// MediaPipe isn't linked, leaving only the dome.
+    /// MediaPipe isn't linked, leaving only the bump.
     private static let trianglesLock = NSLock()
     private static var _triangles: [(Int, Int, Int)] = []
     static var triangles: [(Int, Int, Int)] {
@@ -70,11 +71,15 @@ final class ContourDepthField: @unchecked Sendable {
         var cols: Int
         var rows: Int
         var field: [Float]
-        /// Forehead (10) to chin (152) in screen points: the lift scale.
+        /// Forehead (10) to chin (152) in screen points.
         var faceHeight: CGFloat
+        /// The bump's centre y and y radius in screen points, eased (EMA).
+        var bumpCy: CGFloat
+        var bumpRy: CGFloat
         var hasFace: Bool
 
-        static let empty = Snapshot(viewSize: .zero, cols: 0, rows: 0, field: [], faceHeight: 0, hasFace: false)
+        static let empty = Snapshot(viewSize: .zero, cols: 0, rows: 0, field: [], faceHeight: 0,
+                                    bumpCy: 0, bumpRy: 0, hasFace: false)
 
         /// Bilinear sample at a screen point (reference `sampleField`).
         func sample(_ x: CGFloat, _ y: CGFloat) -> Float {
@@ -202,61 +207,53 @@ final class ContourDepthField: @unchecked Sendable {
             }
         }}}}}
 
-        // 3. Fill the eye and mouth openings; 4. soft edge.
-        // Uncovered cells are 0 already, so mesh * cover == mesh.
-        let mc = mesh
-        let num = Self.gaussBlur(mc, cols: cols, rows: rows, sigma: Spec.fillSigma)
-        let den2 = Self.gaussBlur(cover, cols: cols, rows: rows, sigma: Spec.fillSigma)
-        let soft = Self.gaussBlur(cover, cols: cols, rows: rows, sigma: Spec.edgeSigma)
+        // 3. Low-pass the mesh: only a hint of the nose and brow shows.
+        let meshLow = Self.gaussBlur(mesh, cols: cols, rows: rows, sigma: Spec.scaled(Spec.meshLowSigma))
 
-        // 5. Head dome from forehead (10), chin (152), cheeks (234, 454);
-        // 6. combine.
+        // 4. Bump from forehead (10), chin (152), cheeks (234, 454); combine.
         let top = points[10], chin = points[152]
         let faceH = hypot(chin.x - top.x, chin.y - top.y)
         let faceW = abs(points[454].x - points[234].x)
-        let dcx = Float((top.x + chin.x) / 2)
-        let dcy = Float((top.y + chin.y) / 2 + Spec.domeCyShiftOfFaceH * faceH)
-        let drx = Float(max(1, Spec.domeRxOfFaceW * faceW)), dry = Float(max(1, Spec.domeRyOfFaceH * faceH))
+        let cyT = (top.y + chin.y) / 2 + Spec.bumpCyShiftOfFaceH * faceH
+        let ryT = max(1, Spec.bumpRyOfFaceH * faceH)
+        let bcx = Float((top.x + chin.x) / 2), bcy = Float(cyT)
+        let brx = Float(max(1, Spec.bumpRxOfFaceW * faceW)), bry = Float(ryT)
         let fcell = Float(cell)
         var raw = [Float](repeating: 0, count: n)
         raw.withUnsafeMutableBufferPointer { rb in
-        mesh.withUnsafeBufferPointer { M in
-        cover.withUnsafeBufferPointer { C in
-        num.withUnsafeBufferPointer { NU in
-        den2.withUnsafeBufferPointer { DE in
-        soft.withUnsafeBufferPointer { SO in
+        meshLow.withUnsafeBufferPointer { ML in
             let r = rb.baseAddress!
             for gy in 0..<rows {
-                let uy = ((Float(gy) + 0.5) * fcell - dcy) / dry
+                let uy = ((Float(gy) + 0.5) * fcell - bcy) / bry
                 for gx in 0..<cols {
-                    let i = gy * cols + gx
-                    let filled = C[i] > 0 ? M[i] : (DE[i] > 1e-3 ? NU[i] / DE[i] : 0)
-                    let meshV = filled * Self.smoothstep(Spec.edgeLo, Spec.edgeHi, SO[i])
-                    let ux = ((Float(gx) + 0.5) * fcell - dcx) / drx
+                    let ux = ((Float(gx) + 0.5) * fcell - bcx) / brx
                     let r2 = ux * ux + uy * uy
-                    var dome: Float = 0
-                    if r2 < 1 {
-                        dome = powf(1 - r2, 0.75) * Self.smoothstep(1, 1 - Spec.domeFeather, r2.squareRoot())
-                    }
-                    r[i] = dome * Spec.domeHeight + meshV * Spec.meshHeight
+                    let bump: Float = r2 < 1 ? (1 - r2) * (1 - r2) : 0
+                    let i = gy * cols + gx
+                    r[i] = bump + Spec.meshHint * ML[i]
                 }
             }
-        }}}}}}
-        raw = Self.gaussBlur(raw, cols: cols, rows: rows, sigma: Spec.blurSigma)
+        }}
+        raw = Self.gaussBlur(raw, cols: cols, rows: rows, sigma: Spec.scaled(Spec.blurSigma))
 
-        // Temporal EMA.
+        // Temporal EMA (field, face height, bump centre y and radius).
         lock.lock()
         defer { lock.unlock() }
         if state.field.count != n || !state.hasFace {
             state.field = [Float](repeating: 0, count: n)
             state.faceHeight = faceH
+            state.bumpCy = cyT
+            state.bumpRy = ryT
         }
         raw.withUnsafeBufferPointer { R in
             state.field.withUnsafeMutableBufferPointer { F in
                 for i in 0..<n { F[i] += (R[i] - F[i]) * alpha }
             }
         }
-        state.faceHeight += (faceH - state.faceHeight) * CGFloat(alpha)
+        let a = CGFloat(alpha)
+        state.faceHeight += (faceH - state.faceHeight) * a
+        state.bumpCy += (cyT - state.bumpCy) * a
+        state.bumpRy += (ryT - state.bumpRy) * a
         state.viewSize = viewSize
         state.cols = cols
         state.rows = rows

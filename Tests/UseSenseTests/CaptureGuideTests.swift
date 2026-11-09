@@ -307,40 +307,52 @@ final class CaptureGuideTests: XCTestCase {
         return (points, z, tris)
     }
 
-    func testReliefV2FieldFollowsSpec() {
-        let view = CGSize(width: 393, height: 852)
-        let face = latticeFace()
-        let field = ContourDepthField()
-        for k in 0..<20 {
-            field.update(points: face.points, z: face.z, viewSize: view, time: Double(k) / 30, triangles: face.tris)
-        }
-        let snap = field.snapshot()
-        XCTAssertTrue(snap.hasFace)
-        XCTAssertEqual(snap.cols, 130)
-        XCTAssertEqual(snap.rows, Int((130 * 852 / 393.0).rounded()))
-        // Nose bump well above the face sides: the relief reads, not one hump.
-        let centre = snap.sample(196, 340), side = snap.sample(100, 340)
-        XCTAssertGreaterThan(centre, 0.6)
-        XCTAssertGreaterThan(centre - side, 0.3)
-        // Flat far from the head.
-        XCTAssertEqual(snap.sample(10, 820), 0, accuracy: 1e-4)
-        // Face gone briefly: field kept; gone longer: dropped.
-        field.noFace(at: 19.0 / 30 + 0.2)
-        XCTAssertTrue(field.snapshot().hasFace)
-        field.noFace(at: 19.0 / 30 + 0.5)
-        XCTAssertFalse(field.snapshot().hasFace)
+    /// The lattice with the bump's landmarks placed as on a face: forehead
+    /// (10) at the top, chin (152) at the bottom, cheeks (234, 454) at the
+    /// sides. Face box 220 x 300 at (86, 190).
+    private func reliefFace() -> (points: [CGPoint], z: [Double], tris: [(Int, Int, Int)]) {
+        var face = latticeFace()
+        face.points[10] = CGPoint(x: 196, y: 190)
+        face.points[152] = CGPoint(x: 196, y: 490)
+        face.points[234] = CGPoint(x: 86, y: 340)
+        face.points[454] = CGPoint(x: 306, y: 340)
+        return face
     }
 
-    func testReliefV2FillsOpenings() {
-        // No triangles over the middle (an "open mouth"): filled from around it.
-        let view = CGSize(width: 393, height: 852)
-        let face = latticeFace(skipCentre: true)
+    private func settledField(_ face: (points: [CGPoint], z: [Double], tris: [(Int, Int, Int)]),
+                              view: CGSize) -> ContourDepthField {
         let field = ContourDepthField()
-        for k in 0..<20 {
+        for k in 0..<24 {
             field.update(points: face.points, z: face.z, viewSize: view, time: Double(k) / 30, triangles: face.tris)
         }
-        let hole = field.snapshot().sample(86 + 220 * 10.5 / 21, 190 + 300 * 10.5 / 21)
-        XCTAssertGreaterThan(hole, 0.4, "the opening is filled from around it")
+        return field
+    }
+
+    func testReliefV3FieldFollowsSpec() {
+        let view = CGSize(width: 393, height: 852)
+        let field = settledField(reliefFace(), view: view)
+        let snap = field.snapshot()
+        XCTAssertTrue(snap.hasFace)
+        XCTAssertEqual(snap.cols, 64)
+        XCTAssertEqual(snap.rows, Int((64 * 852 / 393.0).rounded()))
+        // Bump centred 0.05 faceH below the 10/152 midpoint, ry 0.65 faceH.
+        XCTAssertEqual(snap.bumpCy, 340 + 0.05 * 300, accuracy: 0.5)
+        XCTAssertEqual(snap.bumpRy, 0.65 * 300, accuracy: 0.5)
+        // Peak about 1 (bump) plus a little mesh; smooth, falling to 0 at
+        // rx = 0.58 faceW and flat beyond.
+        let centre = snap.sample(196, 355)
+        XCTAssertGreaterThan(centre, 0.9)
+        XCTAssertLessThan(centre, 1.2)
+        let half = snap.sample(196 + 0.29 * 220, 355)
+        XCTAssertGreaterThan(half, 0.4)
+        XCTAssertLessThan(half, centre)
+        XCTAssertEqual(snap.sample(196 + 0.58 * 220 + 20, 355), 0, accuracy: 0.02)
+        XCTAssertEqual(snap.sample(10, 820), 0, accuracy: 1e-4)
+        // Face gone briefly: field kept; gone longer: dropped.
+        field.noFace(at: 23.0 / 30 + 0.2)
+        XCTAssertTrue(field.snapshot().hasFace)
+        field.noFace(at: 23.0 / 30 + 0.5)
+        XCTAssertFalse(field.snapshot().hasFace)
     }
 
     func testTrianglesFromTessellationEdges() {
@@ -351,23 +363,30 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertTrue(tris[1] == (4, 5, 6))
     }
 
-    func testContourLinesNeverCross() {
+    func testContourLinesBulgeAwayFromCentre() {
         let view = CGSize(width: 393, height: 852)
-        let face = latticeFace()
-        let field = ContourDepthField()
-        for k in 0..<20 {
-            field.update(points: face.points, z: face.z, viewSize: view, time: Double(k) / 30, triangles: face.tris)
-        }
-        let lines = ContourScanView.layout(field.snapshot(), size: view)
-        XCTAssertEqual(ContourScanView.ampOfFaceH, 0.28)
-        for k in 1..<lines.ys.count {
-            for j in 0..<lines.ys[k].count {
-                XCTAssertGreaterThanOrEqual(lines.ys[k][j] - lines.ys[k - 1][j], ContourScanView.minGap - 1e-6)
+        let snap = settledField(reliefFace(), view: view).snapshot()
+        let lines = ContourScanView.layout(snap, size: view)
+        XCTAssertEqual(ContourScanView.spacing, 9)
+        let mid = Int((196 / ContourScanView.sampleStep).rounded())
+        let side = lines.ys[0].count - 2   // right edge, beyond the bump
+        var maxUp: CGFloat = 0, maxDown: CGFloat = 0
+        for k in 0..<lines.ys.count {
+            let y = lines.baseY[k], dy = lines.ys[k][mid] - y
+            if y < snap.bumpCy - 20 { XCTAssertLessThanOrEqual(dy, 1e-6, "above the centre lines arch up") }
+            if y > snap.bumpCy + 20 { XCTAssertGreaterThanOrEqual(dy, -1e-6, "below it they sag down") }
+            maxUp = max(maxUp, -dy); maxDown = max(maxDown, dy)
+            XCTAssertEqual(lines.ys[k][side], y, accuracy: 1.5, "flat beside the head")
+            if k > 0 {
+                for j in 0..<lines.ys[k].count {
+                    XCTAssertGreaterThanOrEqual(lines.ys[k][j] - lines.ys[k - 1][j], ContourScanView.minGap - 1e-6)
+                }
             }
         }
-        // The face lifts some line by a good part of the spacing.
-        let maxLift = zip(lines.ys, lines.baseY).map { ys, y in ys.map { y - $0 }.max() ?? 0 }.max() ?? 0
-        XCTAssertGreaterThan(maxLift, 15)
+        // More up than down (A 0.50 vs 0.32), both clearly visible.
+        XCTAssertGreaterThan(maxUp, 30)
+        XCTAssertGreaterThan(maxDown, 15)
+        XCTAssertGreaterThan(maxUp, maxDown)
     }
 
     func testOvalMatchesSpec() {
