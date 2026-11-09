@@ -165,6 +165,10 @@ struct QualityGate: Sendable {
     private(set) var rebaselined = false
     /// Exposure settles for this long after the light changes.
     static let lightSettle: TimeInterval = 0.5
+    /// When the current scan started, and how long until its first steady
+    /// baseline was taken (nil until then).
+    private var scanStartedAt: TimeInterval?
+    private(set) var baselineWait: TimeInterval?
 
     init(thresholds: GateThresholds = GateThresholds()) { self.thresholds = thresholds }
 
@@ -175,6 +179,8 @@ struct QualityGate: Sendable {
         wasScanning = false
         lightChangedAt = nil
         lightChangedMidScan = false
+        scanStartedAt = nil
+        baselineWait = nil
     }
 
     /// The screen fill light changed (on or off) at `time`. During a scan the
@@ -205,7 +211,11 @@ struct QualityGate: Sendable {
         var e = Evaluation()
         let t = thresholds
         // A new scan takes a new baseline for the change watch.
-        if scanning && !wasScanning { coverWatch.reset() }
+        if scanning && !wasScanning {
+            coverWatch.reset()
+            scanStartedAt = o.time
+            baselineWait = nil
+        }
         wasScanning = scanning
 
         // 1. Face found: 1 face for 3 frames in a row.
@@ -221,34 +231,8 @@ struct QualityGate: Sendable {
         if o.faceCount > 1 { e.failing[.onePerson] = .onePerson }
 
         // 2b. Covered (COVER-v1): the segmenter sees a hand or an object over
-        // the face, or (scan only) a face region changed since the scan began.
-        watchRan = false
-        rebaselined = false
-        var changed = false
-        if scanning {
-            if let since = lightChangedAt {
-                // Light changed: ignore the watch while exposure settles, then
-                // take a new baseline, but only on a face the segmenter says
-                // is clear (or with no segmenter at all). Covered or no
-                // result yet: wait, with the scan held.
-                let segmenterClear = o.cover.map { !$0.covered } ?? !o.coverPending
-                if o.time - since >= Self.lightSettle && segmenterClear {
-                    coverWatch.reset()
-                    rebaselined = lightChangedMidScan
-                    lightChangedAt = nil
-                    lightChangedMidScan = false
-                } else if o.time - since >= Self.lightSettle {
-                    e.failing[.stillness] = .holdStill
-                }
-            }
-            if lightChangedAt == nil {
-                changed = coverWatch.covered(o.regions)
-                watchRan = o.regions != nil
-            }
-        } else if let since = lightChangedAt, o.time - since >= Self.lightSettle, !lightChangedMidScan {
-            lightChangedAt = nil   // settled before any scan started
-        }
-        if o.cover?.covered == true || changed { e.failing[.covered] = .uncovered }
+        // the face. The scan's change watch runs after stillness, below.
+        if o.cover?.covered == true { e.failing[.covered] = .uncovered }
 
         // 3. Distance (spec v1.2: before in-frame).
         if let d = o.eyeDistance {
@@ -320,6 +304,45 @@ struct QualityGate: Sendable {
         } else {
             e.failing[.stillness] = .holdStill
         }
+
+        // 2b (scan only). Change watch: a face region changed since a steady
+        // baseline. Its baseline takes 3 consecutive frames where stillness
+        // and in-frame pass; motion wins over it (a moving frame doesn't
+        // count and resets its 2-frame count, and the copy is "Hold still").
+        let still = e.failing[.stillness] == nil
+        let inFrame = e.failing[.inFrame] == nil
+        watchRan = false
+        rebaselined = false
+        if scanning {
+            if let since = lightChangedAt {
+                // Light changed: ignore the watch while exposure settles, then
+                // take a new baseline, but only on a face the segmenter says
+                // is clear (or with no segmenter at all). Covered or no
+                // result yet: wait, with the scan held.
+                let segmenterClear = o.cover.map { !$0.covered } ?? !o.coverPending
+                if o.time - since >= Self.lightSettle && segmenterClear {
+                    coverWatch.reset()
+                    rebaselined = lightChangedMidScan
+                    lightChangedAt = nil
+                    lightChangedMidScan = false
+                } else if o.time - since >= Self.lightSettle {
+                    e.failing[.stillness] = .holdStill
+                }
+            }
+            if lightChangedAt == nil {
+                let wasReady = coverWatch.baselineReady
+                if coverWatch.covered(o.regions, still: still, inFrame: inFrame) {
+                    e.failing[.covered] = .uncovered
+                }
+                watchRan = o.regions != nil
+                if !wasReady, coverWatch.baselineReady, baselineWait == nil, let start = scanStartedAt {
+                    baselineWait = o.time - start
+                }
+            }
+        } else if let since = lightChangedAt, o.time - since >= Self.lightSettle, !lightChangedMidScan {
+            lightChangedAt = nil   // settled before any scan started
+        }
+
         // No covered-face result for this face yet: hold ("Hold still").
         if o.coverPending { e.failing[.stillness] = .holdStill }
         return e

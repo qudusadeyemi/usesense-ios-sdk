@@ -331,8 +331,9 @@ final class FaceCoverTests: XCTestCase {
 
     func testBrightnessJumpWithoutLightChangeDoesNotRebaseline() {
         var gate = QualityGate()
-        _ = feed(&gate, from: 0, count: 6, regions: frameWith(failing: nil))
-        let after = feed(&gate, from: 0.3, count: 4, regions: frameWith(failing: 3))
+        _ = feed(&gate, from: 0, count: 14, regions: frameWith(failing: nil))
+        XCTAssertTrue(gate.coverWatch.baselineReady)
+        let after = feed(&gate, from: 0.5, count: 4, regions: frameWith(failing: 3))
         XCTAssertNotNil(after.last?.failing[.covered], "a lasting change still trips the watch")
         XCTAssertFalse(gate.rebaselined)
     }
@@ -345,6 +346,89 @@ final class FaceCoverTests: XCTestCase {
         _ = gate.evaluate(good(at: 0.6) { $0.regions = frameWith(failing: nil); $0.cover = FaceCover(bodySkin: 0, other: 0) }, scanning: true)
         XCTAssertTrue(gate.watchRan)
         XCTAssertFalse(gate.rebaselined, "the scan's first baseline is not a re-baseline")
+    }
+
+    // MARK: Steady baseline and motion (COVER-v1 s2)
+
+    /// Anchors that jump between frames (jitter / eye distance well over 0.04).
+    private func moving(_ i: Int) -> [CGPoint] {
+        anchors.map { CGPoint(x: $0.x + (i % 2 == 0 ? 0 : 0.05), y: $0.y) }
+    }
+
+    func testMovingFramesAreSkippedForTheBaseline() {
+        var w = CoverWatch()
+        let even = frameWith(failing: nil)
+        for _ in 0..<5 { _ = w.covered(even, still: false) }
+        XCTAssertFalse(w.baselineReady, "moving frames never make a baseline")
+        _ = w.covered(even); _ = w.covered(even)
+        _ = w.covered(even, still: false)
+        XCTAssertFalse(w.baselineReady, "the 3 baseline frames must be consecutive")
+        _ = w.covered(even, inFrame: false)
+        XCTAssertFalse(w.baselineReady, "out-of-frame frames don't count either")
+        _ = w.covered(even); _ = w.covered(even); _ = w.covered(even)
+        XCTAssertTrue(w.baselineReady)
+    }
+
+    func testWatchOffUntilASteadyBaselineExists() {
+        var gate = QualityGate()
+        for i in 0..<45 {   // 1.5 s of motion, regions changing as the face moves in
+            let e = gate.evaluate(good(at: Double(i) / 30) {
+                $0.anchors = moving(i); $0.regions = frameWith(failing: i % 3 == 0 ? nil : 3)
+            }, scanning: true)
+            XCTAssertNil(e.failing[.covered], "frame \(i)")
+        }
+        XCTAssertFalse(gate.coverWatch.baselineReady)
+        XCTAssertNil(gate.baselineWait)
+    }
+
+    func testShutterStartWaitsForASteadyBaseline() {
+        // A scan that starts on the first face frame (as the shutter can) while
+        // the user is still moving in: the baseline comes from the steady
+        // frames after, so the settled face doesn't trip the watch.
+        var gate = QualityGate()
+        for i in 0..<15 {
+            _ = gate.evaluate(good(at: Double(i) / 30) { $0.anchors = moving(i); $0.regions = frameWith(failing: 2) },
+                              scanning: true)
+        }
+        var trips = 0
+        for i in 15..<75 {
+            let e = gate.evaluate(good(at: Double(i) / 30) { $0.regions = frameWith(failing: nil) }, scanning: true)
+            if e.failing[.covered] != nil { trips += 1 }
+        }
+        XCTAssertEqual(trips, 0)
+        XCTAssertTrue(gate.coverWatch.baselineReady)
+        XCTAssertGreaterThan(gate.baselineWait ?? 0, 0.5, "taken only once steady")
+    }
+
+    func testStillnessFailingShowsHoldStillAndResetsTheCount() {
+        var w = baselined()
+        XCTAssertFalse(w.covered(frameWith(failing: 3)))
+        XCTAssertFalse(w.covered(frameWith(failing: 3), still: false), "motion wins over covered")
+        XCTAssertFalse(w.covered(frameWith(failing: 3)), "the count started over")
+        XCTAssertTrue(w.covered(frameWith(failing: 3)))
+        // In the guide: a moving face whose regions look changed says "Hold still".
+        var guide = CaptureGuide()
+        _ = run(&guide, seconds: 0.6, scanning: true) { $0.regions = frameWith(failing: nil) }
+        var s = GuideSnapshot.initial
+        for i in 0..<45 {
+            s = guide.update(good(at: 0.7 + Double(i) / 30) { $0.anchors = moving(i); $0.regions = frameWith(failing: 4) },
+                             scanning: true)
+            XCTAssertFalse(s.failing.contains(.covered), "frame \(i)")
+        }
+        XCTAssertEqual(s.hint, .holdStill)
+    }
+
+    func testHandOnAStillHeadIsStillCaught() {
+        var gate = QualityGate()
+        _ = feed(&gate, from: 0, count: 14, regions: regions(image())!)
+        XCTAssertTrue(gate.coverWatch.baselineReady)
+        let hand = regions(image(hand: true))!
+        let first = gate.evaluate(good(at: 0.5) { $0.regions = hand; $0.cover = FaceCover(bodySkin: 0, other: 0) },
+                                  scanning: true)
+        XCTAssertNil(first.failing[.covered])
+        let second = gate.evaluate(good(at: 0.533) { $0.regions = hand; $0.cover = FaceCover(bodySkin: 0, other: 0) },
+                                   scanning: true)
+        XCTAssertEqual(second.failing[.covered], .uncovered, "caught even with the segmenter still saying clear")
     }
 
     func testChangeWatchPausesTheScan() {

@@ -220,9 +220,31 @@ struct CoverWatch: Sendable {
 
     mutating func reset() { self = CoverWatch() }
 
-    /// True when the face looks covered compared with the start of the scan.
-    mutating func covered(_ regions: FaceRegions?) -> Bool {
+    /// The baseline is complete (3 consecutive steady frames).
+    var baselineReady: Bool { baseline != nil && frames >= Self.baselineFrames }
+
+    /// True when the face looks covered compared with a steady baseline.
+    /// - Parameters:
+    ///   - still: stillness passes on this frame. The baseline needs it, and
+    ///     after the baseline a moving frame doesn't count: motion wins over
+    ///     covered and every region's 2-frame count resets.
+    ///   - inFrame: in-frame passes; the baseline needs it too.
+    mutating func covered(_ regions: FaceRegions?, still: Bool = true, inFrame: Bool = true) -> Bool {
         guard let v = regions?.regions else { return false }
+        if !baselineReady && !(still && inFrame) {
+            // Baseline frames must be consecutive steady frames: start over.
+            baseline = nil
+            frames = 0
+            lastScore = 0; lastRegion = nil; compared = false
+            lastCovered = false; lastCoveredRegion = nil; lastSingleFrameFlags = 0
+            return false
+        }
+        if baselineReady && !still {
+            streaks = streaks.map { _ in 0 }
+            lastScore = 0; lastRegion = nil; compared = false
+            lastCovered = false; lastCoveredRegion = nil; lastSingleFrameFlags = 0
+            return false
+        }
         if frames < Self.baselineFrames || baseline == nil {
             var b = baseline ?? v.map { _ in FaceRegions.Region(luma: 0, red: 0, blue: 0, edge: 0) }
             let k = Float(frames + 1)

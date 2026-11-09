@@ -19,6 +19,7 @@ struct CoverCheckReport: Sendable {
     private(set) var watchMaxLuma: Float = 0
     private(set) var watchMaxChroma: Float = 0
     private(set) var watchMaxEdge: Float = 1
+    private(set) var baselineWaitMs: Int?
 
     // Whole capture.
     private(set) var alignCoveredMs: Double = 0
@@ -41,18 +42,22 @@ struct CoverCheckReport: Sendable {
         watchMaxLuma = 0
         watchMaxChroma = 0
         watchMaxEdge = 1
+        baselineWaitMs = nil
         watchTripping = false
     }
 
     /// One scan frame: the segmenter result in force and the change watch.
     /// `watchRan` is false while the watch waits out a fill-light change;
     /// `rebaselined` marks the frame that took a new baseline after one.
-    mutating func scanFrame(cover: FaceCover?, watch: CoverWatch, watchRan: Bool = true, rebaselined: Bool = false) {
+    mutating func scanFrame(cover: FaceCover?, watch: CoverWatch, watchRan: Bool = true, rebaselined: Bool = false,
+                            baselineWait: TimeInterval? = nil) {
+        if baselineWaitMs == nil, let w = baselineWait { baselineWaitMs = Int((w * 1000).rounded()) }
         if let cover {
             scanMaxBodySkin = max(scanMaxBodySkin, cover.bodySkin)
             scanMaxOther = max(scanMaxOther, cover.other)
         }
         if rebaselined { rebaselines += 1 }
+        if watchRan && !watch.compared { watchTripping = false }   // moving or baselining: a later trip is a new pause
         guard watchRan, watch.compared else { return }
         watchMaxLuma = max(watchMaxLuma, watch.lastLumaDelta)
         watchMaxChroma = max(watchMaxChroma, watch.lastChromaDelta)
@@ -76,6 +81,12 @@ struct CoverCheckReport: Sendable {
 
     /// A scan went back to align because of cover (segmenter or final check).
     mutating func scanDroppedForCover() { scanDrops += 1 }
+
+    /// A paused scan dropped with these checks failing counts as a cover drop
+    /// only when covered was the reason, not when stillness failed too.
+    static func isCoverDrop(failing: Set<GateCheck>) -> Bool {
+        failing.contains(.covered) && !failing.contains(.stillness)
+    }
 
     mutating func finalCheck(cover: FaceCover?, waitedMs: Int, outcome: FinalOutcome) {
         final = cover
@@ -139,6 +150,7 @@ struct CoverCheckReport: Sendable {
                 "trips": watchTrips,
                 "single_frame_flags": singleFrameFlags,
                 "rebaselines": rebaselines,
+                "baseline_wait_ms": baselineWaitMs.map { $0 as Any } ?? null,
                 "max": [
                     "luma_ratio_delta": r3(watchMaxLuma),
                     "chroma_delta": r3(watchMaxChroma),

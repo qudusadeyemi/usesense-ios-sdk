@@ -56,7 +56,8 @@ final class CoverCheckReportTests: XCTestCase {
         XCTAssertEqual(Set((j["scan_max"] as? [String: Any])?.keys ?? [:].keys), ["body_skin", "other"])
         XCTAssertEqual(Set((j["final"] as? [String: Any])?.keys ?? [:].keys), six.union(["waited_ms", "outcome"]))
         let watch = try XCTUnwrap(j["change_watch"] as? [String: Any])
-        XCTAssertEqual(Set(watch.keys), ["trips", "single_frame_flags", "rebaselines", "max", "trip_regions"])
+        XCTAssertEqual(Set(watch.keys), ["trips", "single_frame_flags", "rebaselines", "baseline_wait_ms",
+                                         "max", "trip_regions"])
         XCTAssertEqual(Set((watch["max"] as? [String: Any])?.keys ?? [:].keys),
                        ["luma_ratio_delta", "chroma_delta", "edge_factor"])
     }
@@ -138,6 +139,23 @@ final class CoverCheckReportTests: XCTestCase {
         XCTAssertGreaterThan(classes[Int(FaceCover.faceSkin)], 0.3)
         XCTAssertEqual(c?.bodySkin, 0)
         XCTAssertEqual(c?.other, 0)
+    }
+
+    func testDropCountsForCoverOnlyWhenCoverWasTheReason() {
+        XCTAssertTrue(CoverCheckReport.isCoverDrop(failing: [.covered]))
+        XCTAssertTrue(CoverCheckReport.isCoverDrop(failing: [.covered, .pose]))
+        XCTAssertFalse(CoverCheckReport.isCoverDrop(failing: [.covered, .stillness]), "moving: not a cover drop")
+        XCTAssertFalse(CoverCheckReport.isCoverDrop(failing: [.stillness]))
+    }
+
+    func testBaselineWaitIsReported() throws {
+        var r = CoverCheckReport()
+        r.scanStarted(cover: nil, ageMs: nil)
+        r.scanFrame(cover: nil, watch: CoverWatch(), baselineWait: nil)
+        XCTAssertTrue((try roundTrip(r, loaded)["change_watch"] as? [String: Any])?["baseline_wait_ms"] is NSNull)
+        r.scanFrame(cover: nil, watch: CoverWatch(), baselineWait: 0.734)
+        r.scanFrame(cover: nil, watch: CoverWatch(), baselineWait: 0.734)
+        XCTAssertEqual((try roundTrip(r, loaded)["change_watch"] as? [String: Any])?["baseline_wait_ms"] as? Int, 734)
     }
 
     func testMetadataCarriesCoveredCheck() throws {

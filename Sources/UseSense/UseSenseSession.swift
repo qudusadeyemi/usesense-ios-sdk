@@ -741,7 +741,8 @@ public final class UseSenseSession: @unchecked Sendable {
     /// A paused scan was dropped: count it when cover was what held it.
     private func recordScanDrop() {
         guideLock.lock(); defer { guideLock.unlock() }
-        if latestGuide.failing.contains(.covered) { coverReport.scanDroppedForCover() }
+        // Covered was the reason only when stillness wasn't failing too.
+        if CoverCheckReport.isCoverDrop(failing: latestGuide.failing) { coverReport.scanDroppedForCover() }
     }
 
     /// The `covered_check` metadata object (guided capture only).
@@ -1829,7 +1830,8 @@ extension UseSenseSession {
         }
         if isScanning {
             coverReport.scanFrame(cover: observation.cover, watch: guide.gate.coverWatch,
-                                  watchRan: guide.gate.watchRan, rebaselined: guide.gate.rebaselined)
+                                  watchRan: guide.gate.watchRan, rebaselined: guide.gate.rebaselined,
+                                  baselineWait: guide.gate.baselineWait)
         }
         if case .faceGuide = state, snapshot.hint == .uncovered { coverReport.alignCovered(seconds: dt) }
         coverReportScanning = isScanning
