@@ -255,6 +255,10 @@ public final class UseSenseSession: @unchecked Sendable {
             ])
         }
 
+        // A retry starting is the upload still trying: it pushes back the
+        // stall window too, so every retry gets its full idle window.
+        self.apiClient.onUploadAttempt = { [weak self] _ in self?.watchdog?.kick() }
+
         watchdog = SessionWatchdog(onTimeout: { [weak self] phase in
             self?.handleWatchdogTimeout(phase)
         })
