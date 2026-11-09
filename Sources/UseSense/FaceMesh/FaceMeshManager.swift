@@ -106,6 +106,12 @@ final class FaceMeshManager: @unchecked Sendable {
                 // 2 so a second person in view can be detected and block the
                 // capture gate; the subject is always the largest face.
                 options.numFaces = 2
+                // COVER-v1: presence/tracking stay at 0.5. 0.85 didn't drop a
+                // half-covered face and caused duplicate faces (Android A03);
+                // covered faces are caught by the covered-face check.
+                options.minFaceDetectionConfidence = 0.5
+                options.minFacePresenceConfidence = 0.5
+                options.minTrackingConfidence = 0.5
                 options.outputFacialTransformationMatrixes = true
                 // Eye-open gate (eyeBlinkLeft/Right). The blendshape head is a
                 // small MLP on the landmarks: cheap next to the mesh itself.
@@ -246,7 +252,14 @@ final class FaceMeshManager: @unchecked Sendable {
             let landmarks = result.faceLandmarks[subject].map { lm in
                 (x: Double(lm.x), y: Double(lm.y), z: Double(lm.z))
             }
-            var gate = FaceGateSignals(faceCount: faces.count, matrixPose: nil, eyeBlinkLeft: nil, eyeBlinkRight: nil)
+            // A second face overlapping the subject (IoU >= 0.3) is the same
+            // face found twice (tracking + re-detection), not another person.
+            let boxes = result.faceLandmarks.map(Self.box)
+            let others = result.faceLandmarks.indices.filter {
+                $0 != subject && result.faceLandmarks[$0].count >= 468
+                    && FaceBoxes.iou(boxes[$0], boxes[subject]) < FaceBoxes.sameFaceIoU
+            }
+            var gate = FaceGateSignals(faceCount: 1 + others.count, matrixPose: nil, eyeBlinkLeft: nil, eyeBlinkRight: nil)
             if subject < result.facialTransformationMatrixes.count {
                 let m = result.facialTransformationMatrixes[subject]
                 if m.rows >= 3, m.columns >= 3 {
@@ -273,6 +286,15 @@ final class FaceMeshManager: @unchecked Sendable {
     }
 
     #if canImport(MediaPipeTasksVision)
+    private static func box(_ face: [NormalizedLandmark]) -> CGRect {
+        var minX: Float = 1, maxX: Float = 0, minY: Float = 1, maxY: Float = 0
+        for lm in face {
+            minX = min(minX, lm.x); maxX = max(maxX, lm.x)
+            minY = min(minY, lm.y); maxY = max(maxY, lm.y)
+        }
+        return CGRect(x: CGFloat(minX), y: CGFloat(minY), width: CGFloat(max(0, maxX - minX)), height: CGFloat(max(0, maxY - minY)))
+    }
+
     private static func area(_ face: [NormalizedLandmark]) -> Float {
         var minX: Float = 1, maxX: Float = 0, minY: Float = 1, maxY: Float = 0
         for lm in face {

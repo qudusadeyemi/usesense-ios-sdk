@@ -14,7 +14,8 @@ import CoreGraphics
 /// The gate's checks, in priority order (lowest raw value = highest priority).
 enum GateCheck: Int, CaseIterable, Comparable, Sendable {
     // Spec v1.2: distance runs before in-frame, so size problems get size guidance.
-    case faceFound, onePerson, distance, inFrame, pose, light, sharpness, eyesOpen, stillness
+    // COVER-v1: covered runs right after one person.
+    case faceFound, onePerson, covered, distance, inFrame, pose, light, sharpness, eyesOpen, stillness
 
     static func < (lhs: GateCheck, rhs: GateCheck) -> Bool { lhs.rawValue < rhs.rawValue }
 
@@ -23,6 +24,7 @@ enum GateCheck: Int, CaseIterable, Comparable, Sendable {
         switch self {
         case .faceFound: return "face"
         case .onePerson: return "one"
+        case .covered: return "cover"
         case .inFrame: return "centre"
         case .distance: return "distance"
         case .pose: return "pose"
@@ -37,7 +39,7 @@ enum GateCheck: Int, CaseIterable, Comparable, Sendable {
 /// One user-facing hint. Copy is the capture test kit SPEC v1.1 "Guidance
 /// copy", shared with Android and web: keep it exact.
 struct GateHint: Equatable, Sendable {
-    enum Icon: String, Sendable { case face, people, centre, closer, back, pose, light, steady, eyes, still }
+    enum Icon: String, Sendable { case face, people, covered, centre, closer, back, pose, light, steady, eyes, still }
 
     let check: GateCheck
     let title: String
@@ -46,6 +48,8 @@ struct GateHint: Equatable, Sendable {
 
     static let showFace = GateHint(check: .faceFound, title: "Show your face in the oval", subtitle: nil, icon: .face)
     static let onePerson = GateHint(check: .onePerson, title: "Only you in the picture", subtitle: nil, icon: .people)
+    /// COVER-v1: a hand or an object over the face.
+    static let uncovered = GateHint(check: .covered, title: "Keep your face uncovered", subtitle: nil, icon: .covered)
     static let centre = GateHint(check: .inFrame, title: "Move your face to the centre", subtitle: nil, icon: .centre)
     static let moveCloser = GateHint(check: .distance, title: "Move a little closer", subtitle: nil, icon: .closer)
     static let moveBack = GateHint(check: .distance, title: "Move back a little", subtitle: nil, icon: .back)
@@ -113,6 +117,13 @@ struct GateObservation: Sendable {
     var eyeBlinkRight: Double?
     /// Stillness anchors, normalised buffer coordinates.
     var anchors: [CGPoint]
+    /// COVER-v1: the latest segmentation result for this face (at most 3 s old).
+    var cover: FaceCover? = nil
+    /// The segmenter is on but this face has no result yet: hold, so a scan
+    /// can't start unchecked.
+    var coverPending = false
+    /// Six face regions for the change watch (scan only).
+    var regions: FaceRegions? = nil
 
     static func noFace(at time: TimeInterval) -> GateObservation {
         GateObservation(time: time, faceCount: 0, anchors: [])
@@ -140,12 +151,16 @@ struct QualityGate: Sendable {
     var thresholds = GateThresholds()
     private var faceStreak = 0
     private var history: [(time: TimeInterval, anchors: [CGPoint], eyeDistance: Double)] = []
+    private(set) var coverWatch = CoverWatch()
+    private var wasScanning = false
 
     init(thresholds: GateThresholds = GateThresholds()) { self.thresholds = thresholds }
 
     mutating func reset() {
         faceStreak = 0
         history.removeAll()
+        coverWatch.reset()
+        wasScanning = false
     }
 
     /// Light failure direction for this frame, if any.
@@ -166,6 +181,9 @@ struct QualityGate: Sendable {
     mutating func evaluate(_ o: GateObservation, scanning: Bool = false) -> Evaluation {
         var e = Evaluation()
         let t = thresholds
+        // A new scan takes a new baseline for the change watch.
+        if scanning && !wasScanning { coverWatch.reset() }
+        wasScanning = scanning
 
         // 1. Face found: 1 face for 3 frames in a row.
         faceStreak = o.faceCount > 0 ? faceStreak + 1 : 0
@@ -178,6 +196,11 @@ struct QualityGate: Sendable {
 
         // 2. One person.
         if o.faceCount > 1 { e.failing[.onePerson] = .onePerson }
+
+        // 2b. Covered (COVER-v1): the segmenter sees a hand or an object over
+        // the face, or (scan only) a face region changed since the scan began.
+        let changed = scanning && coverWatch.covered(o.regions)
+        if o.cover?.covered == true || changed { e.failing[.covered] = .uncovered }
 
         // 3. Distance (spec v1.2: before in-frame).
         if let d = o.eyeDistance {
@@ -249,6 +272,8 @@ struct QualityGate: Sendable {
         } else {
             e.failing[.stillness] = .holdStill
         }
+        // No covered-face result for this face yet: hold ("Hold still").
+        if o.coverPending { e.failing[.stillness] = .holdStill }
         return e
     }
 

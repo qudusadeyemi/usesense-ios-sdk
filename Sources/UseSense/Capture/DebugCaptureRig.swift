@@ -43,6 +43,7 @@ enum DebugCaptureRig {
         case "blur": return .holdSteady
         case "eyes": return .eyesOpen
         case "one": return .onePerson
+        case "covered": return .uncovered
         case "face": return .showFace
         default: return nil
         }

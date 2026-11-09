@@ -1,0 +1,259 @@
+import XCTest
+import CoreGraphics
+@testable import UseSenseSDK
+
+/// Covered-face check (capture test kit COVER-v1.md). Every fixture here is
+/// synthetic: a drawn face area and a drawn "hand", no real faces.
+final class FaceCoverTests: XCTestCase {
+
+    // MARK: Synthetic face (720 x 1280 frame, image pixels)
+
+    private let frame = CGSize(width: 720, height: 1280)
+    private let centre = CGPoint(x: 360, y: 560)
+    private let rx: CGFloat = 150, ry: CGFloat = 200
+
+    /// 478 landmarks: the FACE_OVAL ring on an ellipse, the six watch anchors
+    /// where a face has them, everything else at the centre.
+    private func face() -> [CGPoint] {
+        var p = [CGPoint](repeating: centre, count: 478)
+        let ring = ContourDepthField.faceOvalRing
+        for (i, k) in ring.enumerated() {
+            let a = -Double.pi / 2 + 2 * Double.pi * Double(i) / Double(ring.count)
+            p[k] = CGPoint(x: centre.x + rx * CGFloat(cos(a)), y: centre.y + ry * CGFloat(sin(a)))
+        }
+        p[234] = CGPoint(x: centre.x - rx, y: centre.y)
+        p[454] = CGPoint(x: centre.x + rx, y: centre.y)
+        p[151] = CGPoint(x: 360, y: 430)   // forehead
+        p[50] = CGPoint(x: 290, y: 580)    // cheek
+        p[280] = CGPoint(x: 430, y: 580)   // cheek
+        p[5] = CGPoint(x: 360, y: 570)     // nose
+        p[13] = CGPoint(x: 360, y: 660)    // mouth
+        p[199] = CGPoint(x: 360, y: 715)   // chin
+        return p
+    }
+
+    // MARK: Segmentation measure
+
+    /// A 256 x 256 category mask: face skin everywhere, `paint` overrides.
+    private func mask(_ paint: (CGPoint) -> UInt8?) -> [UInt8] {
+        var m = [UInt8](repeating: FaceCover.faceSkin, count: 256 * 256)
+        for my in 0..<256 {
+            for mx in 0..<256 {
+                let p = CGPoint(x: (CGFloat(mx) + 0.5) * frame.width / 256, y: (CGFloat(my) + 0.5) * frame.height / 256)
+                if let c = paint(p) { m[my * 256 + mx] = c }
+            }
+        }
+        return m
+    }
+
+    private func measure(_ m: [UInt8]) -> FaceCover? {
+        FaceCover.measure(mask: { m[$0] }, mw: 256, mh: 256, imageSize: frame, points: face())
+    }
+
+    func testClearFaceReadsClear() {
+        let c = measure(mask { _ in nil })
+        XCTAssertEqual(c?.bodySkin, 0)
+        XCTAssertEqual(c?.other, 0)
+        XCTAssertEqual(c?.covered, false)
+    }
+
+    func testHandOverMouthAndChinIsCovered() {
+        // Body skin over the lower third of the face.
+        let c = measure(mask { $0.y > self.centre.y + 0.33 * self.ry ? FaceCover.bodySkinClass : nil })
+        XCTAssertNotNil(c)
+        XCTAssertGreaterThanOrEqual(c!.bodySkin, FaceCover.bodySkinMax)
+        XCTAssertTrue(c!.covered)
+    }
+
+    func testObjectOverHalfTheFaceIsCovered() {
+        // A phone / paper reads as "others" over the left half.
+        let c = measure(mask { $0.x < self.centre.x ? FaceCover.others : nil })
+        XCTAssertGreaterThanOrEqual(c!.other, FaceCover.otherMax)
+        XCTAssertTrue(c!.covered)
+    }
+
+    func testHairAndEdgesDontCount() {
+        // Hair over the forehead is fine; background just outside the
+        // silhouette is excluded by the 85% shrink.
+        let c = measure(mask { p in
+            let nx = (p.x - self.centre.x) / self.rx, ny = (p.y - self.centre.y) / self.ry
+            if nx * nx + ny * ny > 0.9 * 0.9 { return FaceCover.background }
+            return p.y < self.centre.y - 0.5 * self.ry ? FaceCover.hair : nil
+        })
+        XCTAssertEqual(c!.other, 0, accuracy: 0.01)
+        XCTAssertEqual(c!.bodySkin, 0)
+        XCTAssertFalse(c!.covered)
+    }
+
+    func testCoverThresholds() {
+        XCTAssertFalse(FaceCover(bodySkin: 0.11, other: 0.24).covered)
+        XCTAssertTrue(FaceCover(bodySkin: 0.12, other: 0).covered)
+        XCTAssertTrue(FaceCover(bodySkin: 0, other: 0.25).covered)
+    }
+
+    func testMeasureNeedsAFullMesh() {
+        XCTAssertNil(FaceCover.measure(mask: { _ in 0 }, mw: 256, mh: 256, imageSize: frame, points: []))
+    }
+
+    // MARK: Change watch on a synthetic frame
+
+    /// A BGRA frame: flat skin tone, optionally scaled (exposure) and with a
+    /// drawn hand over the mouth and chin (lighter, with dark finger gaps).
+    private func image(gain: Double = 1, hand: Bool = false) -> [UInt8] {
+        let w = Int(frame.width), h = Int(frame.height)
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        for y in 0..<h {
+            for x in 0..<w {
+                var r = 190.0, g = 140.0, b = 115.0
+                if hand, y >= 630, y <= 760, x >= 250, x <= 470 {
+                    let gapBetweenFingers = (x - 250) % 28 < 4
+                    (r, g, b) = gapBetweenFingers ? (90, 60, 50) : (235, 195, 175)
+                }
+                let i = (y * w + x) * 4
+                px[i] = UInt8(min(255, b * gain))
+                px[i + 1] = UInt8(min(255, g * gain))
+                px[i + 2] = UInt8(min(255, r * gain))
+                px[i + 3] = 255
+            }
+        }
+        return px
+    }
+
+    private func regions(_ px: [UInt8]) -> FaceRegions? {
+        px.withUnsafeBufferPointer {
+            FaceRegions.measure(bgra: $0.baseAddress!, width: Int(frame.width), height: Int(frame.height),
+                                bytesPerRow: Int(frame.width) * 4, points: face())
+        }
+    }
+
+    func testRegionsMeasureSixPatches() {
+        let r = regions(image())
+        XCTAssertEqual(r?.regions.count, 6)
+        for region in r!.regions {
+            XCTAssertEqual(region.luma, 1, accuracy: 1e-4, "luma is relative to the face mean")
+            XCTAssertEqual(region.edge, 0, accuracy: 1e-4, "flat skin has no edges")
+            XCTAssertEqual(region.red, 190.0 / 445, accuracy: 1e-3)
+        }
+    }
+
+    func testWatchCatchesAHandArrivingMidScan() {
+        var watch = CoverWatch()
+        let clear = regions(image())
+        for _ in 0..<CoverWatch.baselineFrames { XCTAssertFalse(watch.covered(clear)) }
+        XCTAssertFalse(watch.covered(clear), "unchanged face stays clear")
+        XCTAssertTrue(watch.covered(regions(image(hand: true))), "the drawn hand trips the watch")
+        XCTAssertGreaterThanOrEqual(watch.lastScore, 1)
+        let region = watch.lastRegion.map { FaceRegions.names[$0] }
+        XCTAssertTrue(region == "mouth" || region == "chin", "\(region ?? "-")")
+    }
+
+    func testWatchIgnoresAGlobalBrightnessChange() {
+        // The fill light coming on brightens every region alike.
+        var watch = CoverWatch()
+        let clear = regions(image())
+        for _ in 0..<CoverWatch.baselineFrames { _ = watch.covered(clear) }
+        XCTAssertFalse(watch.covered(regions(image(gain: 1.25))))
+        XCTAssertLessThan(watch.lastScore, 1)
+    }
+
+    func testWatchNeedsItsBaselineFirst() {
+        // A face covered from the first scan frame is the segmenter's job;
+        // the watch only sees changes.
+        var watch = CoverWatch()
+        let covered = regions(image(hand: true))
+        for _ in 0..<5 { XCTAssertFalse(watch.covered(covered)) }
+    }
+
+    // MARK: Gate
+
+    private let goodFace = FaceRegionQuality(meanLuma: 130, clippedHighRatio: 0.01, clippedLowRatio: 0.0, sharpness: 80)
+    private let anchors = [CGPoint(x: 0.5, y: 0.6), CGPoint(x: 0.4, y: 0.5), CGPoint(x: 0.6, y: 0.5),
+                           CGPoint(x: 0.5, y: 0.8), CGPoint(x: 0.5, y: 0.3)]
+
+    private func good(at t: TimeInterval, _ edit: (inout GateObservation) -> Void = { _ in }) -> GateObservation {
+        var o = GateObservation(time: t, faceCount: 1, ovalExtent: 0.8, eyeDistance: 0.22,
+                                yaw: 2, pitch: -3, roll: 1, face: goodFace,
+                                eyeBlinkLeft: 0.1, eyeBlinkRight: 0.1, anchors: anchors)
+        o.cover = FaceCover(bodySkin: 0, other: 0)
+        edit(&o)
+        return o
+    }
+
+    private func run(_ guide: inout CaptureGuide, from t0: TimeInterval = 0, seconds: TimeInterval, scanning: Bool = false,
+                     _ edit: (inout GateObservation) -> Void = { _ in }) -> GuideSnapshot {
+        var last = GuideSnapshot.initial
+        var t = t0
+        while t <= t0 + seconds { last = guide.update(good(at: t, edit), scanning: scanning); t += 1.0 / 30 }
+        return last
+    }
+
+    func testCoveredFaceBlocksWithItsHint() {
+        var guide = CaptureGuide()
+        let s = run(&guide, seconds: 1.5) { $0.cover = FaceCover(bodySkin: 0.5, other: 0) }
+        XCTAssertFalse(s.allPass)
+        XCTAssertTrue(s.failing.contains(.covered))
+        XCTAssertEqual(s.hint, .uncovered)
+        XCTAssertEqual(s.hint?.title, "Keep your face uncovered")
+    }
+
+    func testCoveredRanksAfterOnePersonBeforeDistance() {
+        XCTAssertLessThan(GateCheck.onePerson, GateCheck.covered)
+        XCTAssertLessThan(GateCheck.covered, GateCheck.distance)
+        var guide = CaptureGuide()
+        let s = run(&guide, seconds: 1.5) {
+            $0.cover = FaceCover(bodySkin: 0.5, other: 0)
+            $0.eyeDistance = 0.12   // also too far
+        }
+        XCTAssertEqual(s.hint, .uncovered)
+    }
+
+    func testNoCoverResultYetHolds() {
+        var guide = CaptureGuide()
+        let s = run(&guide, seconds: 1.5) { $0.cover = nil; $0.coverPending = true }
+        XCTAssertFalse(s.allPass, "a scan can't start before the face was checked")
+        XCTAssertEqual(s.hint, .holdStill)
+        XCTAssertFalse(s.failing.contains(.covered))
+    }
+
+    func testCheckOffWhenSegmenterUnavailable() {
+        // No model (or no MediaPipe): no result and not pending, so it passes.
+        var guide = CaptureGuide()
+        let s = run(&guide, seconds: 1.0) { $0.cover = nil; $0.coverPending = false }
+        XCTAssertTrue(s.allPass)
+    }
+
+    func testChangeWatchPausesTheScan() {
+        let clear = regions(image())
+        let hand = regions(image(hand: true))
+        var guide = CaptureGuide()
+        XCTAssertTrue(run(&guide, seconds: 0.5, scanning: true) { $0.regions = clear }.allPass)
+        let s = guide.update(good(at: 0.6) { $0.regions = hand }, scanning: true)
+        XCTAssertFalse(s.allPass, "a hand arriving mid-scan pauses it within one frame")
+        XCTAssertTrue(s.failing.contains(.covered))
+        // Not scanning: the watch is off.
+        var align = CaptureGuide()
+        _ = run(&align, seconds: 0.5) { $0.regions = clear }
+        XCTAssertFalse(align.update(good(at: 0.6) { $0.regions = hand }).failing.contains(.covered))
+    }
+
+    // MARK: One person
+
+    func testOverlappingSecondFaceIsTheSameFace() {
+        let subject = CGRect(x: 0.3, y: 0.3, width: 0.4, height: 0.4)
+        let duplicate = CGRect(x: 0.32, y: 0.31, width: 0.38, height: 0.4)
+        let someoneElse = CGRect(x: 0.75, y: 0.1, width: 0.2, height: 0.2)
+        XCTAssertGreaterThanOrEqual(FaceBoxes.iou(subject, duplicate), FaceBoxes.sameFaceIoU)
+        XCTAssertEqual(FaceBoxes.distinctFaces([subject, duplicate], subject: 0), 1)
+        XCTAssertEqual(FaceBoxes.distinctFaces([someoneElse, subject], subject: 1), 2)
+        XCTAssertEqual(FaceBoxes.iou(subject, someoneElse), 0)
+    }
+
+    // MARK: Model
+
+    func testBundledModelMatchesSpec() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/UseSense/Resources/selfie_multiclass_256x256.tflite")
+        let size = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int
+        XCTAssertEqual(size, SegmenterModelInfo.sizeBytes)
+    }
+}

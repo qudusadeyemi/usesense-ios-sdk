@@ -16,6 +16,10 @@ public final class UseSenseSession: @unchecked Sendable {
     var onScanUpdate: ((ScanProgress) -> Void)?
     /// The contour scan's depth texture (mesh z, smoothed).
     let contourField = ContourDepthField()
+    /// COVER-v1: segmentation of the face area on its own queue (gate only).
+    let coverSegmenter = FaceCoverSegmenter()
+    /// Camera time of the latest frame the guide saw (for the final covered check).
+    private var latestGuideFrameTime: TimeInterval = -.infinity
 
     var previewLayer: AVCaptureVideoPreviewLayer? {
         frameCaptureManager.previewLayer
@@ -298,6 +302,7 @@ public final class UseSenseSession: @unchecked Sendable {
         do {
             deviceSignalCollector.startSensorCollection()
             faceMeshManager.setup()
+            if guidedCapture { coverSegmenter.setup() }
 
             if sessionData == nil {
                 if let clientToken = clientToken {
@@ -544,6 +549,7 @@ public final class UseSenseSession: @unchecked Sendable {
         audioCaptureManager.cleanup()
         frameBuffer.reset()
         faceMeshManager.teardown()
+        coverSegmenter.release()
         deviceSignalCollector.release()
         appAttestTask?.cancel()
         currentState = .error(UseSenseError(code: .userCancelled))
@@ -683,8 +689,38 @@ public final class UseSenseSession: @unchecked Sendable {
             onScanUpdate?(ScanProgress(fraction: min(1, banked / duration), paused: !passing,
                                        bankedSeconds: banked, totalSeconds: duration, completed: false))
         }
+        isCapturingFrames = false
         onScanUpdate?(ScanProgress(fraction: 1, paused: false, bankedSeconds: duration, totalSeconds: duration, completed: true))
+        return try await finalCoverCheck()
+    }
+
+    /// COVER-v1 final check: segmentation lags (~1 s on slow phones), so a
+    /// hand arriving in the last second could slip through. Wait (up to 2.5 s)
+    /// for a result from a frame at or after the scan's end: covered drops the
+    /// window back to align, clear (or no result in time) finishes.
+    private func finalCoverCheck() async throws -> Bool {
+        guard coverSegmenter.available else { return true }
+        let since = guideFrameTime()
+        let started = Date()
+        while Date().timeIntervalSince(started) < Self.finalCoverWait {
+            if coverSegmenter.latestAt >= since {
+                let cover = coverSegmenter.latest(at: coverSegmenter.latestAt)
+                let covered = cover?.covered == true
+                USTrace.log("scan: final cover check covered=\(covered)"
+                    + " body=\(cover.map { String(format: "%.2f", $0.bodySkin) } ?? "-")"
+                    + " other=\(cover.map { String(format: "%.2f", $0.other) } ?? "-")")
+                return !covered
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+            try Task.checkCancellation()
+        }
+        USTrace.log("scan: final cover check timed out, finishing")
         return true
+    }
+
+    private func guideFrameTime() -> TimeInterval {
+        guideLock.lock(); defer { guideLock.unlock() }
+        return latestGuideFrameTime
     }
 
     /// Back to the align screen after a dropped scan window.
@@ -1387,6 +1423,7 @@ public final class UseSenseSession: @unchecked Sendable {
         if audioCaptureManager.isRecording { _ = audioCaptureManager.stopRecording() }
         deviceSignalCollector.release()
         faceMeshManager.teardown()
+        coverSegmenter.release()
         eventEmitter.emit(.error, data: ["code": error.code.rawValue, "message": error.message])
         currentState = .error(error)
     }
@@ -1613,6 +1650,9 @@ struct ScanProgress: Equatable, Sendable {
 }
 
 extension UseSenseSession {
+    /// Longest wait for the final covered-face check before finishing anyway.
+    static let finalCoverWait: TimeInterval = 2.5
+
     /// Stillness anchors: nose tip, eye outer corners, chin, forehead.
     static let stillnessAnchors = [1, 33, 263, 152, 10]
 
@@ -1679,6 +1719,8 @@ extension UseSenseSession {
         let viewport = viewportSize
         guideLock.unlock()
 
+        let isScanning: Bool
+        if case .baseline = state { isScanning = true } else { isScanning = false }
         var observation = GateObservation.noFace(at: time)
         var facePoint: CGPoint?
         if let mesh, bufferW > 0, bufferH > 0 {
@@ -1706,6 +1748,17 @@ extension UseSenseSession {
                     i < points.count ? CGPoint(x: points[i].x / unit, y: points[i].y / unit) : nil
                 }
             )
+            // COVER-v1: segmentation off this thread whenever it is free; the
+            // change watch on the scan's frames (image pixels for both).
+            if coverSegmenter.available || isScanning {
+                let px = mesh.landmarks.map { CGPoint(x: $0.x * bufferW, y: $0.y * bufferH) }
+                if coverSegmenter.available {
+                    coverSegmenter.offer(pixelBuffer, points: px, time: time)
+                    observation.cover = coverSegmenter.latest(at: time)
+                    observation.coverPending = observation.cover == nil
+                }
+                if isScanning { observation.regions = FaceRegions.measure(pixelBuffer, points: px) }
+            }
             contourField.submit(points: points, z: mesh.landmarks.map(\.z), viewSize: viewport, time: time)
             facePoint = mapper.viewPoint(x: mesh.bbox.x + mesh.bbox.w / 2, y: mesh.bbox.y + mesh.bbox.h / 2)
             if mesh.gate.faceCount > 1, latestGuide.failing.contains(.onePerson) == false {
@@ -1714,6 +1767,7 @@ extension UseSenseSession {
             }
         } else {
             contourField.noFace(at: time)
+            coverSegmenter.clear()
         }
 
         let isAlign: Bool
@@ -1726,8 +1780,7 @@ extension UseSenseSession {
         #endif
 
         guideLock.lock()
-        let isScanning: Bool
-        if case .baseline = state { isScanning = true } else { isScanning = false }
+        latestGuideFrameTime = time
         let snapshot = guide.update(observation, scanning: isScanning)
         guideTraceCounter &+= 1
         if USTrace.enabled, snapshot.failing != latestGuide.failing || guideTraceCounter % 15 == 0 {
@@ -1743,7 +1796,10 @@ extension UseSenseSession {
                 + " roll=\(observation.roll.map { String(format: "%.1f", $0) } ?? "-")"
                 + " luma=\(f.map { String(format: "%.0f", $0.meanLuma) } ?? "-")"
                 + " sharp=\(f.map { String(format: "%.1f", $0.sharpness) } ?? "-")"
-                + " jitter=\(e.jitter.map { String(format: "%.3f", $0) } ?? "-")")
+                + " jitter=\(e.jitter.map { String(format: "%.3f", $0) } ?? "-")"
+                + " cover=\(observation.cover.map { String(format: "%.2f/%.2f", $0.bodySkin, $0.other) } ?? (observation.coverPending ? "pending" : "-"))"
+                + (isScanning ? String(format: " watch=%.2f@%@", guide.gate.coverWatch.lastScore,
+                                        guide.gate.coverWatch.lastRegion.map { FaceRegions.names[$0] } ?? "-") : ""))
         }
         latestGuide = snapshot
         let update = GuidedCaptureUpdate(snapshot: snapshot, shutterAvailable: shutter)
