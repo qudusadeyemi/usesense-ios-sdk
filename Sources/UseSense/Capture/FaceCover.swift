@@ -220,7 +220,7 @@ struct CoverWatch: Sendable {
 
     mutating func reset() { self = CoverWatch() }
 
-    /// The baseline is complete (3 consecutive steady frames).
+    /// The baseline is complete (3 consecutive settled frames).
     var baselineReady: Bool { baseline != nil && frames >= Self.baselineFrames }
 
     /// True when the face looks covered compared with a steady baseline.
@@ -228,11 +228,12 @@ struct CoverWatch: Sendable {
     ///   - still: stillness passes on this frame. The baseline needs it, and
     ///     after the baseline a moving frame doesn't count: motion wins over
     ///     covered and every region's 2-frame count resets.
-    ///   - inFrame: in-frame passes; the baseline needs it too.
-    mutating func covered(_ regions: FaceRegions?, still: Bool = true, inFrame: Bool = true) -> Bool {
+    ///   - settled: the face is found, still, in the oval, at the distance
+    ///     and facing forward; the baseline needs it.
+    mutating func covered(_ regions: FaceRegions?, still: Bool = true, settled: Bool = true) -> Bool {
         guard let v = regions?.regions else { return false }
-        if !baselineReady && !(still && inFrame) {
-            // Baseline frames must be consecutive steady frames: start over.
+        if !baselineReady && !(still && settled) {
+            // Baseline frames must be consecutive settled frames: start over.
             baseline = nil
             frames = 0
             lastScore = 0; lastRegion = nil; compared = false

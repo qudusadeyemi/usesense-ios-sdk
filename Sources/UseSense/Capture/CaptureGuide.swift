@@ -306,11 +306,13 @@ struct QualityGate: Sendable {
         }
 
         // 2b (scan only). Change watch: a face region changed since a steady
-        // baseline. Its baseline takes 3 consecutive frames where stillness
-        // and in-frame pass; motion wins over it (a moving frame doesn't
-        // count and resets its 2-frame count, and the copy is "Hold still").
+        // baseline. Its baseline takes 3 consecutive frames where the face is
+        // settled (found, still, in the oval, at the distance, facing
+        // forward); motion wins over it (a moving frame doesn't count and
+        // resets its 2-frame count, and the copy is "Hold still").
         let still = e.failing[.stillness] == nil
-        let inFrame = e.failing[.inFrame] == nil
+        let settled = still && e.failing[.faceFound] == nil && e.failing[.inFrame] == nil
+            && e.failing[.distance] == nil && e.failing[.pose] == nil
         watchRan = false
         rebaselined = false
         if scanning {
@@ -331,7 +333,7 @@ struct QualityGate: Sendable {
             }
             if lightChangedAt == nil {
                 let wasReady = coverWatch.baselineReady
-                if coverWatch.covered(o.regions, still: still, inFrame: inFrame) {
+                if coverWatch.covered(o.regions, still: still, settled: settled) {
                     e.failing[.covered] = .uncovered
                 }
                 watchRan = o.regions != nil

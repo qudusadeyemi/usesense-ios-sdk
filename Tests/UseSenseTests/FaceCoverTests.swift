@@ -363,10 +363,28 @@ final class FaceCoverTests: XCTestCase {
         _ = w.covered(even); _ = w.covered(even)
         _ = w.covered(even, still: false)
         XCTAssertFalse(w.baselineReady, "the 3 baseline frames must be consecutive")
-        _ = w.covered(even, inFrame: false)
-        XCTAssertFalse(w.baselineReady, "out-of-frame frames don't count either")
+        _ = w.covered(even, settled: false)
+        XCTAssertFalse(w.baselineReady, "unsettled frames don't count either")
         _ = w.covered(even); _ = w.covered(even); _ = w.covered(even)
         XCTAssertTrue(w.baselineReady)
+    }
+
+    func testBaselineNeedsASettledFace() {
+        // Still but turned away, then still but too far: no baseline.
+        var gate = QualityGate()
+        for i in 0..<20 {
+            _ = gate.evaluate(good(at: Double(i) / 30) { $0.yaw = 25; $0.regions = frameWith(failing: nil) }, scanning: true)
+        }
+        XCTAssertFalse(gate.coverWatch.baselineReady, "facing away")
+        for i in 20..<40 {
+            _ = gate.evaluate(good(at: Double(i) / 30) { $0.eyeDistance = 0.12; $0.regions = frameWith(failing: nil) },
+                              scanning: true)
+        }
+        XCTAssertFalse(gate.coverWatch.baselineReady, "too far")
+        for i in 40..<50 {
+            _ = gate.evaluate(good(at: Double(i) / 30) { $0.regions = frameWith(failing: nil) }, scanning: true)
+        }
+        XCTAssertTrue(gate.coverWatch.baselineReady, "settled")
     }
 
     func testWatchOffUntilASteadyBaselineExists() {
