@@ -188,6 +188,8 @@ struct ChallengeRunner {
     static let dotCentreBand: CGFloat = 0.1
     static let dotYaw: Double = 10
     static let dotPitch: Double = 8
+    /// The move's other direction may go this far the wrong way.
+    static let dotWrongWayTolerance: Double = 10
 
     enum Plan {
         case headTurn([HeadTurnStep])
@@ -404,20 +406,32 @@ struct ChallengeRunner {
         }
     }
 
-    /// Follow Dot: whether the head has moved the way the dot moved (from
+    /// Follow Dot: whether the head has followed the dot's move (from
     /// `from` to `wp`), measured from the pose held at the previous waypoint
     /// (nil: no pose to judge). Screen right is the person's right in the
-    /// mirrored preview. A move under `dotCentreBand` on both axes asks for
-    /// nothing new.
+    /// mirrored preview. Judged on the move's MAIN direction (the larger of
+    /// its sideways and up/down parts): the head must move that way by
+    /// `dotYaw` / `dotPitch`. The other part only fails the spot when the
+    /// head goes clearly the opposite way (more than `dotWrongWayTolerance`):
+    /// following a diagonal dot, people turn sideways and move their eyes for
+    /// the rest, and a big turn brings a small tilt with it (device run,
+    /// 2026-11-10: right turns of 35 degrees dipped 7). Watchtower's
+    /// validator applies the same rule. Moves under `dotCentreBand` on both
+    /// axes ask for nothing new.
     static func atDotTarget(_ wp: CGPoint, from prev: CGPoint, yaw: Double?, pitch: Double?,
                             refYaw: Double, refPitch: Double) -> Bool? {
         guard let yaw, let pitch else { return nil }
         let dx = wp.x - prev.x, dy = prev.y - wp.y   // dy > 0: the dot moved up
         let towardRight = (yaw - refYaw) * -leftYawSign
         let towardUp = (pitch - refPitch) * upPitchSign
-        if abs(dx) > dotCentreBand, (dx > 0 ? towardRight : -towardRight) < dotYaw { return false }
-        if abs(dy) > dotCentreBand, (dy > 0 ? towardUp : -towardUp) < dotPitch { return false }
-        return true
+        let followX = dx > 0 ? towardRight : -towardRight   // > 0: moved with the dot
+        let followY = dy > 0 ? towardUp : -towardUp
+        let movesX = abs(dx) > dotCentreBand, movesY = abs(dy) > dotCentreBand
+        guard movesX || movesY else { return true }
+        if movesX && (!movesY || abs(dx) >= abs(dy)) {
+            return followX >= dotYaw && (!movesY || followY > -dotWrongWayTolerance)
+        }
+        return followY >= dotPitch && (!movesX || followX > -dotWrongWayTolerance)
     }
 
     private func dotGlideTime(_ i: Int) -> TimeInterval {

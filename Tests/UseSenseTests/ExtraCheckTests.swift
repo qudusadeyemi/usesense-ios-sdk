@@ -193,8 +193,8 @@ final class ExtraCheckTests: XCTestCase {
         XCTAssertEqual(r.specStepIndex, 1, "the dot waits")
         XCTAssertEqual(d.title, "Follow the dot with your head")
         XCTAssertEqual(d.dot!.x, 0.8, accuracy: 0.01, "glided there and stays")
-        d = point(&r, right: 20, up: 0, 1.2)             // right only: the dot also went up
-        XCTAssertEqual(r.specStepIndex, 1)
+        d = point(&r, right: 0, up: 15, 1.2)             // up only: the dot moved more right than up
+        XCTAssertEqual(r.specStepIndex, 1, "the main direction (right) is missing")
         d = point(&r, right: 20, up: 15, 1.2)            // up-right: reached
         XCTAssertEqual(r.specStepIndex, 2)
         XCTAssertEqual(d.trail.count, 3, "waypoints passed plus the dot")
@@ -218,6 +218,24 @@ final class ExtraCheckTests: XCTestCase {
                                                    yaw: 0, pitch: rp, refYaw: ry, refPitch: rp), true,
                        "a 15 degree move left; the dot's 0.01 drop asks for no pitch")
         XCTAssertNil(ChallengeRunner.atDotTarget(.zero, from: .zero, yaw: nil, pitch: nil, refYaw: 0, refPitch: 0))
+    }
+
+    func testDiagonalDotsAreJudgedOnTheirMainDirection() {
+        let r = -ChallengeRunner.leftYawSign, u = ChallengeRunner.upPitchSign
+        func reach(_ to: CGPoint, from: CGPoint, right: Double, up: Double) -> Bool? {
+            ChallengeRunner.atDotTarget(to, from: from, yaw: right * r, pitch: up * u, refYaw: 0, refPitch: 0)
+        }
+        // Run 10, spot 2: dot right 0.36 and up 0.2; head right 35, dipped 7.3.
+        XCTAssertEqual(reach(CGPoint(x: 0.86, y: 0.3), from: CGPoint(x: 0.5, y: 0.5), right: 35.7, up: -7.3), true)
+        // Run 10, spot 3: dot left and down; head left 20, tilted up 4.3.
+        XCTAssertEqual(reach(CGPoint(x: 0.3, y: 0.65), from: CGPoint(x: 0.8, y: 0.4), right: -20.2, up: 4.3), true)
+        // The main direction is required.
+        XCTAssertEqual(reach(CGPoint(x: 0.86, y: 0.3), from: CGPoint(x: 0.5, y: 0.5), right: 4, up: 15), false)
+        // The other direction clearly the wrong way fails.
+        XCTAssertEqual(reach(CGPoint(x: 0.86, y: 0.3), from: CGPoint(x: 0.5, y: 0.5), right: 30, up: -14), false)
+        // A mostly vertical move is judged on pitch.
+        XCTAssertEqual(reach(CGPoint(x: 0.55, y: 0.85), from: CGPoint(x: 0.45, y: 0.3), right: 0, up: -12), true)
+        XCTAssertEqual(reach(CGPoint(x: 0.55, y: 0.85), from: CGPoint(x: 0.45, y: 0.3), right: 15, up: 0), false)
     }
 
     func testTheDotGetsOneHintThenMovesOnForTheServer() {
