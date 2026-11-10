@@ -71,6 +71,7 @@ enum ExtraCheckCopy {
     static let thenSayNumbers = "Then say the numbers"
     static let followDot = "Follow the dot with your head"
     static let keepFollowing = "Keep following"
+    static let pointAtDot = "Turn your head toward the dot"
     static let sayNumbers = "Say these numbers"
     static let cantHear = "We can't hear you"
     static let speakLouder = "Speak a little louder"
@@ -173,6 +174,14 @@ struct ChallengeRunner {
     static let quietAfter: TimeInterval = 2
     /// Follow Dot: time the dot takes to glide to its next waypoint.
     static let dotGlide: TimeInterval = 0.6
+    /// Follow Dot is closed loop too: the dot glides to a waypoint and waits
+    /// there until the head points toward it (from the pose at the first,
+    /// central waypoint) and holds, as Head Turn. A waypoint within this of
+    /// the screen centre on an axis asks for no movement on that axis; one
+    /// near the centre on both asks for a straight face.
+    static let dotCentreBand: CGFloat = 0.12
+    static let dotYaw: Double = 10
+    static let dotPitch: Double = 8
 
     enum Plan {
         case headTurn([HeadTurnStep])
@@ -203,6 +212,11 @@ struct ChallengeRunner {
     private var stepReachedAt: TimeInterval?
     private var stepHinted = false
     private var lastAtTarget: Bool?
+    /// Follow Dot: time since the step began (the glide; not reset by the
+    /// hint), and the head pose at the central waypoint (the reference).
+    private var stepAge: TimeInterval = 0
+    private var baseYaw: Double = 0
+    private var basePitch: Double = 0
     private var lastTime: TimeInterval?
     private var present = false
     private var everPresent = false
@@ -262,8 +276,11 @@ struct ChallengeRunner {
     /// (still turned from the last step) made the server fail steps the
     /// person did (device run, 2026-11-10). No pose to judge: always.
     var banksNow: Bool {
-        guard case .headTurn = plan, !finished else { return true }
-        return lastAtTarget ?? true
+        guard !finished else { return true }
+        switch plan {
+        case .headTurn, .followDot: return lastAtTarget ?? true
+        case .digits: return true
+        }
     }
 
     /// The quality gate's rules for the step running now.
@@ -300,8 +317,19 @@ struct ChallengeRunner {
         let running = present && !obs.held && !finished
         if running {
             stepElapsed += dt
+            stepAge += dt
             if case .headTurn(let steps) = plan {
-                advanceHeadTurn(steps[stepIndex], yaw: obs.yaw, pitch: obs.pitch, dt: dt)
+                let step = steps[stepIndex]
+                advanceTargeted(server: Double(step.durationMs) / 1000,
+                                reached: Self.atTarget(step.direction, yaw: obs.yaw, pitch: obs.pitch), dt: dt)
+            } else if case .followDot(let waypoints) = plan {
+                let wp = waypoints[stepIndex]
+                // The dot must have arrived before the head can be on it.
+                let arrived = stepAge >= dotGlideTime(stepIndex)
+                let reached = Self.atDotTarget(CGPoint(x: CGFloat(wp.x), y: CGFloat(wp.y)), yaw: obs.yaw, pitch: obs.pitch,
+                                               baseYaw: baseYaw, basePitch: basePitch)
+                if Self.isCentral(wp), let y = obs.yaw, let p = obs.pitch { baseYaw = y; basePitch = p }
+                advanceTargeted(server: Double(wp.durationMs) / 1000, reached: reached.map { $0 && arrived }, dt: dt)
             } else {
                 let durs = durations
                 while !finished, stepIndex < durs.count, stepElapsed >= durs[stepIndex] {
@@ -329,9 +357,35 @@ struct ChallengeRunner {
         }
     }
 
-    private mutating func advanceHeadTurn(_ step: HeadTurnStep, yaw: Double?, pitch: Double?, dt: TimeInterval) {
-        let server = max(0.2, Double(step.durationMs) / 1000)
-        lastAtTarget = Self.atTarget(step.direction, yaw: yaw, pitch: pitch)
+    /// Follow Dot: whether the head points toward the waypoint, relative to
+    /// the pose at the central waypoint (nil: no pose to judge). Screen
+    /// right is the person's right in the mirrored preview.
+    static func atDotTarget(_ wp: CGPoint, yaw: Double?, pitch: Double?, baseYaw: Double, basePitch: Double) -> Bool? {
+        guard let yaw, let pitch else { return nil }
+        if isCentral(wp) { return abs(yaw) < centreTolerance && abs(pitch) < centreTolerance }
+        let dx = wp.x - 0.5, dy = 0.5 - wp.y
+        let towardRight = (yaw - baseYaw) * -leftYawSign
+        let towardUp = (pitch - basePitch) * upPitchSign
+        if abs(dx) >= dotCentreBand, (dx > 0 ? towardRight : -towardRight) < dotYaw { return false }
+        if abs(dy) >= dotCentreBand, (dy > 0 ? towardUp : -towardUp) < dotPitch { return false }
+        return true
+    }
+
+    static func isCentral(_ wp: FollowDotWaypoint) -> Bool { isCentral(CGPoint(x: CGFloat(wp.x), y: CGFloat(wp.y))) }
+    static func isCentral(_ p: CGPoint) -> Bool {
+        abs(p.x - 0.5) < dotCentreBand && abs(p.y - 0.5) < dotCentreBand
+    }
+
+    private func dotGlideTime(_ i: Int) -> TimeInterval {
+        min(Self.dotGlide, max(0.2, durations[min(i, durations.count - 1)]) * 0.4)
+    }
+
+    /// A step that waits for the person: ends once the pose has held the
+    /// target for `holdAtTarget`; one hint per challenge after `hintAfter`;
+    /// then on, for the server to judge. No pose: the server's step time.
+    private mutating func advanceTargeted(server: TimeInterval, reached target: Bool?, dt: TimeInterval) {
+        let server = max(0.2, server)
+        lastAtTarget = target
         guard let reached = lastAtTarget else {
             // No transform from the landmarker: fall back to the server's time.
             if !poseSeen, stepElapsed >= server { endStep(overflow: 0) }
@@ -376,9 +430,15 @@ struct ChallengeRunner {
     }
 
     private mutating func endStep(overflow: TimeInterval, reached: Bool? = nil) {
-        if case .headTurn(let steps) = plan, stepIndex < steps.count {
+        let specIndex: Int?
+        switch plan {
+        case .headTurn(let steps): specIndex = stepIndex < steps.count ? steps[stepIndex].index : nil
+        case .followDot(let w): specIndex = stepIndex < w.count ? w[stepIndex].index : nil
+        case .digits: specIndex = nil
+        }
+        if let specIndex {
             let now = lastTime ?? 0
-            stepLog.append(ChallengeStepLog(index: steps[stepIndex].index, promptedAt: stepPromptedAt ?? now,
+            stepLog.append(ChallengeStepLog(index: specIndex, promptedAt: stepPromptedAt ?? now,
                                             endedAt: now, reachedAt: reached == true ? stepReachedAt : nil,
                                             reached: reached, hinted: stepHinted))
         }
@@ -389,6 +449,7 @@ struct ChallengeRunner {
         retrying = false
         stepIndex += 1
         stepElapsed = max(0, overflow)
+        stepAge = 0
         atTarget = 0
         poseSeen = false
         if stepIndex >= stepCount {
@@ -405,9 +466,11 @@ struct ChallengeRunner {
         let total = durs.reduce(0, +)
         guard total > 0 else { return 1 }
         if finished { return 1 }
-        if case .headTurn = plan {
+        switch plan {
+        case .headTurn, .followDot:
             // One segment per step, filled by the hold at the target.
             return min(1, (Double(stepIndex) + min(1, atTarget / Self.holdAtTarget)) / Double(stepCount))
+        case .digits: break
         }
         let done = durs.prefix(stepIndex).reduce(0, +)
         return min(1, (done + min(stepElapsed, durs[stepIndex])) / total)
@@ -444,8 +507,8 @@ struct ChallengeRunner {
             let pts = waypoints.map { CGPoint(x: CGFloat($0.x), y: CGFloat($0.y)) }
             let i = min(stepIndex, pts.count - 1)
             let from = i == 0 ? pts[0] : pts[i - 1]
-            let glide = min(Self.dotGlide, durations[i] * 0.4)
-            let t = glide > 0 ? min(1, stepElapsed / glide) : 1
+            let glide = dotGlideTime(i)
+            let t = glide > 0 ? min(1, stepAge / glide) : 1
             let e = t * t * (3 - 2 * t)
             let dot = CGPoint(x: from.x + (pts[i].x - from.x) * e, y: from.y + (pts[i].y - from.y) * e)
             d.dot = dot
@@ -456,6 +519,9 @@ struct ChallengeRunner {
                 d.tone = .warning
                 d.title = pauseTitle(ExtraCheckCopy.showFace)
                 d.subtitle = ExtraCheckCopy.dotWaits
+            } else if retrying {
+                d.title = ExtraCheckCopy.tryAgain
+                d.subtitle = ExtraCheckCopy.pointAtDot
             } else {
                 d.title = stepIndex * 2 < pts.count ? ExtraCheckCopy.followDot : ExtraCheckCopy.keepFollowing
             }
