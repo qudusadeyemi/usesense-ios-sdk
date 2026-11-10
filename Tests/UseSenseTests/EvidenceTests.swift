@@ -448,25 +448,63 @@ final class EvidenceTests: XCTestCase {
         XCTAssertEqual(p.runs, 1, "a finished sequence never plays again")
     }
 
-    func testPlayerPauseRecordsTheRunAndReplays() {
+    /// Watchtower scoreReflection: segments must read issued[i % 3] in order.
+    private func inIssuedOrder(_ r: ColourEvidence) -> Bool {
+        let issued = ["#3D6BFF", "#FFD23F", "#B04DFF"]
+        return r.segments.enumerated().allSatisfy { $0.element.colour == issued[$0.offset % 3] }
+    }
+
+    func testPlayerPauseResumesAtTheInterruptedColour() {
         let host = Host()
         let p = player(host)
         p.play(now: 0)
-        p.advance(to: 0.31)
-        p.advance(to: 0.5)
-        p.interrupt(now: 0.5)
-        XCTAssertEqual(p.record.segments, [.init(colour: "#3D6BFF", startMs: 310, endMs: 500)])
+        p.advance(to: 0.31)   // blue
+        p.advance(to: 0.92)   // yellow
+        p.interrupt(now: 1.1) // pause during yellow
+        XCTAssertEqual(p.record.segments, [.init(colour: "#3D6BFF", startMs: 310, endMs: 920)],
+                       "the partly shown yellow is dropped")
         XCTAssertFalse(p.record.completed)
         XCTAssertEqual(p.record.interruptedReason, "gate_pause")
         XCTAssertEqual(host.shown.last, .some(nil))
         XCTAssertEqual(host.held, 0)
+        XCTAssertEqual(p.nextIndex, 1)
         p.play(now: 2)
         XCTAssertEqual(p.runs, 2)
-        for t in [2.31, 2.92, 3.53, 4.14] { p.advance(to: t) }
+        for t in [2.31, 2.92, 3.53] { p.advance(to: t) }
         XCTAssertTrue(p.finished)
         XCTAssertTrue(p.record.completed)
         XCTAssertNil(p.record.interruptedReason)
-        XCTAssertEqual(p.record.segments.map(\.colour), ["#3D6BFF", "#3D6BFF", "#FFD23F", "#B04DFF"])
+        XCTAssertEqual(p.record.segments.map(\.colour), ["#3D6BFF", "#FFD23F", "#B04DFF"])
+        XCTAssertTrue(inIssuedOrder(p.record))
+        XCTAssertEqual(p.record.segments[1].startMs, 2310)
+    }
+
+    func testPlayerPauseInLeadInKeepsItsPlace() {
+        let p = player(Host())
+        p.play(now: 0)
+        p.interrupt(now: 0.1)
+        XCTAssertTrue(p.record.segments.isEmpty)
+        p.play(now: 1)
+        p.advance(to: 1.31)
+        XCTAssertEqual(p.record.segments.first?.colour, "#3D6BFF")
+    }
+
+    func testDroppedWindowClearsTheSegments() {
+        let host = Host()
+        let p = player(host)
+        p.play(now: 0)
+        p.advance(to: 0.31)
+        p.advance(to: 0.92)
+        p.resetForNewWindow(now: 1)
+        XCTAssertTrue(p.record.segments.isEmpty)
+        XCTAssertEqual(p.record.sequenceId, "cs_1", "same sequence id")
+        XCTAssertEqual(p.runs, 0)
+        XCTAssertEqual(host.held, 0)
+        p.play(now: 5)
+        for t in [5.31, 5.92, 6.53, 7.14] { p.advance(to: t) }
+        XCTAssertTrue(p.record.completed)
+        XCTAssertEqual(p.record.segments.map(\.colour), ["#3D6BFF", "#FFD23F", "#B04DFF"])
+        XCTAssertTrue(inIssuedOrder(p.record))
     }
 
     func testPlayerWithoutWhiteBalanceLockSaysSo() {

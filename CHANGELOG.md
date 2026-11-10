@@ -26,8 +26,11 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   - Colour sequence: during the scan the screen is tinted with the server's
     three colours (35%, 0.6 s each, full brightness, white balance locked)
     with no new copy. What was shown, as measured from the display link, goes
-    in `metadata.evidence.colour`. A gate pause stops the tint and the
-    sequence replays when the scan resumes.
+    in `metadata.evidence.colour`. A gate pause stops the tint and drops the
+    partly shown colour; the sequence resumes at that colour when the scan
+    does, so the segments stay in the issued order the server checks. A
+    dropped scan window clears the segments and starts again at the first
+    colour.
   - Closer step: when the ring completes, the oval grows by the server's
     `target_scale` and the existing "Move a little closer" guidance shows
     until the face reaches `min_scale`. Three near frames bank, recorded with

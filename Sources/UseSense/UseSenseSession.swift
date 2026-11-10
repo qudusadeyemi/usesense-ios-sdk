@@ -878,7 +878,8 @@ public final class UseSenseSession: @unchecked Sendable {
                 pausedFor += dt
                 if !manualStart, pausedFor > Self.scanDiscardAfter {
                     isCapturingFrames = false
-                    await stopColour(player, reason: "gate_pause")
+                    // The frames go, so their colour segments go too.
+                    if let player { await MainActor.run { player.resetForNewWindow() } }
                     pausedWindows += 1
                     USTrace.log("scan: pause > \(Self.scanDiscardAfter)s, window \(pausedWindows) dropped")
                     recordScanDrop()

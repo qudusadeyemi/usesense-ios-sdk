@@ -17,6 +17,11 @@ protocol ColourTintHost: AnyObject {
 /// what actually happened. Each segment's start is the `CADisplayLink`
 /// target time of the frame that first draws it, on the capture clock. Main
 /// thread only.
+///
+/// Order rule (Watchtower `scoreReflection`): uploaded segments must read
+/// `issued[i % n]` in order. So a gate pause drops the partly shown segment
+/// and the replay resumes at that colour; a dropped scan window clears the
+/// record and the next window starts again at the first colour.
 final class ColourSequencePlayer {
     enum Phase: Equatable { case idle, leadIn, segment(Int), done }
 
@@ -36,6 +41,8 @@ final class ColourSequencePlayer {
     private var phaseStart: CFTimeInterval = 0
     private var link: CADisplayLink?
     private var awbAllRuns = true
+    /// The colour the next play starts at.
+    private(set) var nextIndex = 0
 
     init(sequence: EvidenceConfig.ColourSequence, clock: @escaping (CFTimeInterval) -> Int?) {
         self.sequence = sequence
@@ -48,7 +55,7 @@ final class ColourSequencePlayer {
     }
     var finished: Bool { phase == .done }
 
-    /// Start (or replay) the full sequence from its lead-in.
+    /// Start, or resume after a pause, from a lead-in.
     func play(now: CFTimeInterval = CACurrentMediaTime()) {
         guard !isPlaying, !finished else { return }
         runs += 1
@@ -63,10 +70,14 @@ final class ColourSequencePlayer {
         self.link = link
     }
 
-    /// A gate pause: stop the tint and close the running segment.
+    /// A gate pause: stop the tint. The partly shown segment is dropped and
+    /// the next play resumes at its colour, keeping the issued order.
     func interrupt(reason: String = "gate_pause", now: CFTimeInterval = CACurrentMediaTime()) {
         guard isPlaying else { return }
-        if case .segment = phase { closeSegment(at: now) }
+        if case .segment(let i) = phase {
+            _ = record.segments.popLast()
+            nextIndex = i
+        }
         record.completed = false
         record.interruptedReason = reason
         stop(to: .idle)
@@ -75,6 +86,17 @@ final class ColourSequencePlayer {
     /// Abandon the sequence (capture over, screen gone).
     func cancel(now: CFTimeInterval = CACurrentMediaTime()) {
         interrupt(reason: "cancelled", now: now)
+    }
+
+    /// The scan window was dropped with its frames: the segments go too, and
+    /// the next window plays the sequence from the first colour.
+    func resetForNewWindow(now: CFTimeInterval = CACurrentMediaTime()) {
+        interrupt(reason: "window_dropped", now: now)
+        record = ColourEvidence(sequenceId: sequence.id)
+        nextIndex = 0
+        runs = 0
+        awbAllRuns = true
+        phase = .idle
     }
 
     @objc private func onFrame(_ link: CADisplayLink) {
@@ -87,9 +109,10 @@ final class ColourSequencePlayer {
         let segment = Double(sequence.segmentMs) / 1000
         switch phase {
         case .leadIn where t - phaseStart >= leadIn:
-            begin(0, at: t)
+            begin(nextIndex, at: t)
         case .segment(let i) where t - phaseStart >= segment:
             closeSegment(at: t)
+            nextIndex = i + 1
             if i + 1 < sequence.colours.count {
                 begin(i + 1, at: t)
             } else {
