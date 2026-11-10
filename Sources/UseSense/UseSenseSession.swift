@@ -1013,7 +1013,7 @@ public final class UseSenseSession: @unchecked Sendable {
                 near = close
                 onCloserUpdate?(CGFloat(step.targetScale), !close)
             }
-            isCapturingFrames = close && guideAllPass
+            isCapturingFrames = close && closerGatePasses
             if frameBuffer.count - startCount >= Self.closerPhaseFrames || frameBuffer.isFull { break }
         }
         isCapturingFrames = false
@@ -1033,6 +1033,19 @@ public final class UseSenseSession: @unchecked Sendable {
         USTrace.log("closer: completed=\(record.completed) near=\(nearMeshes.count)"
             + " scale=\(record.achievedScale.map { String(format: "%.2f", $0) } ?? "-")")
         closerEvidence = record
+    }
+
+    /// The near phase's gate (EVIDENCE-v1 section 7: pose, stillness,
+    /// sharpness). Distance and in-frame are left out: coming closer is the
+    /// point, and a near face can overflow the oval (device run: eye ratio
+    /// 1.45x the far frames read "Move back a little" and no near frame banked).
+    private var closerGatePasses: Bool {
+        guideLock.lock(); defer { guideLock.unlock() }
+        return Self.closerGatePasses(failing: latestGuide.failing)
+    }
+
+    static func closerGatePasses(failing: Set<GateCheck>) -> Bool {
+        failing.subtracting([.distance, .inFrame, .light]).isEmpty
     }
 
     static func median(_ xs: [Double]) -> Double? {

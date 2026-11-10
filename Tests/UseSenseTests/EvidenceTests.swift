@@ -542,14 +542,35 @@ final class EvidenceTests: XCTestCase {
         XCTAssertEqual(paused.title, "Look straight ahead")
     }
 
+    func testCloserNearPhaseIgnoresDistanceAndInFrame() {
+        XCTAssertTrue(UseSenseSession.closerGatePasses(failing: [.distance, .inFrame]))
+        XCTAssertTrue(UseSenseSession.closerGatePasses(failing: [.light]))
+        XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.distance, .stillness]))
+        XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.pose]))
+        XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.sharpness]))
+        XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.faceFound]))
+        XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.covered]))
+    }
+
     func testOvalScalesAboutItsCentre() {
         let size = CGSize(width: 390, height: 844)
         let a = CaptureOvalLayout.ovalRect(in: size)
-        let b = CaptureOvalLayout.ovalRect(in: size, scale: 1.4)
+        let b = CaptureOvalLayout.ovalRect(in: size, scale: 1.1)
         XCTAssertEqual(b.midX, a.midX, accuracy: 1e-9)
         XCTAssertEqual(b.midY, a.midY, accuracy: 1e-9)
-        XCTAssertEqual(b.width, a.width * 1.4, accuracy: 1e-9)
-        XCTAssertGreaterThanOrEqual(b.minY, 0, "the grown oval stays on screen")
+        XCTAssertEqual(b.width, a.width * 1.1, accuracy: 1e-9)
+        XCTAssertEqual(b.height, a.height * 1.1, accuracy: 1e-9)
+    }
+
+    func testGrownOvalStaysInsideTheScreen() {
+        for size in [CGSize(width: 390, height: 844), CGSize(width: 402, height: 874), CGSize(width: 320, height: 568)] {
+            let grown = CaptureOvalLayout.ovalRect(in: size, scale: 1.4)
+            let ring: CGFloat = 9 // CaptureTokens.ringGap + ringWidth
+            XCTAssertGreaterThanOrEqual(grown.minX - ring, CaptureOvalLayout.grownEdgeMargin - 1e-9)
+            XCTAssertLessThanOrEqual(grown.maxX + ring, size.width - CaptureOvalLayout.grownEdgeMargin + 1e-9)
+            XCTAssertGreaterThanOrEqual(grown.minY, 0)
+            XCTAssertGreaterThan(grown.width, CaptureOvalLayout.ovalRect(in: size).width, "it still grows")
+        }
     }
 }
 #endif

@@ -515,9 +515,18 @@ struct CaptureGuide: Sendable {
 /// the oval is. Same size and offset the capture screens have always used.
 enum CaptureOvalLayout {
     /// Capture kit SPEC: centre (0.5 W, 0.40 H), rx = 0.36 W, ry = 0.235 H.
-    /// `scale` grows the oval about its centre (EVIDENCE-v1 closer step).
+    /// Space kept between the grown oval's ring and the screen edge.
+    static let grownEdgeMargin: CGFloat = 16
+
+    /// `scale` grows the oval about its centre (EVIDENCE-v1 closer step),
+    /// capped so the ring (6 pt gap + 3 pt) stays `grownEdgeMargin` inside the
+    /// screen: the server's 1.4 would make a phone's oval wider than the
+    /// screen. The near frames are judged on eye distance, not on the oval.
     static func ovalRect(in size: CGSize, scale: CGFloat = 1) -> CGRect {
-        let rx = size.width * 0.36 * scale, ry = size.height * 0.235 * scale
+        let base = size.width * 0.36
+        let fit = base > 0 ? (size.width / 2 - grownEdgeMargin - 9) / base : 1
+        let s = scale > 1 ? max(1, min(scale, fit)) : scale
+        let rx = base * s, ry = size.height * 0.235 * s
         return CGRect(x: size.width * 0.5 - rx, y: size.height * 0.40 - ry, width: rx * 2, height: ry * 2)
     }
 }
