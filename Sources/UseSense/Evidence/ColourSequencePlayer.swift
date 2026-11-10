@@ -36,8 +36,11 @@ final class ColourSequencePlayer {
 
     private(set) var phase: Phase = .idle
     private(set) var record: ColourEvidence
-    /// Plays started (the first, plus replays after a pause).
+    /// Plays that showed at least one colour. A pause during the lead-in
+    /// costs nothing (device run: gate flicker at scan start used up every
+    /// play before a colour showed).
     private(set) var runs = 0
+    private var shownThisPlay = false
     private var phaseStart: CFTimeInterval = 0
     private var link: CADisplayLink?
     private var awbAllRuns = true
@@ -58,7 +61,7 @@ final class ColourSequencePlayer {
     /// Start, or resume after a pause, from a lead-in.
     func play(now: CFTimeInterval = CACurrentMediaTime()) {
         guard !isPlaying, !finished else { return }
-        runs += 1
+        shownThisPlay = false
         phase = .leadIn
         phaseStart = now
         let locked = lockWhiteBalance?(true) ?? false
@@ -129,6 +132,7 @@ final class ColourSequencePlayer {
         guard let ms = clock(t) else { return }
         phase = .segment(i)
         phaseStart = t
+        if !shownThisPlay { shownThisPlay = true; runs += 1 }
         let colour = sequence.colours[i]
         record.segments.append(.init(colour: colour, startMs: ms, endMs: ms))
         host?.showTint(colour, opacity: sequence.opacity)

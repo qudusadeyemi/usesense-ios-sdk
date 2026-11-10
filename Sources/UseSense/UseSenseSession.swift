@@ -1036,16 +1036,19 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     /// The near phase's gate (EVIDENCE-v1 section 7: pose, stillness,
-    /// sharpness). Distance and in-frame are left out: coming closer is the
-    /// point, and a near face can overflow the oval (device run: eye ratio
-    /// 1.45x the far frames read "Move back a little" and no near frame banked).
+    /// sharpness, with a face and one person). Left out: distance and in-frame
+    /// (coming closer is the point, and a near face can overflow the oval;
+    /// device run: 1.45x the far eye distance read "Move back a little"), and
+    /// covered (the scan's change watch compares regions with the scan's
+    /// baseline, which all change as the face grows; device run: it fired at
+    /// 1.27x and no near frame banked; the final cover check already ran).
     private var closerGatePasses: Bool {
         guideLock.lock(); defer { guideLock.unlock() }
         return Self.closerGatePasses(failing: latestGuide.failing)
     }
 
     static func closerGatePasses(failing: Set<GateCheck>) -> Bool {
-        failing.subtracting([.distance, .inFrame, .light]).isEmpty
+        failing.subtracting([.distance, .inFrame, .light, .covered]).isEmpty
     }
 
     static func median(_ xs: [Double]) -> Double? {

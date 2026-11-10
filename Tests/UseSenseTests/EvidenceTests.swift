@@ -469,8 +469,8 @@ final class EvidenceTests: XCTestCase {
         XCTAssertEqual(host.held, 0)
         XCTAssertEqual(p.nextIndex, 1)
         p.play(now: 2)
-        XCTAssertEqual(p.runs, 2)
         for t in [2.31, 2.92, 3.53] { p.advance(to: t) }
+        XCTAssertEqual(p.runs, 2)
         XCTAssertTrue(p.finished)
         XCTAssertTrue(p.record.completed)
         XCTAssertNil(p.record.interruptedReason)
@@ -481,8 +481,11 @@ final class EvidenceTests: XCTestCase {
 
     func testPlayerPauseInLeadInKeepsItsPlace() {
         let p = player(Host())
-        p.play(now: 0)
-        p.interrupt(now: 0.1)
+        for k in 0..<5 {  // gate flicker at scan start
+            p.play(now: Double(k))
+            p.interrupt(now: Double(k) + 0.1)
+        }
+        XCTAssertEqual(p.runs, 0, "a lead-in that showed no colour is not a play")
         XCTAssertTrue(p.record.segments.isEmpty)
         p.play(now: 1)
         p.advance(to: 1.31)
@@ -549,7 +552,9 @@ final class EvidenceTests: XCTestCase {
         XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.pose]))
         XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.sharpness]))
         XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.faceFound]))
-        XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.covered]))
+        XCTAssertTrue(UseSenseSession.closerGatePasses(failing: [.covered]))
+        XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.onePerson]))
+        XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.eyesOpen]))
     }
 
     func testOvalScalesAboutItsCentre() {
