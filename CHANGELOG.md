@@ -6,7 +6,7 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [4.10.0] - 2026-11-09
+## [4.10.0] - 2026-11-10
 
 Tested on an iPhone 17 Pro against the sandbox API, and on an iPhone 16
 simulator against the LiveSense capture test kit's reference screens.
