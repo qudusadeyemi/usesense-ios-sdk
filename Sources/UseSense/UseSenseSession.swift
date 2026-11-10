@@ -1,5 +1,6 @@
 #if canImport(AVFoundation) && canImport(UIKit)
 import AVFoundation
+import CoreImage
 import UIKit
 import Foundation
 
@@ -17,6 +18,9 @@ public final class UseSenseSession: @unchecked Sendable {
     /// Guided extra check: what the challenge screen draws (called from the
     /// challenge task, ~20 Hz).
     var onChallengeUpdate: ((ChallengeDisplay) -> Void)?
+    /// Inline step-up (suspicion engine): what the scan screen shows while it
+    /// runs (RMAS action or Flash Reflection colour).
+    var onInlineStepUpUpdate: ((InlineStepUpDisplay) -> Void)?
     /// The contour scan's depth texture (mesh z, smoothed).
     let contourField = ContourDepthField()
     /// COVER-v1: segmentation of the face area on its own queue (gate only).
@@ -214,6 +218,12 @@ public final class UseSenseSession: @unchecked Sendable {
     private var challengeHeld = false
     /// Speak Digits ran on screen: its response goes in the upload.
     private var audioChallengeResponse: [String: Any]?
+    /// The newest face mesh and camera frame, whether or not frames are being
+    /// banked: the inline step-up reads them after the scan has ended.
+    private let latestLock = NSLock()
+    private var latestMesh: FaceMeshResult?
+    private var latestPixelBuffer: CVPixelBuffer?
+    private lazy var frameImageContext = CIContext()
     /// The green tick after an extra check.
     static let extraCheckDoneSeconds: TimeInterval = 0.8
 
@@ -1047,7 +1057,7 @@ public final class UseSenseSession: @unchecked Sendable {
                 try await runGuidedChallenge(challenge)
                 challengeResponseBuilder.markCompleted()
                 eventEmitter.emit(.challengeCompleted)
-                try await finishCaptureAndUpload(inlineStepUp: false)
+                try await finishCaptureAndUpload()
             } else {
                 if !singleGatedScan {
                     try await Task.sleep(nanoseconds: UInt64(captureDurationMs) * 1_000_000)
@@ -1056,7 +1066,7 @@ public final class UseSenseSession: @unchecked Sendable {
                 if guidedExtraCheck, let audio = sessionData?.policy.audioChallenge {
                     try await runGuidedSpeakDigits(audio)
                 }
-                try await finishCaptureAndUpload(inlineStepUp: !guidedExtraCheck)
+                try await finishCaptureAndUpload()
             }
         } catch is CancellationError {
             return
@@ -1066,11 +1076,12 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     /// The capture is over: stop the camera, mic and sensors, then upload.
-    /// `inlineStepUp`: run the client-side suspicion step-up first (legacy
-    /// screens only; the guided flow's extra check is the server's round 2).
-    private func finishCaptureAndUpload(inlineStepUp: Bool) async throws {
+    /// The client-side suspicion step-up runs first when the
+    /// engine fires and the policy enables it (dashboard: "Unusual movement
+    /// during the scan"). A server round 2, if asked for, comes after the upload.
+    private func finishCaptureAndUpload() async throws {
         isCapturingFrames = false
-        if inlineStepUp, let engine = suspicionEngine, engine.shouldTriggerStepUp() {
+        if let engine = suspicionEngine, engine.shouldTriggerStepUp() {
             await runInlineStepUp(engine: engine)
         }
         frameCaptureManager.stop()
@@ -1179,23 +1190,25 @@ public final class UseSenseSession: @unchecked Sendable {
         guard let config = sessionData?.policy.inlineStepUp, config.enabled else { return }
 
         currentState = .inlineStepUp(phase: "preparing")
+        onInlineStepUpUpdate?(.preparing)
         eventEmitter.emit(.stepUpTriggered, data: ["score": String(format: "%.1f", engine.snapshot().score)])
 
-        // Camera stays active throughout
+        // Camera stays active throughout. The challenges read the newest
+        // mesh and frame (the banked results stop when the scan ends, so the
+        // micro-actions used to be judged on a stale face), and their prompts
+        // go to the screen as they open.
         let orchestrator = StepUpOrchestrator()
         stepUpResult = await orchestrator.run(
             suspicionScore: engine.snapshot().score,
             config: config,
-            captureFrame: {
-                // In production, capture current frame from preview
-                return nil
-            },
-            getCurrentPose: { [weak self] in
-                self?.faceMeshManager.getResults().last?.headPose
-            },
+            captureFrame: { [weak self] in self?.latestFrameImage() },
+            getCurrentPose: { [weak self] in self?.latestMeshResult()?.headPose },
             getCurrentEAR: { [weak self] in
-                guard let result = self?.faceMeshManager.getResults().last else { return nil }
+                guard let result = self?.latestMeshResult() else { return nil }
                 return (left: result.leftEAR, right: result.rightEAR)
+            },
+            onPrompt: { [weak self] prompt in
+                self?.onInlineStepUpUpdate?(InlineStepUpDisplay(prompt))
             }
         )
 
@@ -1203,6 +1216,22 @@ public final class UseSenseSession: @unchecked Sendable {
 
         // Capture 500ms additional frames post-step-up
         try? await Task.sleep(nanoseconds: 500_000_000)
+    }
+
+    private func latestMeshResult() -> FaceMeshResult? {
+        latestLock.lock(); defer { latestLock.unlock() }
+        return latestMesh
+    }
+
+    /// The camera's newest frame as an image (Flash Reflection samples it).
+    private func latestFrameImage() -> UIImage? {
+        latestLock.lock()
+        let buffer = latestPixelBuffer
+        latestLock.unlock()
+        guard let buffer else { return nil }
+        let image = CIImage(cvPixelBuffer: buffer)
+        guard let cg = frameImageContext.createCGImage(image, from: image.extent) else { return nil }
+        return UIImage(cgImage: cg)
     }
 
     private func startAudioRecording() {
@@ -1848,6 +1877,17 @@ extension UseSenseSession {
         Self.$attemptToken.withValue(currentAttempt) { armWatchdogForTesting(phase) }
     }
 
+    /// Test seam: run the inline step-up as the capture does (policy permitting).
+    func runInlineStepUpForTesting(engine: SuspicionEngine) async -> StepUpResult? {
+        await runInlineStepUp(engine: engine)
+        return stepUpResult
+    }
+
+    /// Test seam: hand the delegate a face as if the camera had seen it.
+    func setLatestMeshForTesting(_ mesh: FaceMeshResult?) {
+        latestLock.lock(); latestMesh = mesh; latestLock.unlock()
+    }
+
     /// Test seam: a round-1 upload came back asking for a step-up.
     func startServerStepUpRoundForTesting(_ stepUp: StepUpInstruction) async {
         await startServerStepUpRound(stepUp)
@@ -1901,6 +1941,10 @@ extension UseSenseSession: FrameCaptureDelegate {
         // `FaceMeshManager.recordResult` for the full rationale.
         let timestampMs = Int64(CMTimeGetSeconds(timestamp) * 1000)
         let meshResult = faceMeshManager.processFrame(pixelBuffer, timestampMs: timestampMs)
+        latestLock.lock()
+        latestMesh = meshResult
+        latestPixelBuffer = pixelBuffer
+        latestLock.unlock()
         if let meshResult = meshResult {
             // Feed suspicion engine (runs on every 2nd frame internally)
             let luminance = latestQualityReport.map { Double($0.meanBrightness) } ?? 128.0

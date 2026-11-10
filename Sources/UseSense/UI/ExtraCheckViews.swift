@@ -34,6 +34,38 @@ extension GuidedScreen.Tone {
     }
 }
 
+// MARK: - Inline step-up on the scan screen
+
+/// The suspicion engine's own check (RMAS micro-actions, Flash Reflection),
+/// drawn like the extra check: plain guidance under the oval and an amber
+/// ring while it waits for the person. A flash fills the screen with its
+/// colour so the face can reflect it.
+struct GuidedInlineStepUpView<Camera: View>: View {
+    let camera: Camera
+    let display: InlineStepUpDisplay
+    let onBack: () -> Void
+
+    var body: some View {
+        ZStack {
+            GuidedChallengeView(
+                camera: camera,
+                display: ChallengeDisplay(kind: .headTurn, progress: display.progress, tone: .warning,
+                                          title: display.title, subtitle: display.subtitle),
+                help: "Do what the screen asks, one step at a time. It only takes a few seconds.",
+                onBack: onBack)
+            if let hex = display.flashColor, let c = FlowAppearance.parseHexComponents(hex) {
+                Color(red: Double(c.r), green: Double(c.g), blue: Double(c.b))
+                    .opacity(0.6)
+                    .blendMode(.screen)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
+        .accessibilityIdentifier("usesense.inline.stepup")
+    }
+}
+
 // MARK: - Shared guidance text (same type as the scan screen)
 
 struct CaptureGuidanceText: View {
@@ -81,6 +113,8 @@ struct GuidedChallengeView<Camera: View>: View {
     var meter: [Double] = []
     /// The short green tick after the check.
     var done = false
+    /// Help text, when not the challenge's own.
+    var help: String?
     let onBack: () -> Void
 
     @State private var showHelp = false
@@ -158,6 +192,7 @@ struct GuidedChallengeView<Camera: View>: View {
     }
 
     private var helpText: String {
+        if let help { return help }
         switch display.kind {
         case .headTurn: return "Keep your face in the oval and turn your head slowly the way the arrow points."
         case .followDot: return "Keep your face in the oval and move your head to follow the dot. The dot waits if your face leaves the oval."

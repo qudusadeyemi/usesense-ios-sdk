@@ -7,6 +7,8 @@ errors). Screens use a synthetic, drawn face; no real person appears here.
   pause and retry states, the done tick, the leave dialog, the upload-failed sheet.
 - `after-pages.jpg`: "Two quick steps", Speak Digits, the microphone page,
   result and error pages.
+- `after-inline.jpg`: the suspicion engine's inline step-up (RMAS actions,
+  a Flash Reflection colour) on the scan screen.
 - `before.jpg`: the screens these replace (still used with
   `guidedCaptureEnabled: false`).
 

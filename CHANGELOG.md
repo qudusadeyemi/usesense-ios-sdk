@@ -56,10 +56,22 @@ against staging.
 
 - Guided screens ask for camera and microphone permission with the system
   prompt directly, without the "Camera Access Required" card.
-- Guided screens no longer run the client-side inline step-up (Flash
-  Reflection / RMAS) behind the "Additional Verification" overlay; the
-  server's extra check replaces it. `guidedCaptureEnabled: false` keeps the
-  previous screens and behaviour unchanged.
+- **Inline step-up on the scan screen.** When the policy's `inline_step_up`
+  is enabled (dashboard: "Unusual movement during the scan") and the
+  suspicion engine fires, guided screens show each RMAS micro-action as plain
+  guidance under the oval with an amber ring ("Blink twice", "Turn your head
+  to the left", ...) and fill the screen with each Flash Reflection colour,
+  instead of the "Additional Verification" overlay. It runs before the
+  upload, so a server extra check (round 2) still follows it.
+
+### Fixed
+
+- RMAS judged its micro-actions on the last banked frame, which stops
+  updating when the scan ends; it now reads the newest face. Flash
+  Reflection sampled no frame and showed no colour, so every flash read as no
+  reflection (and the average change fell under the hard-reject floor); it
+  now shows each colour and samples the camera. Applies to the previous
+  screens too.
 
 ## [4.10.0] - 2026-11-10
 

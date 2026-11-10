@@ -40,19 +40,26 @@ final class FlashReflectionChallenge {
         ("#00FFFF", 0, 255, 255)
     ]
 
-    func run(captureFrame: @escaping () -> UIImage?) async -> FlashReflectionResult {
+    /// - Parameter onFlash: called with (index, colour hex) when a flash must
+    ///   show on screen, and (index, nil) when it must clear. Without it the
+    ///   face reflects nothing and every flash reads as "no reflection".
+    func run(
+        captureFrame: @escaping () -> UIImage?,
+        onFlash: @escaping (Int, String?) -> Void = { _, _ in }
+    ) async -> FlashReflectionResult {
         // Pick 3 random colors (no duplicates)
         let selectedColors = Array(Self.colorPool.shuffled().prefix(3))
         var flashes: [FlashReflectionResult.FlashResult] = []
         var validReflections = 0
 
-        for color in selectedColors {
+        for (index, color) in selectedColors.enumerated() {
             // Baseline: capture without overlay (400ms)
+            onFlash(index, nil)
             try? await Task.sleep(nanoseconds: 400_000_000)
             let baselineRgb = sampleFaceRegion(from: captureFrame())
 
             // Flash: display color overlay, wait for render, then sample (600ms)
-            // In production, this sets the overlay color on the UI layer
+            onFlash(index, color.hex)
             try? await Task.sleep(nanoseconds: 600_000_000)
             let flashRgb = sampleFaceRegion(from: captureFrame())
 
@@ -81,6 +88,7 @@ final class FlashReflectionChallenge {
             ))
         }
 
+        onFlash(selectedColors.count - 1, nil)
         let overallDelta = flashes.map(\.colorDelta).reduce(0, +) / Double(max(1, flashes.count))
         let passed = validReflections >= 2
 

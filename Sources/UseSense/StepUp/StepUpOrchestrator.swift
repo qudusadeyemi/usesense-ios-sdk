@@ -13,6 +13,57 @@ struct StepUpResult: Sendable {
     let timestamp: String
 }
 
+/// What the screen shows while the inline step-up runs.
+enum InlineStepUpPrompt: Equatable {
+    /// A Flash Reflection step: `color` on screen now, or nil between flashes.
+    case flash(color: String?, step: Int, steps: Int)
+    /// An RMAS micro-action, waiting for the person to do it.
+    case action(type: String, step: Int, steps: Int)
+}
+
+/// Guided screens: the inline step-up drawn on the scan screen (plain
+/// guidance under the oval, amber ring while it waits for the person).
+struct InlineStepUpDisplay: Equatable {
+    var title: String
+    var subtitle: String?
+    var progress: Double
+    /// Flash Reflection colour to fill the screen with (hex), if any.
+    var flashColor: String?
+
+    static let preparing = InlineStepUpDisplay(title: "Hold still", subtitle: nil, progress: 0, flashColor: nil)
+
+    init(title: String, subtitle: String?, progress: Double, flashColor: String?) {
+        self.title = title
+        self.subtitle = subtitle
+        self.progress = progress
+        self.flashColor = flashColor
+    }
+
+    init(_ prompt: InlineStepUpPrompt) {
+        switch prompt {
+        case .flash(let color, let step, let steps):
+            self.init(title: "Hold still", subtitle: "Your screen will change colour",
+                      progress: Double(step + 1) / Double(max(1, steps)), flashColor: color)
+        case .action(let type, let step, let steps):
+            self.init(title: Self.actionTitle(type), subtitle: nil,
+                      progress: Double(step + 1) / Double(max(1, steps)), flashColor: nil)
+        }
+    }
+
+    /// Guided copy for each RMAS action (the upload keeps RMAS's own labels).
+    static func actionTitle(_ type: String) -> String {
+        switch type {
+        case "blink": return "Blink twice"
+        case "smile": return "Smile"
+        case "raise_eyebrows": return "Raise your eyebrows"
+        case "open_mouth": return "Open your mouth"
+        case "turn_left": return "Turn your head to the left"
+        case "turn_right": return "Turn your head to the right"
+        default: return "Hold still"
+        }
+    }
+}
+
 /// Orchestrates inline step-up challenges (Flash Reflection + RMAS).
 /// Timeout protection: 15 seconds max for the entire sequence.
 ///
@@ -40,7 +91,8 @@ final class StepUpOrchestrator: @unchecked Sendable {
         config: InlineStepUpConfig,
         captureFrame: @escaping () -> UIImage?,
         getCurrentPose: @escaping () -> HeadPose?,
-        getCurrentEAR: @escaping () -> (left: Double, right: Double)?
+        getCurrentEAR: @escaping () -> (left: Double, right: Double)?,
+        onPrompt: @escaping (InlineStepUpPrompt) -> Void = { _ in }
     ) async -> StepUpResult {
         let threshold = Double(config.suspicionThreshold)
 
@@ -68,7 +120,8 @@ final class StepUpOrchestrator: @unchecked Sendable {
                 suspicionScore: suspicionScore,
                 captureFrame: captureFrame,
                 getCurrentPose: getCurrentPose,
-                getCurrentEAR: getCurrentEAR
+                getCurrentEAR: getCurrentEAR,
+                onPrompt: onPrompt
             )
         }
 
@@ -88,20 +141,31 @@ final class StepUpOrchestrator: @unchecked Sendable {
         suspicionScore: Double,
         captureFrame: @escaping () -> UIImage?,
         getCurrentPose: @escaping () -> HeadPose?,
-        getCurrentEAR: @escaping () -> (left: Double, right: Double)?
+        getCurrentEAR: @escaping () -> (left: Double, right: Double)?,
+        onPrompt: @escaping (InlineStepUpPrompt) -> Void
     ) async -> StepUpResult {
         var flashResult: FlashReflectionResult?
         var rmasResult: RMASResult?
+        // 3 steps per challenge, for the ring.
+        let total = challenges.count * 3
+        var offset = 0
 
         for challenge in challenges {
+            let base = offset
             switch challenge {
             case "flash_reflection":
-                flashResult = await FlashReflectionChallenge().run(captureFrame: captureFrame)
+                flashResult = await FlashReflectionChallenge().run(captureFrame: captureFrame) { i, hex in
+                    onPrompt(.flash(color: hex, step: base + i, steps: total))
+                }
+                offset += 3
             case "rmas":
                 rmasResult = await RMASChallenge().run(
                     getCurrentPose: getCurrentPose,
                     getCurrentEAR: getCurrentEAR
-                )
+                ) { i, action in
+                    onPrompt(.action(type: action.type, step: base + i, steps: total))
+                }
+                offset += 3
             default:
                 break
             }

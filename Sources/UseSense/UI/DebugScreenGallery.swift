@@ -20,7 +20,7 @@ public struct UseSenseDebugScreen: View {
         "primer_two", "primer_digits", "xc_head", "xc_dot", "xc_digits", "head_left", "head_right", "head_paused",
         "head_again", "dot_1", "dot_2", "dot_lost", "digits", "digits_quiet", "mic_denied", "xc_done", "leave",
         "approved", "review", "rejected_retry", "rejected", "perm_denied", "cam_error", "offline", "expired",
-        "error", "upload_failed",
+        "error", "upload_failed", "rmas_blink", "rmas_turn", "rmas_smile", "flash",
         "legacy_countdown", "legacy_head", "legacy_dot", "legacy_inline_stepup", "legacy_approved",
         "legacy_rejected", "legacy_error", "legacy_instructions",
     ]
@@ -69,6 +69,8 @@ public struct UseSenseDebugScreen: View {
                 GuidedSheet(icon: c.icon, iconFill: CaptureColors.current.warning.color.opacity(0.16),
                             iconInk: CaptureColors.current.warning.color, title: c.title, message: c.body, primary: c.primary)
             }
+        case "rmas_blink", "rmas_turn", "rmas_smile", "flash":
+            GuidedInlineStepUpView(camera: camera, display: Self.inline(name), onBack: {})
         case "xc_done":
             GuidedChallengeView(camera: camera, display: Self.display("head_right"), done: true, onBack: {})
         case "leave":
@@ -157,6 +159,15 @@ public struct UseSenseDebugScreen: View {
         default: run(0.1)
         }
         return d
+    }
+
+    static func inline(_ name: String) -> InlineStepUpDisplay {
+        switch name {
+        case "rmas_blink": return InlineStepUpDisplay(.action(type: "blink", step: 0, steps: 3))
+        case "rmas_turn": return InlineStepUpDisplay(.action(type: "turn_left", step: 1, steps: 3))
+        case "rmas_smile": return InlineStepUpDisplay(.action(type: "smile", step: 2, steps: 3))
+        default: return InlineStepUpDisplay(.flash(color: "#00FFFF", step: 1, steps: 6))
+        }
     }
 
     static func decision(_ value: String) -> RedactedDecisionObject {

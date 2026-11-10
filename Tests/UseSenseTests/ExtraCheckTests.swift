@@ -361,6 +361,92 @@ final class ExtraCheckTests: XCTestCase {
         XCTAssertEqual(e.code, .unauthorized)
     }
 
+    // MARK: Inline step-up on the guided screen
+
+    func testRMASShowsEachActionAsItsWindowOpensAndReadsTheLivePose() async {
+        let actions = RMASChallenge.actionPool.filter { ["turn_left", "turn_right", "blink"].contains($0.type) }
+            .sorted { $0.type < $1.type }   // blink, turn_left, turn_right
+        let shown = Locked<[String]>([])
+        let result = await RMASChallenge().run(
+            actions: actions,
+            getCurrentPose: {
+                switch shown.value.last {
+                case "turn_left": return HeadPose(yaw: -20, pitch: 0, roll: 0)
+                case "turn_right": return HeadPose(yaw: 20, pitch: 0, roll: 0)
+                default: return HeadPose(yaw: 0, pitch: 0, roll: 0)
+                }
+            },
+            getCurrentEAR: { shown.value.last == "blink" ? (left: 0.1, right: 0.1) : (left: 0.3, right: 0.3) },
+            onAction: { _, action in shown.mutate { $0.append(action.type) } })
+        XCTAssertEqual(shown.value, ["blink", "turn_left", "turn_right"])
+        XCTAssertEqual(result.actionsCompleted, 3)
+        XCTAssertTrue(result.passed)
+        XCTAssertEqual(result.actions.map(\.label), ["Blink twice", "Turn head left", "Turn head right"],
+                       "the upload keeps RMAS's own labels")
+    }
+
+    func testFlashReflectionPutsEachColourOnScreenAndSeesItReflected() async {
+        let current = Locked<String?>(nil)
+        let calls = Locked<[String]>([])
+        let result = await FlashReflectionChallenge().run(
+            captureFrame: { Self.solid(current.value) },
+            onFlash: { i, hex in current.mutate { $0 = hex }; calls.mutate { $0.append("\(i):\(hex ?? "-")") } })
+        XCTAssertEqual(calls.value.count, 7, "off/on for three flashes, then off")
+        XCTAssertEqual(calls.value.last?.hasSuffix(":-"), true, "the screen ends clear")
+        XCTAssertTrue(result.passed)
+        XCTAssertGreaterThan(result.overallColorDelta, 3, "no longer the hard-reject floor")
+    }
+
+    func testInlinePromptCopyAndRing() {
+        let blink = InlineStepUpDisplay(.action(type: "blink", step: 0, steps: 3))
+        XCTAssertEqual(blink.title, "Blink twice")
+        XCTAssertEqual(blink.progress, 1.0 / 3, accuracy: 1e-9, "the ring shows amber from the first step")
+        XCTAssertNil(blink.flashColor)
+        XCTAssertEqual(InlineStepUpDisplay(.action(type: "turn_left", step: 2, steps: 3)).title, "Turn your head to the left")
+        let flash = InlineStepUpDisplay(.flash(color: "#FF0000", step: 3, steps: 6))
+        XCTAssertEqual(flash.title, "Hold still")
+        XCTAssertEqual(flash.subtitle, "Your screen will change colour")
+        XCTAssertEqual(flash.flashColor, "#FF0000")
+        XCTAssertEqual(flash.progress, 4.0 / 6, accuracy: 1e-9)
+    }
+
+    func testGuidedSessionRunsTheInlineStepUpAndPublishesItsPrompts() async throws {
+        let session = UseSenseSession(config: UseSenseConfig(apiKey: "pk_sandbox_x"), sessionType: .authentication)
+        session.injectHostedSessionData(try sessionResponse(policy: Self.inlinePolicy(enabled: true)))
+        let prompts = Locked<[InlineStepUpDisplay]>([])
+        session.onInlineStepUpUpdate = { d in prompts.mutate { $0.append(d) } }
+        let result = await session.runInlineStepUpForTesting(engine: SuspicionEngine(config: nil))
+        let r = try XCTUnwrap(result, "runs when the policy enables it")
+        XCTAssertEqual(r.challengesRun, ["rmas"])
+        XCTAssertEqual(r.rmas?.actionsTotal, 3)
+        XCTAssertEqual(prompts.value.first, .preparing)
+        XCTAssertEqual(prompts.value.dropFirst().count, 3, "each micro-action is shown")
+        if case .inlineStepUp = session.stateForTesting {} else { XCTFail(session.stateForTesting.debugName) }
+    }
+
+    func testInlineStepUpStaysOffWhenThePolicyDisablesIt() async throws {
+        let session = UseSenseSession(config: UseSenseConfig(apiKey: "pk_sandbox_x"), sessionType: .authentication)
+        session.injectHostedSessionData(try sessionResponse(policy: Self.inlinePolicy(enabled: false)))
+        let result = await session.runInlineStepUpForTesting(engine: SuspicionEngine(config: nil))
+        XCTAssertNil(result)
+    }
+
+    static func inlinePolicy(enabled: Bool) -> String {
+        #"{"requires_audio":false,"requires_stepup":false,"challenge_type":"none","inline_step_up":{"enabled":\#(enabled),"suspicion_threshold":55,"preferred_challenge":"rmas"}}"#
+    }
+
+    /// A frame that reflects `hex` strongly (grey when nil).
+    static func solid(_ hex: String?) -> UIImage {
+        var rgb: (CGFloat, CGFloat, CGFloat) = (0.5, 0.5, 0.5)
+        if let hex, let c = FlowAppearance.parseHexComponents(hex) {
+            rgb = (0.3 + 0.4 * c.r, 0.3 + 0.4 * c.g, 0.3 + 0.4 * c.b)
+        }
+        return UIGraphicsImageRenderer(size: CGSize(width: 40, height: 40)).image { ctx in
+            UIColor(red: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1).setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 40, height: 40))
+        }
+    }
+
     // MARK: Helpers
 
     private func decodeSpec(_ json: String) throws -> ChallengeSpecWrapper {
@@ -417,4 +503,13 @@ final class StubProtocol: URLProtocol {
     }
 
     override func stopLoading() {}
+}
+
+/// A value shared with escaping callbacks in tests.
+final class Locked<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: T
+    init(_ value: T) { stored = value }
+    var value: T { lock.lock(); defer { lock.unlock() }; return stored }
+    func mutate(_ body: (inout T) -> Void) { lock.lock(); body(&stored); lock.unlock() }
 }

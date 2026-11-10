@@ -117,6 +117,10 @@ public struct UseSenseView: View {
                                onClose: close,
                                busySecondary: viewModel.fallbackBusy)
 
+            case .inlineStepUp where viewModel.extraCheckOnScanScreen:
+                GuidedInlineStepUpView(camera: cameraLayer, display: viewModel.inlineStepUp,
+                                       onBack: viewModel.askToLeave)
+
             case .inlineStepUp(let phase):
                 ZStack {
                     cameraLayer
@@ -570,6 +574,7 @@ final class UseSenseViewModel: ObservableObject {
     // Guided extra check (storyboard flows 4 to 6)
     @Published var challenge = ChallengeDisplay.placeholder
     @Published var meter: [Double] = Array(repeating: 0, count: ExtraCheckTokens.meterBars)
+    @Published var inlineStepUp = InlineStepUpDisplay.preparing
     @Published var leavePrompt = false
     @Published var fallbackBusy = false
     /// "Try again" taps used from the reject screen in this verification.
@@ -647,7 +652,8 @@ final class UseSenseViewModel: ObservableObject {
         switch state {
         case .faceGuide, .baseline, .uploading, .completing: return !guided
         case .challenge: return !extraCheckOnScanScreen
-        case .zoom, .countdown, .inlineStepUp: return true
+        case .inlineStepUp: return !extraCheckOnScanScreen
+        case .zoom, .countdown: return true
         default: return false
         }
     }
@@ -683,6 +689,9 @@ final class UseSenseViewModel: ObservableObject {
         }
         session.onChallengeUpdate = { [weak self] display in
             DispatchQueue.main.async { self?.apply(challenge: display) }
+        }
+        session.onInlineStepUpUpdate = { [weak self] display in
+            DispatchQueue.main.async { self?.apply(inlineStepUp: display) }
         }
         session.onQualityUpdate = { [weak self] report in
             DispatchQueue.main.async {
@@ -724,7 +733,9 @@ final class UseSenseViewModel: ObservableObject {
             uploadBackdrop = nil
             doneHaptic.notificationOccurred(.success)
             announce(ExtraCheckCopy.done)
-        case .baseline, .zoom, .countdown, .inlineStepUp:
+        case .inlineStepUp:
+            if case .inlineStepUp = previous {} else { inlineStepUp = .preparing }
+        case .baseline, .zoom, .countdown:
             doneHaptic.prepare()
         case .uploading(let p):
             fillLight.restore()
@@ -747,6 +758,16 @@ final class UseSenseViewModel: ObservableObject {
             fallbackBusy = false
         }
         if case .micUnavailable = newState { fallbackBusy = false }
+    }
+
+    private func apply(inlineStepUp display: InlineStepUpDisplay) {
+        let old = inlineStepUp
+        inlineStepUp = display
+        // A flash lights the face: screen to full brightness while it runs.
+        if display.flashColor != nil { fillLight.activate() }
+        if display.title != old.title || display.subtitle != old.subtitle {
+            announce(display.subtitle.map { "\(display.title). \($0)" } ?? display.title)
+        }
     }
 
     private func apply(challenge display: ChallengeDisplay) {
