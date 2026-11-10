@@ -95,6 +95,9 @@ final class UseSenseAPIClient: @unchecked Sendable {
         set { uploadDelegate.onProgress = newValue }
     }
 
+    /// Test seam: URLProtocol stubs for every client created while set.
+    static var protocolClassesForTesting: [AnyClass]?
+
     init(config: UseSenseConfig) {
         self.config = config
 
@@ -103,6 +106,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
         // signals upload too -- at 120s it silently capped every slow uplink
         // no matter what the per-request timeout said.
         sessionConfig.timeoutIntervalForResource = Self.uploadTimeout
+        if let stubs = Self.protocolClassesForTesting { sessionConfig.protocolClasses = stubs }
         self.session = URLSession(
             configuration: sessionConfig,
             delegate: uploadDelegate,
@@ -278,6 +282,27 @@ final class UseSenseAPIClient: @unchecked Sendable {
         request.timeoutInterval = 60
 
         return try await performWithRetry(request)
+    }
+
+    // MARK: - Challenge fallback (Speak Digits -> Follow Dot)
+
+    /// Swap the session's Speak Digits challenge for Follow Dot because the
+    /// microphone can't be used. Returns the session's new policy.
+    func requestChallengeFallback(
+        sessionId: String, sessionToken: String, nonce: String,
+        reason: ChallengeFallbackReason = .microphoneUnavailable
+    ) async throws -> ChallengeFallbackResponse {
+        self.sessionToken = sessionToken
+        self.nonce = nonce
+
+        var request = URLRequest(url: buildURL(path: "/sessions/\(sessionId)/challenge-fallback", includeNonce: true))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyHeaders(&request, includeSession: true)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["reason": reason.rawValue])
+        request.timeoutInterval = 15
+
+        return try await perform(request)
     }
 
     // MARK: - Hosted Page Endpoints

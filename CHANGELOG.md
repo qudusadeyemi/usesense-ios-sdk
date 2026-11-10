@@ -6,6 +6,61 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [4.11.0] - Unreleased
+
+Built against the agreed end-user storyboard (flows 4 to 6). Screens checked
+on an iPhone 16 simulator with a synthetic face; not yet run on a device
+against staging.
+
+### Added
+
+- **Extra check on the scan screen.** When the server asks for an extra check
+  after the scan (step-up round 2, `step_up_v1`), a "One more quick check"
+  sheet says what is next in one sentence, then Head Turn or Follow Dot runs
+  on the scan screen itself: full-bleed camera, the oval ring in purple,
+  a side arrow ("Turn your head to the left", "Now to the right") or an amber
+  dot with a dashed trail ("Follow the dot with your head"). A short green
+  tick, then the upload sheet and the result. Replaces the countdown and the
+  old challenge overlays on guided screens.
+- **Extra check before the scan.** A session whose policy already has a
+  challenge opens with "Two quick steps", and the movement follows straight
+  on from the scan on the same screen, with no countdown or sheet. The scan
+  before it is gated like the passive scan.
+- **Speak Digits on the scan screen**: the digits in a pill at the top, a live
+  microphone meter under the oval, "We can't hear you / Speak a little louder"
+  after 2 s of silence. The digits' response is sent as
+  `audio_challenge_response`.
+- **Microphone fallback.** A refused microphone (or no input) shows
+  "Microphone needed" with "Open Settings" and "Do a head movement instead".
+  The second calls `POST /v1/sessions/:id/challenge-fallback`
+  (`{"reason":"microphone_unavailable"}`), and the capture carries on with
+  the Follow Dot the server returns.
+- **Never fails on the device.** The face leaving the oval pauses the
+  challenge (amber ring, "Move your face to the centre / Then keep turning",
+  or "The dot will wait for you"), then it resumes. A Head Turn step that was
+  clearly too short gets one retry with a hint ("Let's try that again / Turn
+  a little further to the left"); after that the server decides.
+- **"Leave verification?"** on back during an extra check (the challenge
+  holds while it is open). Leaving ends the verification.
+- **New result and error pages** on guided screens: verified, checking,
+  couldn't verify (with or without "Try again" and tips), camera access
+  needed (Open Settings / Try again), the camera stopped, offline, timed out,
+  something went wrong, and a "Couldn't send your scan" sheet that resends
+  the kept scan.
+- `SDKOptions.showsResultScreen` (default true): false reports the decision
+  without the SDK's result screen.
+- `SDKOptions.retriesAfterReject` (default 0): how many times the person may
+  try again from "We couldn't verify you". Standalone sessions only.
+
+### Changed
+
+- Guided screens ask for camera and microphone permission with the system
+  prompt directly, without the "Camera Access Required" card.
+- Guided screens no longer run the client-side inline step-up (Flash
+  Reflection / RMAS) behind the "Additional Verification" overlay; the
+  server's extra check replaces it. `guidedCaptureEnabled: false` keeps the
+  previous screens and behaviour unchanged.
+
 ## [4.10.0] - 2026-11-10
 
 Tested on an iPhone 17 Pro against the sandbox API, and on an iPhone 16

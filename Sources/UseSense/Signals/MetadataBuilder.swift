@@ -54,7 +54,10 @@ final class MetadataBuilder: @unchecked Sendable {
         zoomMotion: [String: Any]? = nil,
 
         // COVER-v1 section 3: covered-face scores (guided capture only)
-        coveredCheck: [String: Any]? = nil
+        coveredCheck: [String: Any]? = nil,
+
+        // Speak Digits shown on the guided screen: {type, seed, completed, started_at, completed_at}
+        audioChallengeResponse: [String: Any]? = nil
     ) throws -> Data {
         var metadata: [String: Any] = [:]
 
@@ -147,6 +150,7 @@ final class MetadataBuilder: @unchecked Sendable {
         metadata["channel_integrity"] = ci
         metadata["device_telemetry"] = deviceTelemetry
         if let coveredCheck { metadata["covered_check"] = coveredCheck }
+        if let audioChallengeResponse { metadata["audio_challenge_response"] = audioChallengeResponse }
 
         return try JSONSerialization.data(withJSONObject: metadata, options: [.prettyPrinted, .sortedKeys])
     }

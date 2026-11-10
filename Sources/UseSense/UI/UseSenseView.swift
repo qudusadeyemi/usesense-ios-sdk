@@ -37,11 +37,21 @@ public struct UseSenseView: View {
                 permissionsView
 
             case .cameraError(let message):
-                cameraErrorView(message: message)
+                if viewModel.guided {
+                    GuidedPageView(content: GuidedScreen.cameraStopped.content(),
+                                   onPrimary: { viewModel.retry() }, onClose: close)
+                } else {
+                    cameraErrorView(message: message)
+                }
 
             case .instructions(let challenge):
-                InstructionsView(challenge: challenge) {
-                    viewModel.continueFromInstructions()
+                if viewModel.guided {
+                    GuidedPageView(content: GuidedScreen.primerTwoSteps(digits: challenge.challengeType == .speakPhrase).content(),
+                                   onPrimary: { viewModel.continueFromInstructions() }, onClose: close)
+                } else {
+                    InstructionsView(challenge: challenge) {
+                        viewModel.continueFromInstructions()
+                    }
                 }
 
             case .faceGuide:
@@ -74,12 +84,38 @@ public struct UseSenseView: View {
                 }
 
             case .challenge(let spec):
-                ZStack {
-                    cameraLayer
-                    BaselineOvalView()
-                    challengeOverlay(spec)
-                    captureOverlayChrome(phase: "VERIFYING")
+                if viewModel.extraCheckOnScanScreen {
+                    GuidedChallengeView(camera: cameraLayer, display: viewModel.challenge,
+                                        meter: viewModel.meter, onBack: viewModel.askToLeave)
+                } else {
+                    ZStack {
+                        cameraLayer
+                        BaselineOvalView()
+                        challengeOverlay(spec)
+                        captureOverlayChrome(phase: "VERIFYING")
+                    }
                 }
+
+            case .extraCheckIntro(let spec):
+                GuidedSheetScreen(backdrop: viewModel.uploadBackdropImage, onBack: viewModel.askToLeave) {
+                    GuidedSheet(icon: ExtraCheckIcons.symbol(spec.challengeType),
+                                title: ExtraCheckCopy.sheetTitle,
+                                message: ExtraCheckCopy.sheetBody(for: spec),
+                                primary: ExtraCheckCopy.continueButton,
+                                onPrimary: { viewModel.extraCheckContinue() })
+                    .accessibilityIdentifier("usesense.extracheck.sheet")
+                }
+
+            case .extraCheckDone:
+                GuidedChallengeView(camera: cameraLayer, display: viewModel.challenge, done: true,
+                                    onBack: viewModel.askToLeave)
+
+            case .micUnavailable:
+                GuidedPageView(content: GuidedScreen.micNeeded.content(),
+                               onPrimary: { viewModel.openSettings() },
+                               onSecondary: { viewModel.useMovementInstead() },
+                               onClose: close,
+                               busySecondary: viewModel.fallbackBusy)
 
             case .inlineStepUp(let phase):
                 ZStack {
@@ -129,6 +165,25 @@ public struct UseSenseView: View {
                     )
                 }
 
+            case .done(let decision) where !viewModel.showsResultScreen:
+                Color.black.ignoresSafeArea()
+                    .onAppear { onComplete(.success(decision)) }
+
+            case .done(let decision) where viewModel.guided:
+                let screen = GuidedScreen.forDecision(decision.decision, retriesLeft: viewModel.rejectRetriesLeft)
+                GuidedPageView(content: screen.content(),
+                               onPrimary: {
+                                   if case .rejected(true, _) = screen {
+                                       viewModel.retryAfterReject()
+                                   } else {
+                                       onComplete(.success(decision))
+                                   }
+                               },
+                               onSecondary: { onComplete(.success(decision)) })
+
+            case .error(let error) where viewModel.guided && error.code != .userCancelled:
+                guidedError(error)
+
             case .done(let decision):
                 ResultView(decision: decision,
                            headerLogoURL: viewModel.showsHeader ? viewModel.headerLogoURL : nil,
@@ -159,6 +214,15 @@ public struct UseSenseView: View {
         .overlay(alignment: .bottom) {
             if viewModel.showsCaptureFooter { CaptureFooter() }
         }
+        .overlay {
+            if viewModel.leavePrompt {
+                LeaveVerificationDialog(onLeave: close, onStay: viewModel.keepGoing)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: viewModel.leavePrompt)
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            viewModel.appBecameActive()
+        }
         .statusBarHidden(viewModel.isCameraActive)
         .onDisappear { viewModel.restoreScreen() }
     }
@@ -166,6 +230,53 @@ public struct UseSenseView: View {
     private func close() {
         viewModel.cancel()
         onCancel?()
+    }
+
+    // MARK: - Guided errors (storyboard flow 6)
+
+    @ViewBuilder
+    private func guidedError(_ error: UseSenseError) -> some View {
+        let screen = GuidedScreen.forError(error, canResume: viewModel.canResumeFinalization)
+        let action = errorAction(error)
+        switch screen {
+        case .uploadFailed:
+            GuidedSheetScreen(backdrop: viewModel.uploadBackdropImage, onBack: close) {
+                GuidedSheet(icon: "arrow.up", iconFill: CaptureColors.current.warning.color.opacity(0.16),
+                            iconInk: CaptureColors.current.warning.color,
+                            title: screen.content().title, message: screen.content().body,
+                            primary: screen.content().primary, onPrimary: { viewModel.resumeFinalization() })
+                .accessibilityIdentifier("usesense.upload.failed")
+            }
+        case .cameraDenied:
+            GuidedPageView(content: screen.content(),
+                           onPrimary: { viewModel.openSettings() },
+                           onSecondary: { viewModel.retry() },
+                           onClose: close)
+        default:
+            GuidedPageView(content: Self.relabel(screen.content(), primary: action.label),
+                           onPrimary: action.run, onClose: close)
+        }
+    }
+
+    private static func relabel(_ content: GuidedScreen.Content, primary: String) -> GuidedScreen.Content {
+        var c = content
+        c.primary = primary
+        return c
+    }
+
+    /// What the error page's button does: send the kept capture again, start
+    /// a clean attempt here, or hand the error back to the app.
+    private func errorAction(_ error: UseSenseError) -> (label: String, run: () -> Void) {
+        if error.isRetryable && viewModel.canResumeFinalization {
+            return ("Try again", { viewModel.resumeFinalization() })
+        }
+        let expired = error.code == .sessionExpired || error.code == .tokenExpired
+        let cameraStopped = GuidedScreen.forError(error, canResume: false) == .cameraStopped
+        if (error.isRetryable || expired || cameraStopped) && viewModel.canRestartInPlace
+            && (!expired || viewModel.ownsSession) {
+            return (expired ? "Start again" : "Try again", { viewModel.retry() })
+        }
+        return ("Done", { onComplete(.failure(error)) })
     }
 
     // MARK: - Camera Views
@@ -456,6 +567,15 @@ final class UseSenseViewModel: ObservableObject {
     @Published var scan = ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: 0, completed: false)
     @Published var uploadBackdrop: UIImage?
 
+    // Guided extra check (storyboard flows 4 to 6)
+    @Published var challenge = ChallengeDisplay.placeholder
+    @Published var meter: [Double] = Array(repeating: 0, count: ExtraCheckTokens.meterBars)
+    @Published var leavePrompt = false
+    @Published var fallbackBusy = false
+    /// "Try again" taps used from the reject screen in this verification.
+    private var rejectRetriesUsed = 0
+    private var meterTick = 0
+
     private let session: UseSenseSession
     private let fillLight = ScreenFillLight()
     private let readyHaptic = UIImpactFeedbackGenerator(style: .light)
@@ -464,6 +584,12 @@ final class UseSenseViewModel: ObservableObject {
     static let announcementInterval: TimeInterval = 1.2
 
     var guided: Bool { session.guidedCapture }
+    /// The challenge is drawn on the scan screen (guided, not v4).
+    var extraCheckOnScanScreen: Bool { session.guidedExtraCheck }
+    var showsResultScreen: Bool { session.showsResultScreen }
+    var rejectRetriesLeft: Int { max(0, session.retriesAfterReject - rejectRetriesUsed) }
+    /// A self-created session (this object can mint a new one).
+    var ownsSession: Bool { session.ownsSession }
     var contourField: ContourDepthField { session.contourField }
     var scanSecondsForCopy: Int { session.guidedScanSeconds }
 
@@ -520,7 +646,8 @@ final class UseSenseViewModel: ObservableObject {
     var showsCaptureFooter: Bool {
         switch state {
         case .faceGuide, .baseline, .uploading, .completing: return !guided
-        case .zoom, .countdown, .challenge, .inlineStepUp: return true
+        case .challenge: return !extraCheckOnScanScreen
+        case .zoom, .countdown, .inlineStepUp: return true
         default: return false
         }
     }
@@ -530,7 +657,7 @@ final class UseSenseViewModel: ObservableObject {
 
     var isCameraActive: Bool {
         switch state {
-        case .faceGuide, .baseline, .countdown, .challenge, .inlineStepUp: return true
+        case .faceGuide, .baseline, .countdown, .challenge, .inlineStepUp, .extraCheckDone: return true
         default: return false
         }
     }
@@ -554,6 +681,9 @@ final class UseSenseViewModel: ObservableObject {
         session.onScanUpdate = { [weak self] progress in
             DispatchQueue.main.async { self?.apply(scan: progress) }
         }
+        session.onChallengeUpdate = { [weak self] display in
+            DispatchQueue.main.async { self?.apply(challenge: display) }
+        }
         session.onQualityUpdate = { [weak self] report in
             DispatchQueue.main.async {
                 self?.qualityGuidance = report.guidanceMessages
@@ -569,6 +699,7 @@ final class UseSenseViewModel: ObservableObject {
     // MARK: Guided capture
 
     private func apply(state newState: SessionState) {
+        let previous = state
         state = newState
         switch newState {
         case .faceGuide:
@@ -579,7 +710,21 @@ final class UseSenseViewModel: ObservableObject {
             #endif
             scan = ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: 0, completed: false)
             readyHaptic.prepare()
-        case .baseline, .zoom, .countdown, .challenge, .inlineStepUp:
+        case .challenge(let spec):
+            if extraCheckOnScanScreen, case .challenge = previous {} else {
+                challenge = ChallengeRunner(spec: spec)?.display() ?? .placeholder
+                meter = Array(repeating: 0, count: ExtraCheckTokens.meterBars)
+            }
+            doneHaptic.prepare()
+        case .extraCheckIntro:
+            // Round 2 gets its own upload bar and backdrop.
+            uploadBarState = nil
+            fillLight.restore()
+        case .extraCheckDone:
+            uploadBackdrop = nil
+            doneHaptic.notificationOccurred(.success)
+            announce(ExtraCheckCopy.done)
+        case .baseline, .zoom, .countdown, .inlineStepUp:
             doneHaptic.prepare()
         case .uploading(let p):
             fillLight.restore()
@@ -595,6 +740,24 @@ final class UseSenseViewModel: ObservableObject {
             }
         default:
             fillLight.restore()
+        }
+        if newState.isTerminal || newState.isIdle {
+            if leavePrompt { session.setChallengeHeld(false) }
+            leavePrompt = false
+            fallbackBusy = false
+        }
+        if case .micUnavailable = newState { fallbackBusy = false }
+    }
+
+    private func apply(challenge display: ChallengeDisplay) {
+        let old = challenge
+        challenge = display
+        if display.kind == .digits {
+            meterTick &+= 1
+            if meterTick % 2 == 0 { meter = Array(meter.dropFirst()) + [display.level] }
+        }
+        if display.title != old.title || display.subtitle != old.subtitle {
+            announce(display.subtitle.map { "\(display.title). \($0)" } ?? display.title)
         }
     }
 
@@ -678,6 +841,44 @@ final class UseSenseViewModel: ObservableObject {
 
     func cancel() {
         session.cancel()
+    }
+
+    // MARK: Guided extra check
+
+    func extraCheckContinue() { Task { await session.extraCheckContinue() } }
+
+    /// Back mid extra check: confirm first; the challenge holds meanwhile.
+    func askToLeave() {
+        session.setChallengeHeld(true)
+        leavePrompt = true
+    }
+
+    func keepGoing() {
+        leavePrompt = false
+        session.setChallengeHeld(false)
+    }
+
+    func useMovementInstead() {
+        guard !fallbackBusy else { return }
+        fallbackBusy = true
+        Task { await session.useMovementInstead() }
+    }
+
+    func openSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
+    /// Back from Settings: carry on if the microphone is now allowed.
+    func appBecameActive() {
+        if case .micUnavailable = state, AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
+            Task { await session.retryMicrophone() }
+        }
+    }
+
+    func retryAfterReject() {
+        rejectRetriesUsed += 1
+        retry()
     }
 }
 #endif

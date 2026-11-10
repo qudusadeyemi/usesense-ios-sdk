@@ -181,12 +181,26 @@ public struct SDKOptions: Sendable {
     /// unchanged. Defaults to true; false restores the "I'm Ready" screen.
     public var guidedCaptureEnabled: Bool
 
+    /// Show the SDK's result screen ("You're verified", "We couldn't verify
+    /// you", ...) before reporting the decision. False reports the decision
+    /// as soon as it arrives, so the app can show its own screen. Defaults to
+    /// true. Error screens are always shown.
+    public var showsResultScreen: Bool
+
+    /// How many times the person may try again from the "We couldn't verify
+    /// you" screen (guided capture). 0, the default, shows no "Try again":
+    /// the screen points back to the app. Ignored for sessions handed in by a
+    /// Flow or a hosted page, which follow their own retry policy.
+    public var retriesAfterReject: Int
+
     public init(
         audioEnabled: AudioMode = .riskBased, stepUpPolicy: StepUpPolicy = .riskBased,
         captureDurationMs: Int = 8000, targetFps: Int = 3, maxFrames: Int = 30, maxUploadSizeMb: Int = 10,
         antispoofOnDeviceEnabled: Bool = false,
         liveSenseV4Enabled: Bool = false,
-        guidedCaptureEnabled: Bool = true
+        guidedCaptureEnabled: Bool = true,
+        showsResultScreen: Bool = true,
+        retriesAfterReject: Int = 0
     ) {
         self.audioEnabled = audioEnabled
         self.stepUpPolicy = stepUpPolicy
@@ -197,6 +211,8 @@ public struct SDKOptions: Sendable {
         self.antispoofOnDeviceEnabled = antispoofOnDeviceEnabled
         self.liveSenseV4Enabled = liveSenseV4Enabled
         self.guidedCaptureEnabled = guidedCaptureEnabled
+        self.showsResultScreen = showsResultScreen
+        self.retriesAfterReject = max(0, retriesAfterReject)
     }
 }
 

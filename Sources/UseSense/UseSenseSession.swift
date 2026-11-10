@@ -14,6 +14,9 @@ public final class UseSenseSession: @unchecked Sendable {
     var onGuideUpdate: ((GuidedCaptureUpdate) -> Void)?
     /// Guided capture: scan ring progress (called from the scan task).
     var onScanUpdate: ((ScanProgress) -> Void)?
+    /// Guided extra check: what the challenge screen draws (called from the
+    /// challenge task, ~20 Hz).
+    var onChallengeUpdate: ((ChallengeDisplay) -> Void)?
     /// The contour scan's depth texture (mesh z, smoothed).
     let contourField = ContourDepthField()
     /// COVER-v1: segmentation of the face area on its own queue (gate only).
@@ -199,6 +202,21 @@ public final class UseSenseSession: @unchecked Sendable {
     static let guidedScanDuration: TimeInterval = 3
     static let guidedMaxFps = 12
 
+    // MARK: Guided extra check (storyboard flows 4 and 5)
+
+    /// The "Two quick steps" primer has been shown for this session.
+    private var primerShown = false
+    /// What the camera saw for the running challenge (guarded by `guideLock`).
+    private var challengeFacePresent = false
+    private var challengeYaw: Double?
+    private var challengePitch: Double?
+    /// The "Leave verification?" dialog is open: the challenge holds still.
+    private var challengeHeld = false
+    /// Speak Digits ran on screen: its response goes in the upload.
+    private var audioChallengeResponse: [String: Any]?
+    /// The green tick after an extra check.
+    static let extraCheckDoneSeconds: TimeInterval = 0.8
+
     // MARK: - Init
 
     public convenience init(
@@ -351,6 +369,12 @@ public final class UseSenseSession: @unchecked Sendable {
 
             eventEmitter.emit(.sessionCreated, data: ["session_id": data.sessionId])
             currentState = .created(session: data)
+            // Guided: a check known before the scan is announced up front
+            // ("Two quick steps"), before the camera permission prompt.
+            if guidedCapture, !primerShown, let check = beforeScanCheck {
+                currentState = .instructions(challenge: check)
+                return
+            }
             await checkPermissions()
         } catch let error as UseSenseError {
             handleError(error)
@@ -381,17 +405,26 @@ public final class UseSenseSession: @unchecked Sendable {
         }
 
         if needsAudio {
+            // Guided Speak Digits never dead-ends on the microphone: no input
+            // or a refusal offers Settings or a head movement instead.
+            let offerMovement = guidedSpeakDigits
+            if offerMovement, !AVAudioSession.sharedInstance().isInputAvailable {
+                USTrace.log("mic: no audio input available")
+                currentState = .micUnavailable
+                return
+            }
             let micStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+            var micGranted = micStatus == .authorized
             if micStatus == .notDetermined {
-                let granted = await AVCaptureDevice.requestAccess(for: .audio)
-                if !granted {
-                    eventEmitter.emit(.permissionsDenied, data: ["type": "microphone"])
-                    handleError(UseSenseError(code: .micPermissionDenied))
-                    return
-                }
-            } else if micStatus == .denied || micStatus == .restricted {
+                micGranted = await AVCaptureDevice.requestAccess(for: .audio)
+            }
+            if !micGranted {
                 eventEmitter.emit(.permissionsDenied, data: ["type": "microphone"])
-                handleError(UseSenseError(code: .micPermissionDenied))
+                if offerMovement {
+                    currentState = .micUnavailable
+                } else {
+                    handleError(UseSenseError(code: .micPermissionDenied))
+                }
                 return
             }
         }
@@ -401,7 +434,90 @@ public final class UseSenseSession: @unchecked Sendable {
     }
 
     func proceedFromInstructions() async {
-        await runAttempt { await self.startFaceGuide() }
+        if guidedCapture {
+            // The guided primer comes before the permission prompts.
+            primerShown = true
+            await runAttempt { await self.checkPermissions() }
+        } else {
+            await runAttempt { await self.startFaceGuide() }
+        }
+    }
+
+    // MARK: Guided extra check: entry points
+
+    /// The check this session runs on the scan screen right after the scan
+    /// (the policy's challenge, or Speak Digits), if any.
+    var beforeScanCheck: ChallengeSpecWrapper? {
+        guard let policy = sessionData?.policy else { return nil }
+        if let challenge = policy.challenge { return challenge }
+        return policy.audioChallenge.map { .speakPhrase($0) }
+    }
+
+    /// Guided Speak Digits (an audio challenge and no visual one).
+    private var guidedSpeakDigits: Bool {
+        guard guidedCapture, let policy = sessionData?.policy else { return false }
+        return policy.challenge == nil && policy.audioChallenge != nil
+    }
+
+    /// Integrator options for the end of the flow.
+    var showsResultScreen: Bool { config.options?.showsResultScreen ?? true }
+    var ownsSession: Bool { !sessionInjected && clientToken == nil }
+    var retriesAfterReject: Int { sessionInjected ? 0 : (config.options?.retriesAfterReject ?? 0) }
+
+    /// The extra check runs on the scan screen (guided, not LiveSense v4).
+    var guidedExtraCheck: Bool {
+        guidedCapture && config.options?.liveSenseV4Enabled != true
+    }
+
+    /// "Continue" on the "One more quick check" sheet.
+    func extraCheckContinue() async {
+        await runAttempt { await self.runExtraCheck() }
+    }
+
+    /// The person came back from Settings with the microphone allowed.
+    func retryMicrophone() async {
+        guard case .micUnavailable = storedState else { return }
+        await runAttempt { await self.runRequestPermissions() }
+    }
+
+    /// "Do a head movement instead": the server swaps Speak Digits for
+    /// Follow Dot, then the capture carries on without the microphone.
+    func useMovementInstead() async {
+        await runAttempt { await self.runMovementFallback() }
+    }
+
+    private func runMovementFallback() async {
+        guard claimOnce("challenge-fallback"), let data = sessionData else { return }
+        do {
+            let response = try await apiClient.requestChallengeFallback(
+                sessionId: data.sessionId, sessionToken: data.sessionToken, nonce: data.nonce)
+            sessionData?.policy = response.policy
+            USTrace.log("mic: challenge fallback -> \(response.policy.challengeType)")
+            await runRequestPermissions()
+        } catch let error as UseSenseError {
+            releaseClaim("challenge-fallback")
+            handleError(Self.fallbackError(error))
+        } catch {
+            releaseClaim("challenge-fallback")
+            handleError(UseSenseError(code: .networkError, message: error.localizedDescription, isRetryable: true))
+        }
+    }
+
+    /// The fallback's 409s (`capture_already_uploaded`, `fallback_not_allowed`)
+    /// are not "token already used": nothing about them is the person's
+    /// connection or session age, so they read as a plain error.
+    static func fallbackError(_ error: UseSenseError) -> UseSenseError {
+        switch error.details {
+        case "capture_already_uploaded", "fallback_not_allowed":
+            return UseSenseError(code: .invalidRequest, message: error.message, details: error.details, isRetryable: false)
+        default:
+            return error
+        }
+    }
+
+    /// The "Leave verification?" dialog holds the running challenge.
+    func setChallengeHeld(_ held: Bool) {
+        guideLock.lock(); challengeHeld = held; guideLock.unlock()
     }
 
     func faceReady() async {
@@ -534,9 +650,15 @@ public final class UseSenseSession: @unchecked Sendable {
             // The old session may already hold this attempt's signals.
             sessionData = nil
         }
+        if sessionData?.isExpired == true && !sessionInjected && clientToken == nil {
+            // An expired session can't be used again: mint a new one.
+            sessionData = nil
+        }
         uploadAttempted = false
         stepUpResult = nil
         serverStepUp = nil
+        primerShown = false
+        audioChallengeResponse = nil
         resetGuidedState()
         framesDropped = 0
         frameBuffer.reset()
@@ -587,6 +709,9 @@ public final class UseSenseSession: @unchecked Sendable {
         if needed.isEmpty {
             eventEmitter.emit(.permissionsGranted)
             await startCapturePipeline()
+        } else if guidedCapture {
+            // Guided: straight to the system prompt (no extra screen first).
+            await runRequestPermissions()
         } else {
             currentState = .permissionsRequired(permissions: needed)
         }
@@ -613,7 +738,7 @@ public final class UseSenseSession: @unchecked Sendable {
         setCameraLive(false)
         frameCaptureManager.start()
 
-        if let challenge = sessionData?.policy.challenge {
+        if !guidedCapture, let challenge = sessionData?.policy.challenge {
             currentState = .instructions(challenge: challenge)
         } else {
             await startFaceGuide()
@@ -852,8 +977,10 @@ public final class UseSenseSession: @unchecked Sendable {
 
             let captureDurationMs = sessionData?.upload.captureDurationMs ?? config.options?.captureDurationMs ?? 8000
             // Guided passive scan: one gated window covers baseline + capture
-            // (the same frames as before). Challenge and v4 sessions are
-            // gated at the start only: a head turn needs pose "failures".
+            // (the same frames as before). A session with a challenge gates
+            // its baseline-length scan the same way, then runs the movement
+            // ungated (a head turn needs pose "failures"). v4 is gated at the
+            // start only.
             let singleGatedScan = guidedCapture
                 && sessionData?.policy.challenge == nil
                 && config.options?.liveSenseV4Enabled != true
@@ -871,8 +998,16 @@ public final class UseSenseSession: @unchecked Sendable {
                     await returnToAlign()
                     return
                 }
+            } else if guidedExtraCheck {
+                // A check known before the scan: the same gated scan (the
+                // baseline's length, frames as before), then the movement
+                // follows on the same screen with no countdown.
+                guard try await runGatedScan(duration: baselineDuration) else {
+                    await returnToAlign()
+                    return
+                }
             } else if guidedCapture {
-                // Challenge / v4 baseline: not gated, but the ring still fills.
+                // v4 baseline: not gated, but the ring still fills.
                 let start = Date()
                 while Date().timeIntervalSince(start) < baselineDuration {
                     try await Task.sleep(nanoseconds: 50_000_000)
@@ -891,7 +1026,7 @@ public final class UseSenseSession: @unchecked Sendable {
                 await runZoomPhase()
             }
 
-            if sessionData?.policy.challenge != nil {
+            if sessionData?.policy.challenge != nil && !guidedExtraCheck {
                 for i in stride(from: 3, through: 1, by: -1) {
                     currentState = .countdown(number: i)
                     try await Task.sleep(nanoseconds: 1_000_000_000)
@@ -902,24 +1037,135 @@ public final class UseSenseSession: @unchecked Sendable {
             if let challenge = sessionData?.policy.challenge {
                 eventEmitter.emit(.challengeStarted, data: ["type": challenge.challengeType.rawValue])
                 frameBuffer.setCapturePhase(.challenge)
+                guard guidedExtraCheck else {
+                    // Legacy: the challenge view drives it and calls challengeCompleted().
+                    currentState = .challenge(spec: challenge)
+                    return
+                }
+                isCapturingFrames = true
                 currentState = .challenge(spec: challenge)
+                try await runGuidedChallenge(challenge)
+                challengeResponseBuilder.markCompleted()
+                eventEmitter.emit(.challengeCompleted)
+                try await finishCaptureAndUpload(inlineStepUp: false)
             } else {
                 if !singleGatedScan {
                     try await Task.sleep(nanoseconds: UInt64(captureDurationMs) * 1_000_000)
                 }
                 isCapturingFrames = false
-
-                // Check suspicion engine before stopping camera
-                if let engine = suspicionEngine, engine.shouldTriggerStepUp() {
-                    await runInlineStepUp(engine: engine)
+                if guidedExtraCheck, let audio = sessionData?.policy.audioChallenge {
+                    try await runGuidedSpeakDigits(audio)
                 }
-
-                frameCaptureManager.stop()
-                captureEndTime = Date()
-                deviceSignalCollector.stopSensorCollection()
-                await stopAudioIfNeeded()
-                try await uploadAndCompleteWithSafetyNet()
+                try await finishCaptureAndUpload(inlineStepUp: !guidedExtraCheck)
             }
+        } catch is CancellationError {
+            return
+        } catch {
+            handleError(UseSenseError(code: .unknownError, message: "Unexpected error: \(error.localizedDescription)"))
+        }
+    }
+
+    /// The capture is over: stop the camera, mic and sensors, then upload.
+    /// `inlineStepUp`: run the client-side suspicion step-up first (legacy
+    /// screens only; the guided flow's extra check is the server's round 2).
+    private func finishCaptureAndUpload(inlineStepUp: Bool) async throws {
+        isCapturingFrames = false
+        if inlineStepUp, let engine = suspicionEngine, engine.shouldTriggerStepUp() {
+            await runInlineStepUp(engine: engine)
+        }
+        frameCaptureManager.stop()
+        captureEndTime = Date()
+        deviceSignalCollector.stopSensorCollection()
+        await stopAudioIfNeeded()
+        try await uploadAndCompleteWithSafetyNet()
+    }
+
+    // MARK: - Guided extra check
+
+    /// Speak Digits on the scan screen: the digits, a live level meter, and
+    /// the audio already recording since the scan began.
+    private func runGuidedSpeakDigits(_ spec: SpeakPhraseChallenge) async throws {
+        let wrapper = ChallengeSpecWrapper.speakPhrase(spec)
+        let started = Self.isoNow()
+        eventEmitter.emit(.challengeStarted, data: ["type": ChallengeType.speakPhrase.rawValue])
+        currentState = .challenge(spec: wrapper)
+        try await runGuidedChallenge(wrapper)
+        eventEmitter.emit(.challengeCompleted)
+        audioChallengeResponse = [
+            "type": ChallengeType.speakPhrase.rawValue,
+            "seed": spec.seed,
+            "completed": true,
+            "started_at": started,
+            "completed_at": Self.isoNow(),
+        ]
+    }
+
+    private static func isoNow() -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.string(from: Date())
+    }
+
+    /// Runs a challenge on the scan screen until its timeline completes. It
+    /// pauses while the face is out of the oval (or the leave dialog is open)
+    /// and never fails on the device; the server judges the frames.
+    private func runGuidedChallenge(_ spec: ChallengeSpecWrapper) async throws {
+        guard var runner = ChallengeRunner(spec: spec) else { return }
+        guideLock.lock()
+        challengeFacePresent = false
+        challengeYaw = nil
+        challengePitch = nil
+        challengeHeld = false
+        guideLock.unlock()
+        let isDigits = runner.plan.isDigits
+        if isDigits { audioCaptureManager.enableMetering() }
+        let clock = Date()
+        var lastStep = -1
+        while true {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            try Task.checkCancellation()
+            guideLock.lock()
+            var obs = ChallengeObservation(time: Date().timeIntervalSince(clock), facePresent: challengeFacePresent,
+                                           yaw: challengeYaw, pitch: challengePitch, held: challengeHeld)
+            guideLock.unlock()
+            if isDigits { obs.level = audioCaptureManager.level() }
+            let display = runner.advance(obs)
+            if runner.specStepIndex != lastStep {
+                lastStep = runner.specStepIndex
+                challengeResponseBuilder.setCurrentStep(lastStep)
+            }
+            onChallengeUpdate?(display)
+            if display.finished { break }
+        }
+        USTrace.log("challenge: \(spec.challengeType.rawValue) finished, retries left \(runner.retriesLeft)")
+    }
+
+    /// Round 2, after "Continue": the challenge on the scan screen, a short
+    /// tick, then its upload and the result.
+    private func runExtraCheck() async {
+        guard claimOnce("extra-check"), let stepUp = serverStepUp else { return }
+        do {
+            watchdog?.arm(.capture, budget: captureBudget)
+            guard try await waitForFirstFrame() else {
+                handleError(UseSenseError(code: .noFramesCaptured,
+                                          details: "camera delivered no frame within \(Int(firstFrameBudget))s",
+                                          isRetryable: true))
+                return
+            }
+            captureStartTime = Date()
+            challengeResponseBuilder.markStarted()
+            frameBuffer.setCapturePhase(.challenge)
+            eventEmitter.emit(.challengeStarted, data: ["type": stepUp.challenge.challengeType.rawValue, "round": "2"])
+            isCapturingFrames = true
+            currentState = .challenge(spec: stepUp.challenge)
+            try await runGuidedChallenge(stepUp.challenge)
+            isCapturingFrames = false
+            challengeResponseBuilder.markCompleted()
+            eventEmitter.emit(.challengeCompleted)
+            currentState = .extraCheckDone
+            try await Task.sleep(nanoseconds: UInt64(Self.extraCheckDoneSeconds * 1_000_000_000))
+            serverStepUp = nil
+            await finishServerStepUpRound(stepUp)
         } catch is CancellationError {
             return
         } catch {
@@ -1261,7 +1507,8 @@ public final class UseSenseSession: @unchecked Sendable {
                 zoomMotion: config.options?.liveSenseV4Enabled == true
                     ? buildZoomMotionStats(framePhases: frameBuffer.getFramePhases())
                     : nil,
-                coveredCheck: coveredCheckJSON()
+                coveredCheck: coveredCheckJSON(),
+                audioChallengeResponse: audioChallengeResponse
             )
         } catch {
             handleError(UseSenseError(code: .unknownError, message: "Failed to build metadata."))
@@ -1342,11 +1589,21 @@ public final class UseSenseSession: @unchecked Sendable {
     /// `challengeCompleted()`, which hands off to `finishServerStepUpRound`.
     private func startServerStepUpRound(_ stepUp: StepUpInstruction) async {
         serverStepUp = stepUp
-        watchdog?.arm(.capture, budget: captureBudget)
         frameBuffer.reset()
         challengeResponseBuilder.reset()
         reconfigureFrameBuffer(maxFrames: stepUp.maxFrames, targetFps: sessionData?.upload.targetFps ?? 3)
+        setCameraLive(false)
         frameCaptureManager.start()
+        if guidedExtraCheck {
+            // "One more quick check": one sentence, one button. The camera
+            // warms up behind the sheet; the watchdog arms on Continue, so a
+            // person reading the sheet is never timed out.
+            watchdog?.disarm()
+            eventEmitter.emit(.stepUpTriggered, data: ["round": "2", "type": stepUp.challenge.challengeType.rawValue])
+            currentState = .extraCheckIntro(spec: stepUp.challenge)
+            return
+        }
+        watchdog?.arm(.capture, budget: captureBudget)
         captureStartTime = Date()
         isCapturingFrames = true
         do {
@@ -1591,6 +1848,25 @@ extension UseSenseSession {
         Self.$attemptToken.withValue(currentAttempt) { armWatchdogForTesting(phase) }
     }
 
+    /// Test seam: a round-1 upload came back asking for a step-up.
+    func startServerStepUpRoundForTesting(_ stepUp: StepUpInstruction) async {
+        await startServerStepUpRound(stepUp)
+    }
+
+    /// Test seam: "Do a head movement instead" without the permission prompts
+    /// that follow it (no camera in a unit test).
+    func applyMovementFallbackForTesting() async throws -> SessionPolicy {
+        guard let data = sessionData else { throw UseSenseError(code: .unknownError) }
+        do {
+            let response = try await apiClient.requestChallengeFallback(
+                sessionId: data.sessionId, sessionToken: data.sessionToken, nonce: data.nonce)
+            sessionData?.policy = response.policy
+            return response.policy
+        } catch let error as UseSenseError {
+            throw Self.fallbackError(error)
+        }
+    }
+
     /// Test seam: put the session where a finalization failure leaves it.
     func setFinalizationCheckpointForTesting(pendingFrames: [Data]?, signalsAccepted accepted: Bool) {
         pendingUpload = pendingFrames.map { PendingUpload(frames: $0, metadata: Data("{}".utf8), audio: nil) }
@@ -1743,9 +2019,33 @@ extension UseSenseSession {
         return r
     }
 
+    /// Guided extra check: is the face in the oval, and the head pose (capture queue).
+    fileprivate func updateChallengeObservation(pixelBuffer: CVPixelBuffer, mesh: FaceMeshResult?) {
+        guideLock.lock()
+        let viewport = viewportSize
+        guideLock.unlock()
+        var present = false
+        if let mesh {
+            let size = CGSize(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer))
+            let mapper = PreviewMapper(bufferSize: size, viewSize: viewport)
+            let points = mesh.landmarks.map { mapper.viewPoint(x: $0.x, y: $0.y) }
+            let oval = CaptureOvalLayout.ovalRect(in: viewport)
+            present = ChallengeRunner.faceInOval(centreOffset: Self.faceCentreOffset(points, oval: oval))
+        }
+        guideLock.lock()
+        challengeFacePresent = present
+        challengeYaw = mesh?.gate.matrixPose?.yaw
+        challengePitch = mesh?.gate.matrixPose?.pitch
+        guideLock.unlock()
+    }
+
     /// Runs on the capture queue for every camera frame of a guided session.
     fileprivate func updateGuide(pixelBuffer: CVPixelBuffer, mesh: FaceMeshResult?, time: TimeInterval) {
         let state = storedState
+        if case .challenge = state {
+            updateChallengeObservation(pixelBuffer: pixelBuffer, mesh: mesh)
+            return
+        }
         let onCaptureScreen: Bool
         switch state {
         case .faceGuide, .baseline: onCaptureScreen = true

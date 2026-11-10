@@ -6,7 +6,9 @@ struct UseSenseExampleApp: App {
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if CapturePreview.isEnabled {
+            if let screen = CapturePreview.debugScreen {
+                UseSenseDebugScreen(name: screen, backdrop: CapturePreview.backdrop)
+            } else if CapturePreview.isEnabled {
                 CapturePreview()
             } else {
                 ContentView()
@@ -28,6 +30,16 @@ struct CapturePreview: View {
     static var isEnabled: Bool {
         UserDefaults.standard.string(forKey: "USESENSE_CAPTURE_PREVIEW") == "1"
             || ProcessInfo.processInfo.environment["USESENSE_CAPTURE_PREVIEW"] == "1"
+    }
+
+    /// `-USESENSE_SCREEN <name>`: hold one extra-check screen (UseSenseDebugScreen.names),
+    /// with `-USESENSE_FAKE_CAMERA <image>` as the camera.
+    static var debugScreen: String? {
+        UserDefaults.standard.string(forKey: "USESENSE_SCREEN") ?? ProcessInfo.processInfo.environment["USESENSE_SCREEN"]
+    }
+
+    static var backdrop: UIImage? {
+        (UserDefaults.standard.string(forKey: "USESENSE_FAKE_CAMERA")).flatMap(UIImage.init(contentsOfFile:))
     }
 
     private let session: UseSenseSession = {
