@@ -132,12 +132,25 @@ struct ChallengeRunner {
     /// frame is not a pause), and back this long before it resumes.
     static let lostAfter: TimeInterval = 0.3
     static let foundAfter: TimeInterval = 0.15
-    /// A Head Turn step counts as turned when the pose reached this far. The
-    /// server's own bar is 6 degrees (yaw) / 5 (pitch) on its own pose
-    /// estimate; the device asks for a little more so a retry is only offered
-    /// when the turn was clearly short. Direction is left to the server.
-    static let turnYaw: Double = 10
-    static let turnPitch: Double = 8
+    /// Head Turn follows the person: a step ends when the head has reached
+    /// the asked side (or, for "centre", come back) and held it for
+    /// `holdAtTarget`, so the step's frames show the pose. The server's own
+    /// bar is 6 degrees (yaw) / 5 (pitch) on its pose estimate; the device
+    /// asks for a little more so the server sees a clear turn.
+    static let turnYaw: Double = 15
+    static let turnPitch: Double = 12
+    static let centreTolerance: Double = 10
+    static let holdAtTarget: TimeInterval = 0.5
+    /// Not there after this long: show the hint ("Turn a little further"),
+    /// once per challenge. Not there again after the same time: move on and
+    /// leave the result to the server. Never shorter than the server's step.
+    static let hintAfter: TimeInterval = 4
+    /// Which way "left" reads in the face transform's yaw. Measured on an
+    /// iPhone 17 Pro front camera, 2026-11-10 (sandbox head-turn run): turning
+    /// left read -42 degrees, right +33, looking up gave pitch +33. The server
+    /// (its own estimate) scored the same turns left +20.6, right -26.7.
+    static let leftYawSign: Double = -1
+    static let upPitchSign: Double = 1
     /// About -40 dB on the meter's scale (`AudioCaptureManager.normalised`).
     static let quietLevel: Double = 0.12
     static let quietAfter: TimeInterval = 2
@@ -164,7 +177,8 @@ struct ChallengeRunner {
     private(set) var finished = false
     /// The step being redone after a missed turn (shows the hint).
     private(set) var retrying = false
-    private var peak: Double = 0
+    /// Head Turn: time at the target so far, and whether a pose was seen.
+    private var atTarget: TimeInterval = 0
     private var poseSeen = false
     private var lastTime: TimeInterval?
     private var present = false
@@ -250,16 +264,60 @@ struct ChallengeRunner {
 
         let running = present && !obs.held && !finished
         if running {
-            if case .headTurn(let steps) = plan, stepIndex < steps.count {
-                notePose(steps[stepIndex].direction, yaw: obs.yaw, pitch: obs.pitch)
-            }
             stepElapsed += dt
-            let durs = durations
-            while !finished, stepIndex < durs.count, stepElapsed >= durs[stepIndex] {
-                endStep(overflow: stepElapsed - durs[stepIndex])
+            if case .headTurn(let steps) = plan {
+                advanceHeadTurn(steps[stepIndex], yaw: obs.yaw, pitch: obs.pitch, dt: dt)
+            } else {
+                let durs = durations
+                while !finished, stepIndex < durs.count, stepElapsed >= durs[stepIndex] {
+                    endStep(overflow: stepElapsed - durs[stepIndex])
+                }
             }
         }
         return display(held: obs.held)
+    }
+
+    /// Whether the pose is at the step's target (nil: no pose to judge).
+    static func atTarget(_ direction: HeadDirection, yaw: Double?, pitch: Double?) -> Bool? {
+        switch direction {
+        case .left, .right:
+            guard let yaw else { return nil }
+            let towardLeft = yaw * leftYawSign
+            return direction == .left ? towardLeft >= turnYaw : -towardLeft >= turnYaw
+        case .up, .down:
+            guard let pitch else { return nil }
+            let towardUp = pitch * upPitchSign
+            return direction == .up ? towardUp >= turnPitch : -towardUp >= turnPitch
+        case .center:
+            guard let yaw, let pitch else { return nil }
+            return abs(yaw) < centreTolerance && abs(pitch) < centreTolerance
+        }
+    }
+
+    private mutating func advanceHeadTurn(_ step: HeadTurnStep, yaw: Double?, pitch: Double?, dt: TimeInterval) {
+        let server = max(0.2, Double(step.durationMs) / 1000)
+        guard let reached = Self.atTarget(step.direction, yaw: yaw, pitch: pitch) else {
+            // No transform from the landmarker: fall back to the server's time.
+            if !poseSeen, stepElapsed >= server { endStep(overflow: 0) }
+            return
+        }
+        poseSeen = true
+        atTarget = reached ? atTarget + dt : 0
+        if atTarget >= Self.holdAtTarget {
+            endStep(overflow: 0)
+            return
+        }
+        let window = max(Self.hintAfter, server)
+        if stepElapsed >= window {
+            if !retrying, retriesLeft > 0 {
+                // One hint per challenge, with the same time again.
+                retriesLeft -= 1
+                retrying = true
+                stepElapsed = 0
+            } else {
+                endStep(overflow: 0)   // the server judges this step
+            }
+        }
     }
 
     private mutating func updatePresence(_ seen: Bool, dt: TimeInterval) {
@@ -278,43 +336,11 @@ struct ChallengeRunner {
         }
     }
 
-    private mutating func notePose(_ direction: HeadDirection, yaw: Double?, pitch: Double?) {
-        switch direction {
-        case .left, .right:
-            if let yaw { poseSeen = true; peak = max(peak, abs(yaw)) }
-        case .up, .down:
-            if let pitch { poseSeen = true; peak = max(peak, abs(pitch)) }
-        case .center:
-            break
-        }
-    }
-
-    /// Whether the step just ended counts as done on the device.
-    private func stepTurnedFarEnough() -> Bool {
-        guard case .headTurn(let steps) = plan else { return true }
-        let direction = steps[stepIndex].direction
-        // No pose readings (no transform from the landmarker): nothing to judge.
-        guard poseSeen else { return true }
-        switch direction {
-        case .left, .right: return peak >= Self.turnYaw
-        case .up, .down: return peak >= Self.turnPitch
-        case .center: return true
-        }
-    }
-
     private mutating func endStep(overflow: TimeInterval) {
-        if !stepTurnedFarEnough(), retriesLeft > 0 {
-            retriesLeft -= 1
-            retrying = true
-            stepElapsed = 0
-            peak = 0
-            poseSeen = false
-            return
-        }
         retrying = false
         stepIndex += 1
         stepElapsed = max(0, overflow)
-        peak = 0
+        atTarget = 0
         poseSeen = false
         if stepIndex >= stepCount {
             finished = true
@@ -330,6 +356,10 @@ struct ChallengeRunner {
         let total = durs.reduce(0, +)
         guard total > 0 else { return 1 }
         if finished { return 1 }
+        if case .headTurn = plan {
+            // One segment per step, filled by the hold at the target.
+            return min(1, (Double(stepIndex) + min(1, atTarget / Self.holdAtTarget)) / Double(stepCount))
+        }
         let done = durs.prefix(stepIndex).reduce(0, +)
         return min(1, (done + min(stepElapsed, durs[stepIndex])) / total)
     }

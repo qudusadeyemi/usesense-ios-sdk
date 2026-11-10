@@ -108,10 +108,13 @@ struct ChallengeGateRules: Equatable, Sendable {
 
     /// Head Turn left/right: the yaw limit opens. The sign of "left" isn't
     /// trusted on the device (the server judges direction), so it opens both ways.
-    static let turnSideways = ChallengeGateRules(maxYaw: 50, maxPitch: 15, maxRoll: 20, checksStillness: false)
-    static let turnUpDown = ChallengeGateRules(maxYaw: 15, maxPitch: 40, maxRoll: 20, checksStillness: false)
-    /// Coming back to the centre, or following the dot around the screen.
-    static let returning = ChallengeGateRules(maxYaw: 30, maxPitch: 30, maxRoll: 20, checksStillness: false)
+    /// The other axis opens part way too: a person turning right straight
+    /// after looking up still has the head a little raised (device run:
+    /// pitch 19 while turning right, which a 15 cap paused).
+    static let turnSideways = ChallengeGateRules(maxYaw: 50, maxPitch: 30, maxRoll: 20, checksStillness: false)
+    static let turnUpDown = ChallengeGateRules(maxYaw: 30, maxPitch: 45, maxRoll: 20, checksStillness: false)
+    /// Coming back to the centre (from any side), or following the dot.
+    static let returning = ChallengeGateRules(maxYaw: 50, maxPitch: 45, maxRoll: 20, checksStillness: false)
     static let followDot = ChallengeGateRules(maxYaw: 40, maxPitch: 35, maxRoll: 20, checksStillness: false)
     /// Speak Digits: the scan's own limits, stillness included (the chin is
     /// left out of the stillness anchors, since speaking moves it).

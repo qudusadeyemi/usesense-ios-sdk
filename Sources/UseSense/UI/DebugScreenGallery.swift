@@ -139,7 +139,8 @@ public struct UseSenseDebugScreen: View {
         var r = ChallengeRunner(spec: spec(type))!
         var t: TimeInterval = 0
         var d = ChallengeDisplay.placeholder
-        func run(_ seconds: TimeInterval, face: Bool = true, yaw: Double = 25, level: Double? = nil,
+        let left = 25 * ChallengeRunner.leftYawSign
+        func run(_ seconds: TimeInterval, face: Bool = true, yaw: Double = 0, level: Double? = nil,
                  hint: GateHint? = nil) {
             let end = t + seconds
             while t < end - 1e-9 {
@@ -148,12 +149,12 @@ public struct UseSenseDebugScreen: View {
             }
         }
         switch name {
-        case "head_left": run(0.6)
-        case "head_right": run(2.6)
-        case "head_paused": run(1.0); run(0.6, face: false)
-        case "head_covered": run(1.0); run(0.6, face: false, hint: .uncovered)
+        case "head_left": run(0.3, yaw: left)
+        case "head_right": run(0.6, yaw: left); run(0.3, yaw: -left)
+        case "head_paused": run(0.6, yaw: left); run(0.6, face: false)
+        case "head_covered": run(0.6, yaw: left); run(0.6, face: false, hint: .uncovered)
         case "dot_two_people": run(1.3); run(0.6, face: false, hint: .onePerson)
-        case "head_again": run(2.1, yaw: 3)
+        case "head_again": run(ChallengeRunner.hintAfter + 0.2, yaw: left / 5)
         case "dot_1": run(1.3)
         case "dot_2": run(2.4)
         case "dot_lost": run(1.3); run(0.6, face: false)

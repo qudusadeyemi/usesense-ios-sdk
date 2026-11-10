@@ -39,27 +39,97 @@ final class ExtraCheckTests: XCTestCase {
         clock = 0
     }
 
-    // MARK: Head Turn
+    // MARK: Head Turn (follows the movement)
 
-    func testHeadTurnRunsEachStepWithItsInstructionAndFinishes() {
-        var r = headTurn()
-        var d = run(&r, 0.5)
-        XCTAssertEqual(d.title, "Turn your head to the left")
+    /// Device yaw/pitch for a head turned toward `d` (sign measured on device).
+    private func pose(_ d: HeadDirection, _ deg: Double = 25) -> (yaw: Double, pitch: Double) {
+        switch d {
+        case .left: return (deg * ChallengeRunner.leftYawSign, 0)
+        case .right: return (-deg * ChallengeRunner.leftYawSign, 0)
+        case .up: return (0, deg * ChallengeRunner.upPitchSign)
+        case .down: return (0, -deg * ChallengeRunner.upPitchSign)
+        case .center: return (0, 0)
+        }
+    }
+
+    @discardableResult
+    private func hold(_ r: inout ChallengeRunner, _ d: HeadDirection, _ seconds: TimeInterval, deg: Double = 25) -> ChallengeDisplay {
+        let p = pose(d, deg)
+        return run(&r, seconds, yaw: p.yaw, pitch: p.pitch)
+    }
+
+    func testEachStepWaitsForTheMovementThenMovesOn() {
+        var r = headTurn()   // left, right, centre; 1 s each from the server
+        var d = hold(&r, .center, 2)
+        XCTAssertEqual(d.title, "Turn your head to the left", "it waits: looking straight doesn't count")
         XCTAssertEqual(d.subtitle, "Slowly")
         XCTAssertEqual(d.arrow, .left)
         XCTAssertEqual(r.specStepIndex, 0)
-        d = run(&r, 1.0)
+        XCTAssertEqual(d.progress, 0)
+        d = hold(&r, .right, 0.6)
+        XCTAssertEqual(r.specStepIndex, 0, "the wrong side doesn't count")
+        d = hold(&r, .left, 0.3)
+        XCTAssertEqual(r.specStepIndex, 0, "held at the side, not yet long enough")
+        XCTAssertGreaterThan(d.progress, 0)
+        d = hold(&r, .left, 0.3)
         XCTAssertEqual(d.title, "Now to the right")
-        XCTAssertNil(d.subtitle)
-        XCTAssertEqual(d.arrow, .right)
         XCTAssertEqual(r.specStepIndex, 1)
-        d = run(&r, 1.0)
+        d = hold(&r, .right, 0.6)
         XCTAssertEqual(d.title, "Now look straight ahead")
-        XCTAssertNil(d.arrow)
-        d = run(&r, 0.6)
+        d = hold(&r, .right, 2)
+        XCTAssertFalse(d.finished, "still turned: the centre step waits for the head to come back")
+        d = hold(&r, .center, 0.6)
         XCTAssertTrue(d.finished)
         XCTAssertEqual(d.progress, 1)
-        XCTAssertEqual(r.retriesLeft, 1, "no retry needed")
+        XCTAssertEqual(r.retriesLeft, 1, "no hint needed")
+    }
+
+    func testAShortTurnGetsOneHintThenTheServerDecides() {
+        var r = headTurn([.left, .right, .center])
+        var d = hold(&r, .left, ChallengeRunner.hintAfter + 0.1, deg: 8)
+        XCTAssertEqual(d.title, "Let's try that again")
+        XCTAssertEqual(d.subtitle, "Turn a little further to the left")
+        XCTAssertEqual(d.arrow, .left)
+        XCTAssertEqual(r.specStepIndex, 0, "the same step, more time")
+        d = hold(&r, .left, ChallengeRunner.hintAfter + 0.1, deg: 8)
+        XCTAssertEqual(d.title, "Now to the right", "still short: it moves on and the server judges")
+        d = hold(&r, .right, ChallengeRunner.hintAfter + 0.1, deg: 8)
+        XCTAssertEqual(d.title, "Now look straight ahead", "the hint is once per challenge")
+    }
+
+    func testAHintedStepStillEndsWhenTheTurnArrives() {
+        var r = headTurn([.left, .center])
+        hold(&r, .left, ChallengeRunner.hintAfter + 0.1, deg: 8)
+        let d = hold(&r, .left, 0.6)
+        XCTAssertEqual(d.title, "Now look straight ahead")
+    }
+
+    func testUpAndDownUsePitch() {
+        var r = headTurn([.up, .center])
+        var d = hold(&r, .center, 0.3)
+        XCTAssertEqual(d.title, "Look up")
+        XCTAssertEqual(d.arrow, .up)
+        d = hold(&r, .down, 0.6)
+        XCTAssertEqual(r.specStepIndex, 0)
+        d = hold(&r, .up, 0.6)
+        XCTAssertEqual(d.title, "Now look straight ahead")
+    }
+
+    func testNoPoseReadingsFallBackToTheServersTime() {
+        var r = headTurn([.left, .center])
+        let d = run(&r, 1.05, yaw: nil, pitch: nil)
+        XCTAssertEqual(d.title, "Now look straight ahead")
+    }
+
+    func testTheMeasuredSignsMatchTheDeviceRun() {
+        // iPhone 17 Pro, 2026-11-10: left -42, right +33, up pitch +33.
+        XCTAssertEqual(ChallengeRunner.atTarget(.left, yaw: -42, pitch: 0), true)
+        XCTAssertEqual(ChallengeRunner.atTarget(.right, yaw: 33, pitch: 0), true)
+        XCTAssertEqual(ChallengeRunner.atTarget(.left, yaw: 33, pitch: 0), false)
+        XCTAssertEqual(ChallengeRunner.atTarget(.up, yaw: 0, pitch: 33), true)
+        XCTAssertEqual(ChallengeRunner.atTarget(.center, yaw: -23.5, pitch: 15.9), false,
+                       "the pose the server failed as centre in that run")
+        XCTAssertNil(ChallengeRunner.atTarget(.left, yaw: nil, pitch: nil))
     }
 
     func testBeforeTheFaceIsSeenTheRingWaits() {
@@ -72,79 +142,38 @@ final class ExtraCheckTests: XCTestCase {
 
     func testFaceLeavingTheOvalPausesThenResumes() {
         var r = headTurn()
-        run(&r, 0.5)
-        let before = r.progress
+        hold(&r, .left, 0.6)
         var d = run(&r, 1.5, face: false)
         XCTAssertEqual(d.tone, .warning)
         XCTAssertEqual(d.title, "Move your face to the centre")
         XCTAssertEqual(d.subtitle, "Then keep turning")
         XCTAssertNil(d.arrow)
-        XCTAssertLessThan(r.progress - before, 0.11, "only the 0.3 s grace runs on")
-        d = run(&r, 0.3)
+        d = hold(&r, .right, 0.3)
         XCTAssertEqual(d.tone, .active)
-        XCTAssertGreaterThan(r.progress, before)
+        XCTAssertEqual(d.title, "Now to the right")
     }
 
     func testAOneFrameDropDoesNotPause() {
         var r = headTurn()
-        run(&r, 0.5)
+        hold(&r, .center, 0.5)
         let d = run(&r, 0.1, face: false)
         XCTAssertEqual(d.tone, .active)
     }
 
     func testNeverFailsOnTheDeviceWhileTheFaceIsAway() {
         var r = headTurn()
-        run(&r, 0.5)
+        hold(&r, .center, 0.5)
         let d = run(&r, 120, face: false)
         XCTAssertFalse(d.finished)
         XCTAssertEqual(d.tone, .warning)
     }
 
-    func testAShortTurnGetsOneRetryWithAHintThenTheServerDecides() {
-        var r = headTurn([.left, .center])
-        var d = run(&r, 1.05, yaw: 3)
-        XCTAssertEqual(d.title, "Let's try that again")
-        XCTAssertEqual(d.subtitle, "Turn a little further to the left")
-        XCTAssertEqual(d.arrow, .left)
-        XCTAssertEqual(r.specStepIndex, 0, "the same step again")
-        XCTAssertEqual(r.retriesLeft, 0)
-        d = run(&r, 1.0, yaw: 3)
-        XCTAssertEqual(d.title, "Now look straight ahead", "a second short turn moves on")
-        d = run(&r, 1.1)
-        XCTAssertTrue(d.finished)
-    }
-
-    func testTheRetryIsOnlyOnceAcrossTheWholeChallenge() {
-        var r = headTurn([.left, .right, .center])
-        run(&r, 1.05, yaw: 2)          // left short: retry
-        run(&r, 1.0, yaw: 20)          // left ok
-        let d = run(&r, 1.05, yaw: 2)  // right short: no retries left
-        XCTAssertNotEqual(d.title, "Let's try that again")
-        XCTAssertEqual(r.specStepIndex, 2)
-    }
-
-    func testNoPoseReadingsMeansNoRetry() {
-        var r = headTurn([.left, .center])
-        let d = run(&r, 1.05, yaw: nil)
-        XCTAssertEqual(d.title, "Now look straight ahead")
-    }
-
-    func testUpAndDownUsePitch() {
-        var r = headTurn([.up, .center])
-        var d = run(&r, 0.3, yaw: 0, pitch: 2)
-        XCTAssertEqual(d.title, "Look up")
-        XCTAssertEqual(d.arrow, .up)
-        d = run(&r, 0.8, yaw: 0, pitch: 2)
-        XCTAssertEqual(d.subtitle, "Look a little further up")
-    }
-
     func testTheLeaveDialogHoldsTheTimeline() {
         var r = headTurn()
-        run(&r, 0.5)
-        let before = r.progress
-        let d = run(&r, 5, held: true)
-        XCTAssertEqual(r.progress, before, accuracy: 0.001)
-        XCTAssertEqual(d.tone, .active)
+        hold(&r, .center, 0.5)
+        let d = run(&r, 30, yaw: 0, pitch: 0, held: true)
+        XCTAssertEqual(r.specStepIndex, 0)
+        XCTAssertNotEqual(d.title, "Let's try that again", "no time passes while the dialog is open")
     }
 
     // MARK: Follow Dot
@@ -471,7 +500,7 @@ final class ExtraCheckTests: XCTestCase {
         var tooFar = QualityGate()
         XCTAssertNotNil(settle(&tooFar, rules: .turnSideways, yaw: 60).blocking[.pose])
         var upDown = QualityGate()
-        XCTAssertNotNil(settle(&upDown, rules: .turnUpDown, yaw: 30).blocking[.pose], "an up/down step doesn't open yaw")
+        XCTAssertNotNil(settle(&upDown, rules: .turnUpDown, yaw: 40).blocking[.pose], "an up/down step doesn't open yaw")
     }
 
     func testEveryOtherScanCheckStillHoldsAChallenge() {
@@ -522,9 +551,9 @@ final class ExtraCheckTests: XCTestCase {
     func testTheRunnerFollowsTheStepsGateRules() {
         var r = headTurn([.left, .up, .center])
         XCTAssertEqual(r.gateRules, .turnSideways)
-        run(&r, 1.05)
+        hold(&r, .left, 0.6)
         XCTAssertEqual(r.gateRules, .turnUpDown)
-        run(&r, 1.0, pitch: 20)
+        hold(&r, .up, 0.6)
         XCTAssertEqual(r.gateRules, .returning)
         XCTAssertEqual(followDot().gateRules, .followDot)
         XCTAssertEqual(ChallengeRunner(plan: .digits(phrase: "1 2", durationMs: 3000)).gateRules, .digits)
@@ -532,7 +561,7 @@ final class ExtraCheckTests: XCTestCase {
 
     func testAPausedChallengeNamesWhatTheGateSaw() {
         var r = headTurn()
-        run(&r, 0.5)
+        hold(&r, .center, 0.5)
         var d = r.display()
         for _ in 0..<10 {
             clock += 0.05
