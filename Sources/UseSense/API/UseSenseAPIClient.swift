@@ -24,7 +24,30 @@ final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @unchecked
     ) {
         guard task.originalRequest?.url?.path.hasSuffix("/signals") == true else { return }
         guard totalBytesExpectedToSend > 0 else { return }
+        traceProgress(task.taskIdentifier, sent: totalBytesSent, total: totalBytesExpectedToSend)
         onProgress?(totalBytesSent, totalBytesExpectedToSend)
+    }
+
+    /// Trace line per 10% step (and when the body is fully sent), so a log
+    /// tells "not sending", "sending slowly" and "sent, waiting for the
+    /// server" apart.
+    private var traced: [Int: (step: Int, start: Date)] = [:]
+    private func traceProgress(_ task: Int, sent: Int64, total: Int64) {
+        guard USTrace.enabled else { return }
+        let step = Int(sent * 10 / total)
+        lock.lock()
+        let prior = traced[task]
+        let start = prior?.start ?? Date()
+        let log = prior == nil || step > prior!.step
+        if log { traced[task] = (step, start) }
+        lock.unlock()
+        guard log else { return }
+        let t = String(format: "%.1f", Date().timeIntervalSince(start))
+        if sent >= total {
+            USTrace.log("upload: body sent \(total) bytes in \(t)s, waiting for the server")
+        } else {
+            USTrace.log("upload: sent \(sent)/\(total) bytes (\(step * 10)%) at \(t)s")
+        }
     }
 }
 
@@ -41,12 +64,20 @@ final class UseSenseAPIClient: @unchecked Sendable {
     /// Ceiling for the signals upload, the one request that carries megabytes.
     /// Everything else keeps its own much shorter timeout.
     static let uploadTimeout: TimeInterval = 300
-    /// Idle limit on the upload request: no bytes either way for this long and
-    /// it fails. It resets as data flows, so a slow uplink still finishes
-    /// inside `uploadTimeout` (the whole-transfer cap on the session config);
-    /// a dead pooled connection (e.g. after toggling Airplane Mode) now fails
-    /// in a minute instead of sitting for five.
-    static let uploadIdleTimeout: TimeInterval = 60
+    /// Idle limit on each upload attempt: no bytes either way for this long and
+    /// the attempt fails and is retried on a fresh connection. It resets as
+    /// data flows, so a slow uplink still finishes inside `uploadTimeout` (the
+    /// whole-transfer cap on the session config). 20 s, not 60: at 60 it
+    /// matched the session watchdog's stall window, so a stalled first
+    /// attempt timed out at the moment the watchdog ended the session and the
+    /// retries were cancelled unused (seen on device: body stalled, Cloudflare
+    /// 499, three retries cancelled within 1 ms). Server handling of the
+    /// signals request is 1-5 s, well inside 20.
+    static let uploadIdleTimeout: TimeInterval = 20
+
+    /// Called as each signals upload attempt starts (attempt 0 = first), so
+    /// the session can count a retry as progress.
+    var onUploadAttempt: ((Int) -> Void)?
 
     private let config: UseSenseConfig
     private let session: URLSession
@@ -368,6 +399,7 @@ final class UseSenseAPIClient: @unchecked Sendable {
             do {
                 let started = Date()
                 USTrace.log("http start \(request.httpMethod ?? "?") \(request.url?.path ?? "?") bytes=\(request.httpBody?.count ?? 0) attempt=\(attempt)")
+                if request.url?.path.hasSuffix("/signals") == true { onUploadAttempt?(attempt) }
                 let (data, response) = try await session.data(for: request)
                 USTrace.log("http done \(request.url?.path ?? "?") status=\((response as? HTTPURLResponse)?.statusCode ?? -1) in \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
                 guard let http = response as? HTTPURLResponse else {

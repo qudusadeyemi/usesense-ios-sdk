@@ -1,6 +1,7 @@
 #if canImport(SwiftUI) && canImport(AVFoundation)
 import SwiftUI
 import AVFoundation
+import UIKit
 
 public struct UseSenseView: View {
     @StateObject private var viewModel: UseSenseViewModel
@@ -21,7 +22,7 @@ public struct UseSenseView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            switch viewModel.state {
+            switch viewModel.displayState {
             case .idle:
                 ProgressView()
                     .tint(.white)
@@ -44,10 +45,18 @@ public struct UseSenseView: View {
                 }
 
             case .faceGuide:
-                cameraWithFaceGuide
+                if viewModel.guided {
+                    GuidedCaptureView(mode: .align, camera: cameraLayer, viewModel: viewModel, onClose: close)
+                } else {
+                    cameraWithFaceGuide
+                }
 
             case .baseline:
-                cameraWithBaseline
+                if viewModel.guided {
+                    GuidedCaptureView(mode: .scan, camera: cameraLayer, viewModel: viewModel, onClose: close)
+                } else {
+                    cameraWithBaseline
+                }
 
             case .zoom:
                 // V4 zoom-motion state. The legacy UI does not render this;
@@ -96,6 +105,10 @@ public struct UseSenseView: View {
                         Spacer()
                     }
                 }
+
+            case .uploading where viewModel.guided, .completing where viewModel.guided:
+                GuidedUploadView(backdrop: viewModel.uploadBackdropImage, bar: viewModel.uploadBar,
+                                 field: viewModel.contourField, onBack: close)
 
             case .uploading:
                 // Spec: dark bg (95% opacity), spinner, specific text
@@ -147,6 +160,12 @@ public struct UseSenseView: View {
             if viewModel.showsCaptureFooter { CaptureFooter() }
         }
         .statusBarHidden(viewModel.isCameraActive)
+        .onDisappear { viewModel.restoreScreen() }
+    }
+
+    private func close() {
+        viewModel.cancel()
+        onCancel?()
     }
 
     // MARK: - Camera Views
@@ -368,10 +387,7 @@ public struct UseSenseView: View {
     // MARK: - Close Button
 
     private var closeButton: some View {
-        Button(action: {
-            viewModel.cancel()
-            onCancel?()
-        }) {
+        Button(action: close) {
             Image(systemName: "xmark")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(.white)
@@ -435,7 +451,55 @@ final class UseSenseViewModel: ObservableObject {
     @Published var challengeProgress: Double = 0
     @Published var completionResult: Result<RedactedDecisionObject, UseSenseError>?
 
+    // Guided capture (capture redesign P1)
+    @Published var guide = GuidedCaptureUpdate(snapshot: .initial, shutterAvailable: false)
+    @Published var scan = ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: 0, completed: false)
+    @Published var uploadBackdrop: UIImage?
+
     private let session: UseSenseSession
+    private let fillLight = ScreenFillLight()
+    private let readyHaptic = UIImpactFeedbackGenerator(style: .light)
+    private let doneHaptic = UINotificationFeedbackGenerator()
+    private var lastAnnouncement = Date.distantPast
+    static let announcementInterval: TimeInterval = 1.2
+
+    var guided: Bool { session.guidedCapture }
+    var contourField: ContourDepthField { session.contourField }
+    var scanSecondsForCopy: Int { session.guidedScanSeconds }
+
+    /// One bar for upload and checking.
+    /// The state the screen shows. Normally `state`; the DEBUG capture rig
+    /// can hold a guided screen (FORCE_STATE) for screenshots.
+    var displayState: SessionState {
+        #if DEBUG
+        if guided, let forced = DebugCaptureRig.forcedState {
+            switch (forced, state) {
+            case (.align, .faceGuide), (.align, .baseline): return .faceGuide
+            case (.scan, .faceGuide), (.scan, .baseline): return .baseline(remaining: 0)
+            case (.upload, .faceGuide), (.upload, .baseline): return .uploading(progress: 0)
+            default: break
+            }
+        }
+        #endif
+        return state
+    }
+
+    /// Upload backdrop: the last banked frame (or the rig's frame when forced).
+    var uploadBackdropImage: UIImage? {
+        return uploadBackdrop
+    }
+
+    /// The upload bar: sending, then checking, eased so it never sits still.
+    var uploadBar: UploadBar {
+        #if DEBUG
+        if DebugCaptureRig.forcedState == .upload {
+            return UploadBar(stage: .sending, startValue: 0.64, since: Date(), fixed: 0.64)
+        }
+        #endif
+        return uploadBarState ?? .start()
+    }
+    /// Starts when the upload does (nil before).
+    private var uploadBarState: UploadBar?
 
     var previewLayer: AVCaptureVideoPreviewLayer? {
         session.previewLayer
@@ -452,9 +516,11 @@ final class UseSenseViewModel: ObservableObject {
 
     /// The capture screens (camera up to the result) carry the
     /// "Powered by Sense" footer, as on Android.
+    /// The guided screens drop it (capture kit SPEC: no footer on capture).
     var showsCaptureFooter: Bool {
         switch state {
-        case .faceGuide, .baseline, .zoom, .countdown, .challenge, .inlineStepUp, .uploading, .completing: return true
+        case .faceGuide, .baseline, .uploading, .completing: return !guided
+        case .zoom, .countdown, .challenge, .inlineStepUp: return true
         default: return false
         }
     }
@@ -473,8 +539,20 @@ final class UseSenseViewModel: ObservableObject {
         self.session = session
         session.onStateChange = { [weak self] newState in
             DispatchQueue.main.async {
-                self?.state = newState
+                self?.apply(state: newState)
             }
+        }
+        session.onGuideUpdate = { [weak self] update in
+            DispatchQueue.main.async { self?.apply(guide: update) }
+        }
+        #if DEBUG
+        if DebugCaptureRig.forcedState == .scan {
+            scan = ScanProgress(fraction: DebugCaptureRig.forcedProgress ?? 0.5, paused: false,
+                                bankedSeconds: 1.5, totalSeconds: 3, completed: false)
+        }
+        #endif
+        session.onScanUpdate = { [weak self] progress in
+            DispatchQueue.main.async { self?.apply(scan: progress) }
         }
         session.onQualityUpdate = { [weak self] report in
             DispatchQueue.main.async {
@@ -487,6 +565,84 @@ final class UseSenseViewModel: ObservableObject {
     func start() {
         Task { await session.start() }
     }
+
+    // MARK: Guided capture
+
+    private func apply(state newState: SessionState) {
+        state = newState
+        switch newState {
+        case .faceGuide:
+            uploadBackdrop = nil
+            uploadBarState = nil
+            #if DEBUG
+            if DebugCaptureRig.forcedState != nil { break }
+            #endif
+            scan = ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: 0, completed: false)
+            readyHaptic.prepare()
+        case .baseline, .zoom, .countdown, .challenge, .inlineStepUp:
+            doneHaptic.prepare()
+        case .uploading(let p):
+            fillLight.restore()
+            uploadBarState = (uploadBarState ?? .start()).advanced(to: p >= 1 ? .checking : .sending)
+            if guided, uploadBackdrop == nil {
+                uploadBackdrop = session.lastCapturedFrame().flatMap { UIImage(data: $0) }
+            }
+        case .completing:
+            fillLight.restore()
+            uploadBarState = (uploadBarState ?? .start()).advanced(to: .checking)
+            if guided, uploadBackdrop == nil {
+                uploadBackdrop = session.lastCapturedFrame().flatMap { UIImage(data: $0) }
+            }
+        default:
+            fillLight.restore()
+        }
+    }
+
+    private func apply(guide incoming: GuidedCaptureUpdate) {
+        var update = incoming
+        #if DEBUG
+        if let pinned = DebugCaptureRig.forcedHint { update.snapshot.hint = pinned }
+        #endif
+        let wasPassing = guide.snapshot.allPass
+        let oldHint = guide.snapshot.hint
+        guide = update
+        #if DEBUG
+        if DebugCaptureRig.forcedState == .upload, uploadBackdrop == nil {
+            uploadBackdrop = session.debugCurrentFrame()
+        }
+        #endif
+        if update.snapshot.fillLight { fillLight.activate() }
+        if case .faceGuide = state, update.snapshot.allPass, !wasPassing {
+            readyHaptic.impactOccurred()
+        }
+        if let hint = update.snapshot.hint, hint != oldHint {
+            announce(hint.subtitle.map { "\(hint.title). \($0)" } ?? hint.title)
+        }
+    }
+
+    private func apply(scan progress: ScanProgress) {
+        #if DEBUG
+        if DebugCaptureRig.forcedState != nil { return }
+        #endif
+        let wasComplete = scan.completed
+        scan = progress
+        if progress.completed, !wasComplete { doneHaptic.notificationOccurred(.success) }
+    }
+
+    /// VoiceOver hint, rate-limited like the on-screen hint (1.2 s).
+    private func announce(_ text: String) {
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastAnnouncement) >= Self.announcementInterval else { return }
+        lastAnnouncement = now
+        UIAccessibility.post(notification: .announcement, argument: text)
+    }
+
+    func setViewport(_ size: CGSize) { session.setViewport(size) }
+
+    func shutterTapped() { Task { await session.shutterTapped() } }
+
+    func restoreScreen() { fillLight.restore() }
 
     func continueFromInstructions() {
         Task { await session.proceedFromInstructions() }

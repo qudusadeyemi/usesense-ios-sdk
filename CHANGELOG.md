@@ -6,6 +6,67 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [4.10.0] - 2026-11-10
+
+Tested on an iPhone 17 Pro against the sandbox API, and on an iPhone 16
+simulator against the LiveSense capture test kit's reference screens.
+
+### Added
+
+- **Guided face capture (LiveSense capture redesign, Phase 1).** The capture
+  screen waits for a good face before it starts: found, one person, uncovered,
+  the right distance, in the oval, facing the screen, sharp, eyes open and
+  still. These checks run on the face mesh and on the face area, and they hold
+  the scan instead of warning. Light is advice only: a dark face turns the
+  screen into a warm fill light and gets a hint, but never blocks. One hint
+  shows at a time (it must fail for 400 ms and stays at least 1.2 s), with a
+  VoiceOver announcement. The scan (~3 s) starts by itself when every check
+  passes, so the "I'm Ready" button is gone; a failing check pauses the
+  progress ring instead of restarting it, and a pause over 1.5 s returns to
+  the align screen. A shutter button appears after 20 s or 3 dropped scans.
+  Focus and exposure follow the face. Challenge sessions keep their
+  challenge; the gate only decides when it starts.
+- **Contour scan.** Lines across the screen bulge around the head and bend
+  over the nose, brow and lips (relief v3.1), in the ring colour; the camera
+  blurs 1.5 s into the scan. Display only.
+- **Covered-face check.** A hand, phone or paper over the face holds the scan
+  with "Keep your face uncovered". It uses MediaPipe's multiclass selfie
+  segmentation (bundled, see below) on its own queue, plus a change watch on
+  six face regions during the scan (a steady baseline, two consecutive
+  frames, fill light frozen during the scan). A finished scan waits up to
+  2.5 s for one last check. Without the model the check is off and capture
+  works as before.
+- **Upload sheet.** The face is blurred behind a bottom sheet with a progress
+  bar that keeps moving while the server checks ("Usually under 10 seconds").
+- `FlowAppearance.capture` (`ring`, `contourStart`, `contourEnd`, `warning`)
+  sets the capture colours. A colour under 3:1 contrast on the camera scrim
+  falls back to the default. (`contourStart`/`contourEnd` are accepted but no
+  longer drawn: the contour uses the ring colour.)
+- `SDKOptions.guidedCaptureEnabled` (default `true`). Set it to `false` to keep
+  the previous screen.
+- DEBUG-only capture rig: a fake camera fed by a video or image, plus
+  `FREEZE_AT`, `FORCE_STATE`, `FORCE_PROGRESS` and `FORCE_HINT`, to render the
+  screens against the test kit without a camera. Compiled out of Release.
+
+### Changed
+
+- **Signals metadata gains `covered_check`** (guided capture only): the
+  covered-face scores, numbers only (no images or landmarks), for tuning the
+  limits. The server stores metadata whole; frames and scoring are unchanged.
+- **One person:** a second face overlapping the subject by IoU 0.3 or more is
+  the same face found twice, not another person.
+- **Upload retries now run.** Each signals upload attempt gives up after 20 s
+  with no bytes moving (was 60 s, the same as the session watchdog's stall
+  window, which cancelled the retries unused), and each retry counts as
+  progress for the watchdog. With `USESENSE_DEBUG=1` the trace logs upload
+  progress.
+
+### Size
+
+- The pod grows by **16.4 MB**: the covered-face model
+  (`selfie_multiclass_256x256.tflite`, float32 v1, sha256 `c6748b12…`) is in
+  the `UseSenseSDK` resource bundle.
+
 ## [4.9.0] - 2026-11-07
 
 Tested on an iPhone 17 Pro in session mode and in a Flow, against the sandbox
