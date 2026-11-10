@@ -150,9 +150,9 @@ public struct UseSenseDebugScreen: View {
         }
         switch name {
         case "head_left": run(0.3, yaw: left)
-        case "head_right": run(0.6, yaw: left); run(0.3, yaw: -left)
-        case "head_paused": run(0.6, yaw: left); run(0.6, face: false)
-        case "head_covered": run(0.6, yaw: left); run(0.6, face: false, hint: .uncovered)
+        case "head_right": run(0.75, yaw: left); run(0.3, yaw: -left)
+        case "head_paused": run(0.3, yaw: left); run(0.6, face: false)
+        case "head_covered": run(0.3, yaw: left); run(0.6, face: false, hint: .uncovered)
         case "dot_two_people": run(1.3); run(0.6, face: false, hint: .onePerson)
         case "head_again": run(ChallengeRunner.hintAfter + 0.2, yaw: left / 5)
         case "dot_1": run(1.3)

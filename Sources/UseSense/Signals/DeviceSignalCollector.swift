@@ -267,6 +267,12 @@ final class DeviceSignalCollector: @unchecked Sendable {
         #if targetEnvironment(simulator)
         return true
         #else
+        #if DEBUG && canImport(UIKit) && canImport(AVFoundation)
+        // Debug rig only (compiled out of Release): report an emulator so a
+        // sandbox server asks for its after-the-scan extra check on a real
+        // phone, the way it does on a simulator ("Tampered phone or browser").
+        if DebugCaptureRig.value("USESENSE_DEBUG_REPORT_EMULATOR") == "1" { return true }
+        #endif
         return false
         #endif
     }

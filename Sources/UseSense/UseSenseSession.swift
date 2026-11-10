@@ -1018,7 +1018,9 @@ public final class UseSenseSession: @unchecked Sendable {
             } else if guidedExtraCheck {
                 // A check known before the scan: the same gated scan (the
                 // baseline's length, frames as before), then the movement
-                // follows on the same screen with no countdown.
+                // follows on the same screen with no countdown. The scan's
+                // frames are no step's evidence (step -1 until it starts).
+                challengeResponseBuilder.setCurrentStep(-1)
                 guard try await runGatedScan(duration: baselineDuration) else {
                     await returnToAlign()
                     return
@@ -1059,7 +1061,7 @@ public final class UseSenseSession: @unchecked Sendable {
                     currentState = .challenge(spec: challenge)
                     return
                 }
-                isCapturingFrames = true
+                isCapturingFrames = false
                 currentState = .challenge(spec: challenge)
                 try await runGuidedChallenge(challenge)
                 challengeResponseBuilder.markCompleted()
@@ -1166,10 +1168,12 @@ public final class UseSenseSession: @unchecked Sendable {
                 stepQuota = Self.stepFrameQuota(remaining: cap - stepStartCount,
                                                 stepsLeft: runner.stepCount - runner.stepIndex)
             }
-            isCapturingFrames = banksFrames && obs.facePresent && !obs.held
-                && frameBuffer.count - stepStartCount < stepQuota
             if isDigits { obs.level = audioCaptureManager.level() }
             let display = runner.advance(obs)
+            // Bank while the gate passes, within the step's share, and (Head
+            // Turn) only while the asked pose is held.
+            isCapturingFrames = banksFrames && obs.facePresent && !obs.held && runner.banksNow
+                && frameBuffer.count - stepStartCount < stepQuota
             guideLock.lock(); challengeRules = runner.gateRules; guideLock.unlock()
             onChallengeUpdate?(display)
             if display.finished { break }

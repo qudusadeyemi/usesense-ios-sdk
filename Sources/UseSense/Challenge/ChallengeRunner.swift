@@ -157,7 +157,7 @@ struct ChallengeRunner {
     static let turnYaw: Double = 15
     static let turnPitch: Double = 12
     static let centreTolerance: Double = 10
-    static let holdAtTarget: TimeInterval = 0.5
+    static let holdAtTarget: TimeInterval = 0.6
     /// Not there after this long: show the hint ("Turn a little further"),
     /// once per challenge. Not there again after the same time: move on and
     /// leave the result to the server. Never shorter than the server's step.
@@ -202,6 +202,7 @@ struct ChallengeRunner {
     private var stepPromptedAt: TimeInterval?
     private var stepReachedAt: TimeInterval?
     private var stepHinted = false
+    private var lastAtTarget: Bool?
     private var lastTime: TimeInterval?
     private var present = false
     private var everPresent = false
@@ -254,6 +255,16 @@ struct ChallengeRunner {
 
     /// The gate passes (debounced).
     var isPresent: Bool { present }
+
+    /// Frames for the current step should be banked now. Head Turn: only
+    /// while the pose is at the step's target (the hold), so the server
+    /// judges each step on frames that show it; frames from the way there
+    /// (still turned from the last step) made the server fail steps the
+    /// person did (device run, 2026-11-10). No pose to judge: always.
+    var banksNow: Bool {
+        guard case .headTurn = plan, !finished else { return true }
+        return lastAtTarget ?? true
+    }
 
     /// The quality gate's rules for the step running now.
     var gateRules: ChallengeGateRules {
@@ -320,7 +331,8 @@ struct ChallengeRunner {
 
     private mutating func advanceHeadTurn(_ step: HeadTurnStep, yaw: Double?, pitch: Double?, dt: TimeInterval) {
         let server = max(0.2, Double(step.durationMs) / 1000)
-        guard let reached = Self.atTarget(step.direction, yaw: yaw, pitch: pitch) else {
+        lastAtTarget = Self.atTarget(step.direction, yaw: yaw, pitch: pitch)
+        guard let reached = lastAtTarget else {
             // No transform from the landmarker: fall back to the server's time.
             if !poseSeen, stepElapsed >= server { endStep(overflow: 0) }
             return
@@ -373,6 +385,7 @@ struct ChallengeRunner {
         stepPromptedAt = finished ? nil : lastTime
         stepReachedAt = nil
         stepHinted = false
+        lastAtTarget = nil
         retrying = false
         stepIndex += 1
         stepElapsed = max(0, overflow)

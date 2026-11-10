@@ -66,19 +66,19 @@ final class ExtraCheckTests: XCTestCase {
         XCTAssertEqual(d.arrow, .left)
         XCTAssertEqual(r.specStepIndex, 0)
         XCTAssertEqual(d.progress, 0)
-        d = hold(&r, .right, 0.6)
+        d = hold(&r, .right, 0.75)
         XCTAssertEqual(r.specStepIndex, 0, "the wrong side doesn't count")
         d = hold(&r, .left, 0.3)
         XCTAssertEqual(r.specStepIndex, 0, "held at the side, not yet long enough")
         XCTAssertGreaterThan(d.progress, 0)
-        d = hold(&r, .left, 0.3)
+        d = hold(&r, .left, 0.45)
         XCTAssertEqual(d.title, "Now to the right")
         XCTAssertEqual(r.specStepIndex, 1)
-        d = hold(&r, .right, 0.6)
+        d = hold(&r, .right, 0.75)
         XCTAssertEqual(d.title, "Now look straight ahead")
         d = hold(&r, .right, 2)
         XCTAssertFalse(d.finished, "still turned: the centre step waits for the head to come back")
-        d = hold(&r, .center, 0.6)
+        d = hold(&r, .center, 0.75)
         XCTAssertTrue(d.finished)
         XCTAssertEqual(d.progress, 1)
         XCTAssertEqual(r.retriesLeft, 1, "no hint needed")
@@ -100,7 +100,7 @@ final class ExtraCheckTests: XCTestCase {
     func testAHintedStepStillEndsWhenTheTurnArrives() {
         var r = headTurn([.left, .center])
         hold(&r, .left, ChallengeRunner.hintAfter + 0.1, deg: 8)
-        let d = hold(&r, .left, 0.6)
+        let d = hold(&r, .left, 0.75)
         XCTAssertEqual(d.title, "Now look straight ahead")
     }
 
@@ -109,9 +109,9 @@ final class ExtraCheckTests: XCTestCase {
         var d = hold(&r, .center, 0.3)
         XCTAssertEqual(d.title, "Look up")
         XCTAssertEqual(d.arrow, .up)
-        d = hold(&r, .down, 0.6)
+        d = hold(&r, .down, 0.75)
         XCTAssertEqual(r.specStepIndex, 0)
-        d = hold(&r, .up, 0.6)
+        d = hold(&r, .up, 0.75)
         XCTAssertEqual(d.title, "Now look straight ahead")
     }
 
@@ -142,7 +142,7 @@ final class ExtraCheckTests: XCTestCase {
 
     func testFaceLeavingTheOvalPausesThenResumes() {
         var r = headTurn()
-        hold(&r, .left, 0.6)
+        hold(&r, .left, 0.75)
         var d = run(&r, 1.5, face: false)
         XCTAssertEqual(d.tone, .warning)
         XCTAssertEqual(d.title, "Move your face to the centre")
@@ -551,9 +551,9 @@ final class ExtraCheckTests: XCTestCase {
     func testTheRunnerFollowsTheStepsGateRules() {
         var r = headTurn([.left, .up, .center])
         XCTAssertEqual(r.gateRules, .turnSideways)
-        hold(&r, .left, 0.6)
+        hold(&r, .left, 0.75)
         XCTAssertEqual(r.gateRules, .turnUpDown)
-        hold(&r, .up, 0.6)
+        hold(&r, .up, 0.75)
         XCTAssertEqual(r.gateRules, .returning)
         XCTAssertEqual(followDot().gateRules, .followDot)
         XCTAssertEqual(ChallengeRunner(plan: .digits(phrase: "1 2", durationMs: 3000)).gateRules, .digits)
@@ -618,10 +618,10 @@ final class ExtraCheckTests: XCTestCase {
     func testEachStepLogsWhenItWasPromptedAndReached() {
         var r = headTurn([.left, .right, .center])
         hold(&r, .center, 0.7)             // prompted, not yet turning
-        hold(&r, .left, 0.6)               // reached ~0.7 s after the prompt
+        hold(&r, .left, 0.75)               // reached ~0.7 s after the prompt
         hold(&r, .right, ChallengeRunner.hintAfter + 0.1, deg: 8)   // short: hint
-        hold(&r, .right, 0.6)              // then reached
-        hold(&r, .center, 0.6)
+        hold(&r, .right, 0.75)              // then reached
+        hold(&r, .center, 0.75)
         let log = r.stepLog
         XCTAssertEqual(log.map(\.index), [0, 1, 2])
         XCTAssertEqual(log.map(\.reached), [true, true, true])
@@ -646,6 +646,36 @@ final class ExtraCheckTests: XCTestCase {
         hold(&r, .left, ChallengeRunner.hintAfter * 2 + 0.3, deg: 5)
         XCTAssertEqual(r.stepLog.first?.reached, false)
         XCTAssertNil(r.stepLog.first?.reachedAt)
+    }
+
+    // MARK: Which frames count for a step (device finding)
+
+    func testHeadTurnBanksOnlyWhileTheAskedPoseIsHeld() {
+        var r = headTurn([.left, .center])
+        hold(&r, .center, 0.5)
+        XCTAssertFalse(r.banksNow, "not turned yet: these frames would show the wrong pose")
+        hold(&r, .right, 0.3)
+        XCTAssertFalse(r.banksNow)
+        hold(&r, .left, 0.2)
+        XCTAssertTrue(r.banksNow, "holding the asked side")
+        var noPose = headTurn([.left])
+        run(&noPose, 0.2, yaw: nil, pitch: nil)
+        XCTAssertTrue(noPose.banksNow, "no pose to judge: bank as before")
+        XCTAssertTrue(followDot().banksNow)
+    }
+
+    func testScanFramesAreNoStepsEvidence() {
+        let b = ChallengeResponseBuilder()
+        b.setCurrentStep(-1)
+        b.recordFrame(frameIndex: 0, timestampMs: 1)
+        b.recordFrame(frameIndex: 1, timestampMs: 2)
+        b.setCurrentStep(0)
+        b.recordFrame(frameIndex: 2, timestampMs: 3)
+        let spec = ChallengeSpecWrapper.headTurn(HeadTurnChallenge(type: "head_turn", seed: "s", sequence: [],
+                                                                    totalDurationMs: 0, framesPerStep: nil, captureFpsHint: nil))
+        let json = b.build(challenge: spec)
+        XCTAssertEqual(json["step_frames"] as? [String: [Int]], ["0": [2]])
+        XCTAssertEqual((json["frame_timestamps"] as? [Int64])?.count, 3, "timestamps stay aligned with the frames")
     }
 
     // MARK: Frame budget per step (device finding)

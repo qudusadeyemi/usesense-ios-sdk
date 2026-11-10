@@ -59,11 +59,14 @@ final class ChallengeResponseBuilder: @unchecked Sendable {
     func recordFrame(frameIndex: Int, timestampMs: Int64) {
         lock.lock()
         defer { lock.unlock() }
+        frameTimestamps.append(timestampMs)
+        // No step yet (the guided scan before a challenge): the frame keeps
+        // its timestamp but isn't any step's evidence.
+        guard currentStepIndex >= 0 else { return }
         if waypointFrames[currentStepIndex] == nil {
             waypointFrames[currentStepIndex] = []
         }
         waypointFrames[currentStepIndex]?.append(frameIndex)
-        frameTimestamps.append(timestampMs)
     }
 
     // Legacy API for compatibility
