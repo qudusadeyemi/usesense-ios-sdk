@@ -175,11 +175,13 @@ struct ChallengeRunner {
     /// Follow Dot: time the dot takes to glide to its next waypoint.
     static let dotGlide: TimeInterval = 0.6
     /// Follow Dot is closed loop too: the dot glides to a waypoint and waits
-    /// there until the head points toward it (from the pose at the first,
-    /// central waypoint) and holds, as Head Turn. A waypoint within this of
-    /// the screen centre on an axis asks for no movement on that axis; one
-    /// near the centre on both asks for a straight face.
-    static let dotCentreBand: CGFloat = 0.12
+    /// there until the head has MOVED toward it from the pose held at the
+    /// previous waypoint, and holds, as Head Turn. Judged on the dot's move
+    /// (as the server does), so a head already raised doesn't "reach" the
+    /// next raised dot without moving (device run, 2026-11-10: the person
+    /// didn't follow and the phone confirmed anyway). A move under this on an
+    /// axis asks for no movement on that axis (the server's 0.1).
+    static let dotCentreBand: CGFloat = 0.1
     static let dotYaw: Double = 10
     static let dotPitch: Double = 8
 
@@ -215,8 +217,12 @@ struct ChallengeRunner {
     /// Follow Dot: time since the step began (the glide; not reset by the
     /// hint), and the head pose at the central waypoint (the reference).
     private var stepAge: TimeInterval = 0
-    private var baseYaw: Double = 0
-    private var basePitch: Double = 0
+    /// Follow Dot: the head pose held at the previous waypoint (the reference
+    /// for the next move), and the latest pose seen.
+    private var refYaw: Double = 0
+    private var refPitch: Double = 0
+    private var lastYaw: Double?
+    private var lastPitch: Double?
     private var lastTime: TimeInterval?
     private var present = false
     private var everPresent = false
@@ -324,11 +330,19 @@ struct ChallengeRunner {
                                 reached: Self.atTarget(step.direction, yaw: obs.yaw, pitch: obs.pitch), dt: dt)
             } else if case .followDot(let waypoints) = plan {
                 let wp = waypoints[stepIndex]
+                if let y = obs.yaw, let p = obs.pitch { lastYaw = y; lastPitch = p }
                 // The dot must have arrived before the head can be on it.
                 let arrived = stepAge >= dotGlideTime(stepIndex)
-                let reached = Self.atDotTarget(CGPoint(x: CGFloat(wp.x), y: CGFloat(wp.y)), yaw: obs.yaw, pitch: obs.pitch,
-                                               baseYaw: baseYaw, basePitch: basePitch)
-                if Self.isCentral(wp), let y = obs.yaw, let p = obs.pitch { baseYaw = y; basePitch = p }
+                let here = CGPoint(x: CGFloat(wp.x), y: CGFloat(wp.y))
+                let reached: Bool?
+                if stepIndex == 0 {
+                    // The first waypoint: a straight face (the reference).
+                    reached = Self.atTarget(.center, yaw: obs.yaw, pitch: obs.pitch)
+                } else {
+                    let prev = waypoints[stepIndex - 1]
+                    reached = Self.atDotTarget(here, from: CGPoint(x: CGFloat(prev.x), y: CGFloat(prev.y)),
+                                               yaw: obs.yaw, pitch: obs.pitch, refYaw: refYaw, refPitch: refPitch)
+                }
                 advanceTargeted(server: Double(wp.durationMs) / 1000, reached: reached.map { $0 && arrived }, dt: dt)
             } else {
                 let durs = durations
@@ -357,23 +371,20 @@ struct ChallengeRunner {
         }
     }
 
-    /// Follow Dot: whether the head points toward the waypoint, relative to
-    /// the pose at the central waypoint (nil: no pose to judge). Screen
-    /// right is the person's right in the mirrored preview.
-    static func atDotTarget(_ wp: CGPoint, yaw: Double?, pitch: Double?, baseYaw: Double, basePitch: Double) -> Bool? {
+    /// Follow Dot: whether the head has moved the way the dot moved (from
+    /// `from` to `wp`), measured from the pose held at the previous waypoint
+    /// (nil: no pose to judge). Screen right is the person's right in the
+    /// mirrored preview. A move under `dotCentreBand` on both axes asks for
+    /// nothing new.
+    static func atDotTarget(_ wp: CGPoint, from prev: CGPoint, yaw: Double?, pitch: Double?,
+                            refYaw: Double, refPitch: Double) -> Bool? {
         guard let yaw, let pitch else { return nil }
-        if isCentral(wp) { return abs(yaw) < centreTolerance && abs(pitch) < centreTolerance }
-        let dx = wp.x - 0.5, dy = 0.5 - wp.y
-        let towardRight = (yaw - baseYaw) * -leftYawSign
-        let towardUp = (pitch - basePitch) * upPitchSign
-        if abs(dx) >= dotCentreBand, (dx > 0 ? towardRight : -towardRight) < dotYaw { return false }
-        if abs(dy) >= dotCentreBand, (dy > 0 ? towardUp : -towardUp) < dotPitch { return false }
+        let dx = wp.x - prev.x, dy = prev.y - wp.y   // dy > 0: the dot moved up
+        let towardRight = (yaw - refYaw) * -leftYawSign
+        let towardUp = (pitch - refPitch) * upPitchSign
+        if abs(dx) > dotCentreBand, (dx > 0 ? towardRight : -towardRight) < dotYaw { return false }
+        if abs(dy) > dotCentreBand, (dy > 0 ? towardUp : -towardUp) < dotPitch { return false }
         return true
-    }
-
-    static func isCentral(_ wp: FollowDotWaypoint) -> Bool { isCentral(CGPoint(x: CGFloat(wp.x), y: CGFloat(wp.y))) }
-    static func isCentral(_ p: CGPoint) -> Bool {
-        abs(p.x - 0.5) < dotCentreBand && abs(p.y - 0.5) < dotCentreBand
     }
 
     private func dotGlideTime(_ i: Int) -> TimeInterval {
@@ -447,6 +458,11 @@ struct ChallengeRunner {
         stepHinted = false
         lastAtTarget = nil
         retrying = false
+        if case .followDot = plan, let y = lastYaw, let p = lastPitch {
+            // The next move is measured from where the head is now.
+            refYaw = y
+            refPitch = p
+        }
         stepIndex += 1
         stepElapsed = max(0, overflow)
         stepAge = 0

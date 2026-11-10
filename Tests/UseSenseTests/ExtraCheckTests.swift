@@ -16,7 +16,7 @@ final class ExtraCheckTests: XCTestCase {
 
     private func followDot() -> ChallengeRunner {
         // Centre (the reference), up-right, left, right: the server's shape.
-        let pts: [(Float, Float)] = [(0.5, 0.5), (0.8, 0.25), (0.2, 0.6), (0.7, 0.5)]
+        let pts: [(Float, Float)] = [(0.5, 0.5), (0.8, 0.25), (0.2, 0.6), (0.7, 0.55)]
         let wps = pts.enumerated().map { FollowDotWaypoint(x: $0.element.0, y: $0.element.1, durationMs: 1000, index: $0.offset) }
         return ChallengeRunner(plan: .followDot(wps))
     }
@@ -184,25 +184,39 @@ final class ExtraCheckTests: XCTestCase {
         run(&r, seconds, yaw: right * -ChallengeRunner.leftYawSign, pitch: up * ChallengeRunner.upPitchSign)
     }
 
-    func testTheDotWaitsAtEachWaypointUntilTheHeadPointsAtIt() {
-        var r = followDot()
-        var d = point(&r, right: 0, up: 0, 1.2)          // centre waypoint: straight face
-        XCTAssertEqual(r.specStepIndex, 1, "the central waypoint is held straight")
-        d = point(&r, right: 0, up: 0, 3)                // dot up-right, head still straight
+    func testTheDotWaitsUntilTheHeadMovesTheWayTheDotMoved() {
+        var r = followDot()   // centre, up-right, left-down, right
+        var d = point(&r, right: 0, up: 0, 1.2)          // first waypoint: straight face
+        XCTAssertEqual(r.specStepIndex, 1)
+        d = point(&r, right: 0, up: 0, 3)                // dot went up-right, head didn't move
         XCTAssertEqual(r.specStepIndex, 1, "the dot waits")
         XCTAssertEqual(d.title, "Follow the dot with your head")
         XCTAssertEqual(d.dot!.x, 0.8, accuracy: 0.01, "glided there and stays")
-        d = point(&r, right: 20, up: 0, 1.2)             // right only: not enough, it's up-right
+        d = point(&r, right: 20, up: 0, 1.2)             // right only: the dot also went up
         XCTAssertEqual(r.specStepIndex, 1)
         d = point(&r, right: 20, up: 15, 1.2)            // up-right: reached
         XCTAssertEqual(r.specStepIndex, 2)
         XCTAssertEqual(d.trail.count, 3, "waypoints passed plus the dot")
-        d = point(&r, right: -20, up: 0, 1.2)            // left (its y is near the centre band)
+        d = point(&r, right: 20, up: 15, 2)              // dot went left-down, head stays: waits
+        XCTAssertEqual(r.specStepIndex, 2, "staying put never counts as following")
+        d = point(&r, right: -5, up: 0, 1.2)             // moved left and down from (20, 15)
+        XCTAssertEqual(r.specStepIndex, 3)
         XCTAssertEqual(d.title, "Keep following")
-        d = point(&r, right: 20, up: 0, 1.2)
+        d = point(&r, right: 10, up: 0, 1.2)             // right by 15 from -5
         XCTAssertTrue(d.finished)
         XCTAssertEqual(r.stepLog.map(\.reached), [true, true, true, true])
-        XCTAssertNotNil(r.stepLog.last?.reachedAt)
+    }
+
+    func testTheDeviceRunCaseAHeadAlreadyRaisedDoesNotReachTheNextRaisedDot() {
+        // Device run: dot 1 at (0.76, 0.30), dot 2 at (0.39, 0.31). With the head
+        // still up and right from dot 1, dot 2 (moved left) must not count.
+        let ry = 15 * -ChallengeRunner.leftYawSign, rp = 12 * ChallengeRunner.upPitchSign
+        XCTAssertEqual(ChallengeRunner.atDotTarget(CGPoint(x: 0.39, y: 0.31), from: CGPoint(x: 0.76, y: 0.30),
+                                                   yaw: ry, pitch: rp, refYaw: ry, refPitch: rp), false)
+        XCTAssertEqual(ChallengeRunner.atDotTarget(CGPoint(x: 0.39, y: 0.31), from: CGPoint(x: 0.76, y: 0.30),
+                                                   yaw: 0, pitch: rp, refYaw: ry, refPitch: rp), true,
+                       "a 15 degree move left; the dot's 0.01 drop asks for no pitch")
+        XCTAssertNil(ChallengeRunner.atDotTarget(.zero, from: .zero, yaw: nil, pitch: nil, refYaw: 0, refPitch: 0))
     }
 
     func testTheDotGetsOneHintThenMovesOnForTheServer() {
@@ -216,20 +230,6 @@ final class ExtraCheckTests: XCTestCase {
         XCTAssertEqual(r.specStepIndex, 2)
         XCTAssertEqual(r.stepLog.count, 2)
         XCTAssertEqual(r.stepLog.last?.reached, false)
-    }
-
-    func testTheHeadOnTheDotIsMeasuredFromTheCentralPose() {
-        // Sitting turned 5 degrees right at the centre waypoint, 12 more is enough
-        // for a right dot; 3 more isn't.
-        let base = 5.0 * -ChallengeRunner.leftYawSign
-        let right = CGPoint(x: 0.85, y: 0.5)
-        XCTAssertEqual(ChallengeRunner.atDotTarget(right, yaw: base + 12 * -ChallengeRunner.leftYawSign, pitch: 0,
-                                                   baseYaw: base, basePitch: 0), true)
-        XCTAssertEqual(ChallengeRunner.atDotTarget(right, yaw: base + 3 * -ChallengeRunner.leftYawSign, pitch: 0,
-                                                   baseYaw: base, basePitch: 0), false)
-        XCTAssertEqual(ChallengeRunner.atDotTarget(CGPoint(x: 0.5, y: 0.85), yaw: 0, pitch: -10 * ChallengeRunner.upPitchSign,
-                                                   baseYaw: 0, basePitch: 0), true, "a low dot: head down")
-        XCTAssertNil(ChallengeRunner.atDotTarget(right, yaw: nil, pitch: nil, baseYaw: 0, basePitch: 0))
     }
 
     func testTheDotWaitsWhileTheFaceIsAway() {
