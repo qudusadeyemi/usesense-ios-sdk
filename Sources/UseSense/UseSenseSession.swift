@@ -214,10 +214,17 @@ public final class UseSenseSession: @unchecked Sendable {
     private var challengeFacePresent = false
     private var challengeYaw: Double?
     private var challengePitch: Double?
+    private var challengeHint: GateHint?
+    /// The running challenge step's gate rules (guarded by `guideLock`).
+    private var challengeRules = ChallengeGateRules.digits
     /// The "Leave verification?" dialog is open: the challenge holds still.
     private var challengeHeld = false
     /// Speak Digits ran on screen: its response goes in the upload.
     private var audioChallengeResponse: [String: Any]?
+    /// App Attest fields from round 1, reused by round 2's upload.
+    private var attestFieldsCache: [String: Any]?
+    /// Test seam: the last round-2 metadata built.
+    private(set) var lastRound2MetadataForTesting: Data?
     /// The newest face mesh and camera frame, whether or not frames are being
     /// banked: the inline step-up reads them after the scan has ended.
     private let latestLock = NSLock()
@@ -1100,7 +1107,7 @@ public final class UseSenseSession: @unchecked Sendable {
         let started = Self.isoNow()
         eventEmitter.emit(.challengeStarted, data: ["type": ChallengeType.speakPhrase.rawValue])
         currentState = .challenge(spec: wrapper)
-        try await runGuidedChallenge(wrapper)
+        try await runGuidedChallenge(wrapper, banksFrames: false)
         eventEmitter.emit(.challengeCompleted)
         audioChallengeResponse = [
             "type": ChallengeType.speakPhrase.rawValue,
@@ -1120,14 +1127,19 @@ public final class UseSenseSession: @unchecked Sendable {
     /// Runs a challenge on the scan screen until its timeline completes. It
     /// pauses while the face is out of the oval (or the leave dialog is open)
     /// and never fails on the device; the server judges the frames.
-    private func runGuidedChallenge(_ spec: ChallengeSpecWrapper) async throws {
+    /// `banksFrames`: frames go into the upload while the gate passes (the
+    /// movement); Speak Digits banks none (the scan filled the buffer).
+    private func runGuidedChallenge(_ spec: ChallengeSpecWrapper, banksFrames: Bool = true) async throws {
         guard var runner = ChallengeRunner(spec: spec) else { return }
         guideLock.lock()
         challengeFacePresent = false
+        challengeHint = nil
         challengeYaw = nil
         challengePitch = nil
         challengeHeld = false
+        challengeRules = runner.gateRules
         guideLock.unlock()
+        defer { isCapturingFrames = false }
         let isDigits = runner.plan.isDigits
         if isDigits { audioCaptureManager.enableMetering() }
         let clock = Date()
@@ -1137,14 +1149,18 @@ public final class UseSenseSession: @unchecked Sendable {
             try Task.checkCancellation()
             guideLock.lock()
             var obs = ChallengeObservation(time: Date().timeIntervalSince(clock), facePresent: challengeFacePresent,
-                                           yaw: challengeYaw, pitch: challengePitch, held: challengeHeld)
+                                           yaw: challengeYaw, pitch: challengePitch, held: challengeHeld,
+                                           hint: challengeHint)
             guideLock.unlock()
+            // As in the scan: frames bank only while every check passes.
+            isCapturingFrames = banksFrames && obs.facePresent && !obs.held
             if isDigits { obs.level = audioCaptureManager.level() }
             let display = runner.advance(obs)
             if runner.specStepIndex != lastStep {
                 lastStep = runner.specStepIndex
                 challengeResponseBuilder.setCurrentStep(lastStep)
             }
+            guideLock.lock(); challengeRules = runner.gateRules; guideLock.unlock()
             onChallengeUpdate?(display)
             if display.finished { break }
         }
@@ -1164,6 +1180,8 @@ public final class UseSenseSession: @unchecked Sendable {
                 return
             }
             captureStartTime = Date()
+            // A fresh gate for round 2 (the fill light, if on, stays on).
+            guideLock.lock(); guide.reset(keepFillLight: true); guideLock.unlock()
             challengeResponseBuilder.markStarted()
             frameBuffer.setCapturePhase(.challenge)
             eventEmitter.emit(.challengeStarted, data: ["type": stepUp.challenge.challengeType.rawValue, "round": "2"])
@@ -1273,15 +1291,43 @@ public final class UseSenseSession: @unchecked Sendable {
             return
         }
 
+        eventEmitter.emit(.captureCompleted, data: ["frame_count": "\(frames.count)"])
+        guard let metadataData = await buildCaptureMetadata(session: session, frames: frames) else {
+            handleError(UseSenseError(code: .unknownError, message: "Failed to build metadata."))
+            return
+        }
+
+        // Audio data
+        let audioData: Data?
+        if let url = audioRecordingURL {
+            audioData = try? Data(contentsOf: url)
+            try? FileManager.default.removeItem(at: url)
+        } else {
+            audioData = audioCaptureManager.stopRecording()
+        }
+
+        // Keep the finished capture: a failed upload or completion resumes
+        // from here instead of recapturing.
+        pendingUpload = PendingUpload(frames: frames, metadata: metadataData, audio: audioData)
+        signalsAccepted = false
+        await uploadPendingAndComplete(session)
+    }
+
+    /// The upload's metadata: every signal round 1 sends (channel integrity,
+    /// device telemetry, screen detection, face mesh, verification package,
+    /// suspicion, on-device classifier, frame hashes). Round 2 sends the same
+    /// blocks for its own frames, so the server can run the same checks on it,
+    /// with its challenge response and `step_up_round: 2`; the round-1-only
+    /// blocks (inline step-up, covered check, Speak Digits, v4 phases) stay out.
+    private func buildCaptureMetadata(session: SessionData, frames: [Data],
+                                      round2: StepUpInstruction? = nil) async -> Data? {
         let frameHashes = Array(frameBuffer.getFrameHashes().prefix(frames.count))
         let frameLuminances = frameBuffer.getFrameLuminances()
 
-        eventEmitter.emit(.captureCompleted, data: ["frame_count": "\(frames.count)"])
-
-        // Wait for App Attest
-        var attestFields: [String: Any] = [:]
+        // App Attest: waited for once (round 1); round 2 reuses the same fields.
+        var attestFields: [String: Any] = attestFieldsCache ?? [:]
         #if canImport(DeviceCheck) && canImport(CryptoKit)
-        if let attestTask = appAttestTask {
+        if attestFieldsCache == nil, let attestTask = appAttestTask {
             attestFields = await Deadline.run(seconds: Self.appAttestWaitSeconds) {
                 await attestTask.value
             } ?? {
@@ -1290,6 +1336,7 @@ public final class UseSenseSession: @unchecked Sendable {
             }()
         }
         #endif
+        attestFieldsCache = attestFields
 
         // Collect channel integrity and device telemetry
         let channelIntegrity = deviceSignalCollector.collectChannelIntegrity(attestFields: attestFields)
@@ -1306,7 +1353,7 @@ public final class UseSenseSession: @unchecked Sendable {
 
         // Challenge response
         var challengeResponse: [String: Any]?
-        if let challenge = session.policy.challenge {
+        if let challenge = round2?.challenge ?? session.policy.challenge {
             challengeResponse = challengeResponseBuilder.build(challenge: challenge)
         }
 
@@ -1423,7 +1470,7 @@ public final class UseSenseSession: @unchecked Sendable {
 
         // Inline step-up data (only when triggered, per spec)
         var inlineStepUpData: [String: Any]?
-        if let result = stepUpResult {
+        if round2 == nil, let result = stepUpResult {
             var isuData: [String: Any] = [
                 "challengesRun": result.challengesRun,
                 "triggerSuspicionScore": result.triggerSuspicionScore,
@@ -1508,9 +1555,8 @@ public final class UseSenseSession: @unchecked Sendable {
         }
 
         // Build metadata
-        let metadataData: Data
         do {
-            metadataData = try metadataBuilder.build(
+            return try metadataBuilder.build(
                 sessionId: session.sessionId,
                 captureConfig: captureConfig,
                 captureStartTime: startTime,
@@ -1530,34 +1576,19 @@ public final class UseSenseSession: @unchecked Sendable {
                 suspicion: suspicionData,
                 inlineStepUp: inlineStepUpData,
                 deepClassifierOnDevice: deepClassifierOnDevice,
-                framePhases: config.options?.liveSenseV4Enabled == true
+                framePhases: round2 == nil && config.options?.liveSenseV4Enabled == true
                     ? frameBuffer.getFramePhases()
                     : nil,
-                zoomMotion: config.options?.liveSenseV4Enabled == true
+                zoomMotion: round2 == nil && config.options?.liveSenseV4Enabled == true
                     ? buildZoomMotionStats(framePhases: frameBuffer.getFramePhases())
                     : nil,
-                coveredCheck: coveredCheckJSON(),
-                audioChallengeResponse: audioChallengeResponse
+                coveredCheck: round2 == nil ? coveredCheckJSON() : nil,
+                audioChallengeResponse: round2 == nil ? audioChallengeResponse : nil,
+                extra: round2 == nil ? [:] : ["step_up_round": 2, "capture_channel": "ios"]
             )
         } catch {
-            handleError(UseSenseError(code: .unknownError, message: "Failed to build metadata."))
-            return
+            return nil
         }
-
-        // Audio data
-        let audioData: Data?
-        if let url = audioRecordingURL {
-            audioData = try? Data(contentsOf: url)
-            try? FileManager.default.removeItem(at: url)
-        } else {
-            audioData = audioCaptureManager.stopRecording()
-        }
-
-        // Keep the finished capture: a failed upload or completion resumes
-        // from here instead of recapturing.
-        pendingUpload = PendingUpload(frames: frames, metadata: metadataData, audio: audioData)
-        signalsAccepted = false
-        await uploadPendingAndComplete(session)
     }
 
     /// Upload the kept capture (round 1), then complete. Also the "Retry" path.
@@ -1620,6 +1651,12 @@ public final class UseSenseSession: @unchecked Sendable {
         serverStepUp = stepUp
         frameBuffer.reset()
         challengeResponseBuilder.reset()
+        // Round 2 reports its own signals: its mesh, suspicion score, sensors
+        // and dropped frames start over (round 1's are already on the server).
+        faceMeshManager.reset()
+        suspicionEngine?.reset()
+        framesDropped = 0
+        deviceSignalCollector.startSensorCollection()
         reconfigureFrameBuffer(maxFrames: stepUp.maxFrames, targetFps: sessionData?.upload.targetFps ?? 3)
         setCameraLive(false)
         frameCaptureManager.start()
@@ -1661,23 +1698,18 @@ public final class UseSenseSession: @unchecked Sendable {
             handleError(UseSenseError(code: .noFramesCaptured, isRetryable: true))
             return
         }
-        let metadata: [String: Any] = [
-            "session_id": session.sessionId,
-            "sdk_version": UseSenseAPIClient.sdkVersion,
-            "platform": "ios",
-            "source": "sdk",
-            "capture_channel": "ios",
-            "step_up_round": 2,
-            "client_capabilities": StepUpCapability.all,
-            "challenge_response": challengeResponseBuilder.build(challenge: stepUp.challenge),
-            "frame_hashes": Array(frameBuffer.getFrameHashes().prefix(frames.count)),
-        ]
+        captureEndTime = Date()
+        deviceSignalCollector.stopSensorCollection()
+        guard let metadataData = await buildCaptureMetadata(session: session, frames: frames, round2: stepUp) else {
+            handleError(UseSenseError(code: .unknownError, message: "Failed to build metadata."))
+            return
+        }
+        lastRound2MetadataForTesting = metadataData
         uploadAttempted = true
         watchdog?.arm(.upload, budget: uploadBudget)
         USTrace.log("upload: start (path 2)")
         currentState = .uploading(progress: 0)
         do {
-            let metadataData = try JSONSerialization.data(withJSONObject: metadata)
             _ = try await apiClient.uploadSignals(
                 sessionId: session.sessionId,
                 sessionToken: session.sessionToken,
@@ -1888,6 +1920,13 @@ extension UseSenseSession {
         latestLock.lock(); latestMesh = mesh; latestLock.unlock()
     }
 
+    /// Test seam: the metadata an upload would carry for these frames.
+    func captureMetadataForTesting(frames: [Data], round2: StepUpInstruction?) async -> [String: Any]? {
+        guard let session = sessionData,
+              let data = await buildCaptureMetadata(session: session, frames: frames, round2: round2) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
     /// Test seam: a round-1 upload came back asking for a step-up.
     func startServerStepUpRoundForTesting(_ stepUp: StepUpInstruction) async {
         await startServerStepUpRound(stepUp)
@@ -2015,6 +2054,8 @@ extension UseSenseSession {
 
     /// Stillness anchors: nose tip, eye outer corners, chin, forehead.
     static let stillnessAnchors = [1, 33, 263, 152, 10]
+    /// Speak Digits: the same without the chin, which moves when speaking.
+    static let speakingStillnessAnchors = [1, 33, 263, 10]
 
     /// Iris-centre distance / frame width (eye-corner midpoints without iris points).
     static func eyeDistance(_ lm: [(x: Double, y: Double, z: Double)], aspect: Double) -> Double? {
@@ -2063,37 +2104,17 @@ extension UseSenseSession {
         return r
     }
 
-    /// Guided extra check: is the face in the oval, and the head pose (capture queue).
-    fileprivate func updateChallengeObservation(pixelBuffer: CVPixelBuffer, mesh: FaceMeshResult?) {
-        guideLock.lock()
-        let viewport = viewportSize
-        guideLock.unlock()
-        var present = false
-        if let mesh {
-            let size = CGSize(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer))
-            let mapper = PreviewMapper(bufferSize: size, viewSize: viewport)
-            let points = mesh.landmarks.map { mapper.viewPoint(x: $0.x, y: $0.y) }
-            let oval = CaptureOvalLayout.ovalRect(in: viewport)
-            present = ChallengeRunner.faceInOval(centreOffset: Self.faceCentreOffset(points, oval: oval))
-        }
-        guideLock.lock()
-        challengeFacePresent = present
-        challengeYaw = mesh?.gate.matrixPose?.yaw
-        challengePitch = mesh?.gate.matrixPose?.pitch
-        guideLock.unlock()
-    }
-
     /// Runs on the capture queue for every camera frame of a guided session.
     fileprivate func updateGuide(pixelBuffer: CVPixelBuffer, mesh: FaceMeshResult?, time: TimeInterval) {
         let state = storedState
-        if case .challenge = state {
-            updateChallengeObservation(pixelBuffer: pixelBuffer, mesh: mesh)
-            return
-        }
         let onCaptureScreen: Bool
+        let inChallenge: Bool
         switch state {
-        case .faceGuide, .baseline: onCaptureScreen = true
-        default: onCaptureScreen = false
+        case .faceGuide, .baseline: onCaptureScreen = true; inChallenge = false
+        // The same quality gate runs during a challenge (before the scan or
+        // round 2), with the step's pose allowance.
+        case .challenge where guidedExtraCheck: onCaptureScreen = true; inChallenge = true
+        default: onCaptureScreen = false; inChallenge = false
         }
         guard onCaptureScreen else { return }
 
@@ -2101,6 +2122,7 @@ extension UseSenseSession {
         let bufferH = Double(CVPixelBufferGetHeight(pixelBuffer))
         guideLock.lock()
         let viewport = viewportSize
+        let rules = inChallenge ? challengeRules : nil
         guideLock.unlock()
 
         let isScanning: Bool
@@ -2128,7 +2150,7 @@ extension UseSenseSession {
                 face: qualityAnalyzer.analyzeFaceRegion(pixelBuffer, faceRect: mesh.bbox),
                 eyeBlinkLeft: mesh.gate.eyeBlinkLeft,
                 eyeBlinkRight: mesh.gate.eyeBlinkRight,
-                anchors: Self.stillnessAnchors.compactMap { i in
+                anchors: (rules?.checksStillness == true ? Self.speakingStillnessAnchors : Self.stillnessAnchors).compactMap { i in
                     i < points.count ? CGPoint(x: points[i].x / unit, y: points[i].y / unit) : nil
                 }
             )
@@ -2166,7 +2188,13 @@ extension UseSenseSession {
         guideLock.lock()
         let dt = latestGuideFrameTime.isFinite ? min(0.25, max(0, time - latestGuideFrameTime)) : 0
         latestGuideFrameTime = time
-        let snapshot = guide.update(observation, scanning: isScanning)
+        let snapshot = guide.update(observation, scanning: isScanning, challenge: rules)
+        if inChallenge {
+            challengeFacePresent = snapshot.allPass
+            challengeHint = snapshot.hint
+            challengeYaw = mesh?.gate.matrixPose?.yaw
+            challengePitch = mesh?.gate.matrixPose?.pitch
+        }
         if isScanning && !coverReportScanning {
             let at = coverSegmenter.latestAt
             coverReport.scanStarted(cover: coverSegmenter.latest(at: time),
@@ -2222,7 +2250,7 @@ extension UseSenseSession {
         if refocus { lastFocusTime = now }
         guideLock.unlock()
 
-        if publish { onGuideUpdate?(update) }
+        if publish && !inChallenge { onGuideUpdate?(update) }
         if startScan {
             USTrace.log("guide: all checks pass, auto start")
             Task { await self.faceReady() }

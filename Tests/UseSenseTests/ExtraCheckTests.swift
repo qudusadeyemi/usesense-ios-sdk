@@ -200,14 +200,6 @@ final class ExtraCheckTests: XCTestCase {
         XCTAssertGreaterThan(AudioCaptureManager.normalised(decibels: -25), ChallengeRunner.quietLevel)
     }
 
-    // MARK: Presence
-
-    func testFaceInOval() {
-        XCTAssertTrue(ChallengeRunner.faceInOval(centreOffset: CGPoint(x: 0.3, y: -0.2)))
-        XCTAssertFalse(ChallengeRunner.faceInOval(centreOffset: CGPoint(x: 0.7, y: 0)))
-        XCTAssertFalse(ChallengeRunner.faceInOval(centreOffset: nil))
-    }
-
     // MARK: Sheet copy
 
     func testSheetSentencePerChallenge() throws {
@@ -445,6 +437,134 @@ final class ExtraCheckTests: XCTestCase {
             UIColor(red: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1).setFill()
             ctx.fill(CGRect(x: 0, y: 0, width: 40, height: 40))
         }
+    }
+
+    // MARK: The quality gate during a challenge
+
+    /// A face that passes every scan check.
+    private func goodFace(_ t: TimeInterval, yaw: Double = 0, pitch: Double = 0, eye: Double = 0.24,
+                          cover: FaceCover? = nil, anchors: [CGPoint]? = nil) -> GateObservation {
+        GateObservation(time: t, faceCount: 1, ovalExtent: 0.9, faceCentreOffset: .zero, eyeDistance: eye,
+                        yaw: yaw, pitch: pitch, roll: 0,
+                        face: FaceRegionQuality(meanLuma: 120, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 400),
+                        eyeBlinkLeft: 0.1, eyeBlinkRight: 0.1,
+                        anchors: anchors ?? [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.4, y: 0.4), CGPoint(x: 0.6, y: 0.4), CGPoint(x: 0.5, y: 0.3)],
+                        cover: cover)
+    }
+
+    private func settle(_ gate: inout QualityGate, rules: ChallengeGateRules?, yaw: Double = 0,
+                        make: ((TimeInterval) -> GateObservation)? = nil) -> QualityGate.Evaluation {
+        var e = QualityGate.Evaluation()
+        for i in 0..<12 {
+            let t = Double(i) * 0.05
+            e = gate.evaluate(make?(t) ?? goodFace(t, yaw: yaw), scanning: true, challenge: rules)
+        }
+        return e
+    }
+
+    func testOnlyPoseRelaxesAndOnlyTowardTheStepsMovement() {
+        var scan = QualityGate()
+        XCTAssertNotNil(settle(&scan, rules: nil, yaw: 30).blocking[.pose], "the scan wants a straight face")
+        var turn = QualityGate()
+        XCTAssertTrue(settle(&turn, rules: .turnSideways, yaw: 30).blocking.isEmpty, "a sideways step allows the turn")
+        var tooFar = QualityGate()
+        XCTAssertNotNil(settle(&tooFar, rules: .turnSideways, yaw: 60).blocking[.pose])
+        var upDown = QualityGate()
+        XCTAssertNotNil(settle(&upDown, rules: .turnUpDown, yaw: 30).blocking[.pose], "an up/down step doesn't open yaw")
+    }
+
+    func testEveryOtherScanCheckStillHoldsAChallenge() {
+        let rules = ChallengeGateRules.turnSideways
+        var g = QualityGate()
+        XCTAssertEqual(settle(&g, rules: rules) { self.goodFace($0, cover: FaceCover(bodySkin: 0.5, other: 0.4)) }.blocking[.covered], .uncovered)
+        g = QualityGate()
+        XCTAssertEqual(settle(&g, rules: rules) { self.goodFace($0, eye: 0.10) }.blocking[.distance], .moveCloser)
+        g = QualityGate()
+        XCTAssertNil(settle(&g, rules: rules) { self.goodFace($0, eye: 0.33) }.blocking[.distance],
+                     "the scan's hold margin applies")
+        g = QualityGate()
+        XCTAssertNotNil(settle(&g, rules: rules) { t in var o = self.goodFace(t); o.faceCount = 2; return o }.blocking[.onePerson])
+        g = QualityGate()
+        XCTAssertNotNil(settle(&g, rules: rules) { t in var o = self.goodFace(t); o.eyeBlinkLeft = 0.9; o.eyeBlinkRight = 0.9; return o }.blocking[.eyesOpen])
+        g = QualityGate()
+        XCTAssertNotNil(settle(&g, rules: rules) { t in
+            var o = self.goodFace(t); o.face = FaceRegionQuality(meanLuma: 120, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 10); return o
+        }.blocking[.sharpness])
+        g = QualityGate()
+        XCTAssertNotNil(settle(&g, rules: rules) { t in var o = self.goodFace(t); o.ovalExtent = 1.6; o.faceCentreOffset = CGPoint(x: 0.5, y: 0); return o }.blocking[.inFrame])
+        g = QualityGate()
+        XCTAssertEqual(settle(&g, rules: rules) { _ in GateObservation.noFace(at: 0) }.blocking[.faceFound], .showFace)
+    }
+
+    func testStillnessOnlyWhereTheStepDoesNotAskForMovement() {
+        let shaking: (TimeInterval) -> GateObservation = { t in
+            let dx = CGFloat(Int(t * 20) % 2) * 0.05
+            return self.goodFace(t, anchors: [CGPoint(x: 0.5 + dx, y: 0.5), CGPoint(x: 0.4 + dx, y: 0.4),
+                                              CGPoint(x: 0.6 + dx, y: 0.4), CGPoint(x: 0.5 + dx, y: 0.3)])
+        }
+        var turn = QualityGate()
+        XCTAssertNil(settle(&turn, rules: .followDot, make: shaking).blocking[.stillness])
+        var digits = QualityGate()
+        XCTAssertEqual(settle(&digits, rules: .digits, make: shaking).blocking[.stillness], .holdStill)
+    }
+
+    func testGuideNamesTheFailingCheckDuringAChallenge() {
+        var guide = CaptureGuide()
+        var snap = GuideSnapshot.initial
+        for i in 0..<20 {
+            snap = guide.update(goodFace(Double(i) * 0.05, cover: FaceCover(bodySkin: 0.5, other: 0.4)), challenge: .turnSideways)
+        }
+        XCTAssertFalse(snap.allPass)
+        XCTAssertEqual(snap.hint, .uncovered)
+    }
+
+    func testTheRunnerFollowsTheStepsGateRules() {
+        var r = headTurn([.left, .up, .center])
+        XCTAssertEqual(r.gateRules, .turnSideways)
+        run(&r, 1.05)
+        XCTAssertEqual(r.gateRules, .turnUpDown)
+        run(&r, 1.0, pitch: 20)
+        XCTAssertEqual(r.gateRules, .returning)
+        XCTAssertEqual(followDot().gateRules, .followDot)
+        XCTAssertEqual(ChallengeRunner(plan: .digits(phrase: "1 2", durationMs: 3000)).gateRules, .digits)
+    }
+
+    func testAPausedChallengeNamesWhatTheGateSaw() {
+        var r = headTurn()
+        run(&r, 0.5)
+        var d = r.display()
+        for _ in 0..<10 {
+            clock += 0.05
+            d = r.advance(ChallengeObservation(time: clock, facePresent: false, yaw: 20, pitch: 0, hint: .uncovered))
+        }
+        XCTAssertEqual(d.tone, .warning)
+        XCTAssertEqual(d.title, "Keep your face uncovered")
+        XCTAssertEqual(d.subtitle, "Then keep turning")
+    }
+
+    // MARK: Round 2 upload signals
+
+    func testRoundTwoCarriesTheSameSignalBlocksAsRoundOne() async throws {
+        let session = UseSenseSession(config: UseSenseConfig(apiKey: "pk_sandbox_x"), sessionType: .authentication)
+        session.injectHostedSessionData(try sessionResponse(policy: Self.passivePolicy))
+        let spec = try decodeSpec(#"{"type":"head_turn","seed":"r2","total_duration_ms":1000,"sequence":[{"direction":"left","duration_ms":1000,"index":0}]}"#)
+        let stepUp = try XCTUnwrap(StepUpInstruction(payload: StepUpPayload(round: 2, challenge: spec, maxFrames: 12)))
+        let frame = Self.solid(nil).jpegData(compressionQuality: 0.5)!
+        let m1 = await session.captureMetadataForTesting(frames: [frame], round2: nil)
+        let m2 = await session.captureMetadataForTesting(frames: [frame], round2: stepUp)
+        let r1 = try XCTUnwrap(m1)
+        let r2 = try XCTUnwrap(m2)
+        for key in ["channel_integrity", "device_telemetry", "suspicion", "frame_hashes", "frames_manifest", "timestamps"] {
+            XCTAssertNotNil(r1[key], "round 1 \(key)")
+            XCTAssertNotNil(r2[key], "round 2 \(key)")
+        }
+        XCTAssertEqual(r2["step_up_round"] as? Int, 2)
+        XCTAssertEqual(r2["capture_channel"] as? String, "ios")
+        XCTAssertEqual((r2["challenge_response"] as? [String: Any])?["seed"] as? String, "r2")
+        XCTAssertNotNil((r2["channel_integrity"] as? [String: Any])?["screen_detection"])
+        XCTAssertNil(r2["covered_check"], "round-1 only")
+        XCTAssertNil(r2["inline_step_up"], "round-1 only")
+        XCTAssertNil(r1["step_up_round"])
     }
 
     // MARK: Helpers

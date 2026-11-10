@@ -35,9 +35,17 @@ against staging.
   The second calls `POST /v1/sessions/:id/challenge-fallback`
   (`{"reason":"microphone_unavailable"}`), and the capture carries on with
   the Follow Dot the server returns.
-- **Never fails on the device.** The face leaving the oval pauses the
-  challenge (amber ring, "Move your face to the centre / Then keep turning",
-  or "The dot will wait for you"), then it resumes. A Head Turn step that was
+- **The scan's checks hold during challenges too** (before the scan and
+  round 2): face found, one person, covered face (segmenter), distance (with
+  the scan's hold margin), in the oval, sharpness, eyes open, and stillness
+  for Speak Digits (chin left out). Only pose relaxes, toward the movement
+  the current step asks for (sideways turns: yaw to 50 degrees; up/down:
+  pitch to 40; centre and Follow Dot: 30 to 40). A failing check pauses the
+  challenge, frames aren't banked while paused, and the guidance names the
+  check ("Keep your face uncovered / Then keep turning"). The scan's change
+  watch is off during movement (a turning head changes every face region).
+- **Never fails on the device.** A paused challenge resumes when the check
+  passes again. A Head Turn step that was
   clearly too short gets one retry with a hint ("Let's try that again / Turn
   a little further to the left"); after that the server decides.
 - **"Leave verification?"** on back during an extra check (the challenge
@@ -53,6 +61,13 @@ against staging.
   try again from "We couldn't verify you". Standalone sessions only.
 
 ### Changed
+
+- **Round 2's upload carries round 1's signals** for its own frames, in the
+  same keys: `channel_integrity` (with screen detection), `device_telemetry`,
+  `face_mesh_signals`, `verification_package` (when the session asks for the
+  mesh), `suspicion`, `deep_classifier_on_device`, `frame_hashes`, frames
+  manifest and timestamps, plus `step_up_round: 2`. Round 2's mesh, suspicion
+  score and sensors start fresh; App Attest fields are reused from round 1.
 
 - Guided screens ask for camera and microphone permission with the system
   prompt directly, without the "Camera Access Required" card.

@@ -95,6 +95,37 @@ struct GateThresholds: Sendable {
     var maxJitter = 0.04
 }
 
+/// The gate during a challenge (before the scan or round 2): every scan
+/// check still runs, and only the pose limits relax toward the movement the
+/// current step asks for. Stillness applies only where the person isn't
+/// asked to move, and the scan's change watch is off (a turning head changes
+/// every face region); the covered-face segmenter still runs.
+struct ChallengeGateRules: Equatable, Sendable {
+    var maxYaw: Double
+    var maxPitch: Double
+    var maxRoll: Double
+    var checksStillness: Bool
+
+    /// Head Turn left/right: the yaw limit opens. The sign of "left" isn't
+    /// trusted on the device (the server judges direction), so it opens both ways.
+    static let turnSideways = ChallengeGateRules(maxYaw: 50, maxPitch: 15, maxRoll: 20, checksStillness: false)
+    static let turnUpDown = ChallengeGateRules(maxYaw: 15, maxPitch: 40, maxRoll: 20, checksStillness: false)
+    /// Coming back to the centre, or following the dot around the screen.
+    static let returning = ChallengeGateRules(maxYaw: 30, maxPitch: 30, maxRoll: 20, checksStillness: false)
+    static let followDot = ChallengeGateRules(maxYaw: 40, maxPitch: 35, maxRoll: 20, checksStillness: false)
+    /// Speak Digits: the scan's own limits, stillness included (the chin is
+    /// left out of the stillness anchors, since speaking moves it).
+    static let digits = ChallengeGateRules(maxYaw: 15, maxPitch: 15, maxRoll: 12, checksStillness: true)
+
+    static func forHeadTurn(_ direction: HeadDirection) -> ChallengeGateRules {
+        switch direction {
+        case .left, .right: return .turnSideways
+        case .up, .down: return .turnUpDown
+        case .center: return .returning
+        }
+    }
+}
+
 /// What the session measured on one camera frame.
 struct GateObservation: Sendable {
     var time: TimeInterval
@@ -207,9 +238,15 @@ struct QualityGate: Sendable {
         var blocking: [GateCheck: GateHint] { failing.filter { $0.key != .light } }
     }
 
-    mutating func evaluate(_ o: GateObservation, scanning: Bool = false) -> Evaluation {
+    mutating func evaluate(_ o: GateObservation, scanning: Bool = false,
+                           challenge: ChallengeGateRules? = nil) -> Evaluation {
         var e = Evaluation()
-        let t = thresholds
+        var t = thresholds
+        if let challenge {
+            t.maxYaw = challenge.maxYaw
+            t.maxPitch = challenge.maxPitch
+            t.maxRoll = challenge.maxRoll
+        }
         // A new scan takes a new baseline for the change watch.
         if scanning && !wasScanning {
             coverWatch.reset()
@@ -290,8 +327,11 @@ struct QualityGate: Sendable {
             e.failing[.eyesOpen] = .eyesOpen
         }
 
-        // 9. Stillness: landmark jitter / eye distance over 300 ms.
-        if let d = o.eyeDistance, d > 0, !o.anchors.isEmpty {
+        // 9. Stillness: landmark jitter / eye distance over 300 ms (not
+        // during a challenge that asks for movement).
+        if let challenge, !challenge.checksStillness {
+            history.removeAll()
+        } else if let d = o.eyeDistance, d > 0, !o.anchors.isEmpty {
             history.append((o.time, o.anchors, d))
             history.removeAll { o.time - $0.time > t.stillnessWindow }
             let jitter = Self.jitter(history.map(\.anchors)) / d
@@ -315,7 +355,7 @@ struct QualityGate: Sendable {
             && e.failing[.distance] == nil && e.failing[.pose] == nil
         watchRan = false
         rebaselined = false
-        if scanning {
+        if scanning && challenge == nil {
             if let since = lightChangedAt {
                 // Light changed: ignore the watch while exposure settles, then
                 // take a new baseline, but only on a face the segmenter says
@@ -424,8 +464,13 @@ struct CaptureGuide: Sendable {
 
     /// - Parameter scanning: the scan is running: the distance band gets its
     ///   hold margin, and the hint names only a check that holds the scan.
-    mutating func update(_ o: GateObservation, scanning: Bool = false) -> GuideSnapshot {
-        let e = gate.evaluate(o, scanning: scanning)
+    /// - Parameter challenge: a challenge is running: the gate uses its rules.
+    mutating func update(_ o: GateObservation, scanning: Bool = false,
+                         challenge: ChallengeGateRules? = nil) -> GuideSnapshot {
+        // A challenge counts as scanning: distance hold margin, fill light
+        // frozen, and the hint names only what holds the capture.
+        let scanning = scanning || challenge != nil
+        let e = gate.evaluate(o, scanning: scanning, challenge: challenge)
         let lightWasOn = fillLightSince != nil
 
         // Fill light first: once the face has been too dark for the hint

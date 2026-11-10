@@ -20,7 +20,8 @@ import CoreGraphics
 struct ChallengeObservation: Equatable {
     /// Seconds on any monotonic clock.
     var time: TimeInterval
-    /// A face is in the oval (debounced by the runner).
+    /// Every check that holds the scan passes (the quality gate, with the
+    /// current step's `gateRules`). Debounced by the runner.
     var facePresent: Bool
     /// Physical head pose in degrees (ZYX from the face transform), when known.
     var yaw: Double?
@@ -29,6 +30,8 @@ struct ChallengeObservation: Equatable {
     var level: Double?
     /// The person has the "Leave verification?" dialog open: time stands still.
     var held: Bool = false
+    /// The gate's hint for what fails, if anything (named when paused).
+    var hint: GateHint? = nil
 }
 
 /// What the challenge screen draws.
@@ -170,6 +173,7 @@ struct ChallengeRunner {
     private var presentFor: TimeInterval = 0
     private var quietFor: TimeInterval = 0
     private var lastLevel: Double = 0
+    private var lastHint: GateHint?
 
     init(plan: Plan, retries: Int = 1) {
         self.plan = plan
@@ -212,8 +216,23 @@ struct ChallengeRunner {
 
     var stepCount: Int { durations.count }
 
-    /// The face is in the oval (debounced).
+    /// The gate passes (debounced).
     var isPresent: Bool { present }
+
+    /// The quality gate's rules for the step running now.
+    var gateRules: ChallengeGateRules {
+        switch plan {
+        case .headTurn(let steps): return .forHeadTurn(steps[min(stepIndex, steps.count - 1)].direction)
+        case .followDot: return .followDot
+        case .digits: return .digits
+        }
+    }
+
+    /// What holds the challenge, in the gate's words ("Keep your face
+    /// uncovered", ...), or `fallback` when the gate gave no hint.
+    private func pauseTitle(_ fallback: String) -> String {
+        lastHint?.title ?? fallback
+    }
 
     // MARK: Tick
 
@@ -222,6 +241,7 @@ struct ChallengeRunner {
         let dt = lastTime.map { min(0.25, max(0, obs.time - $0)) } ?? 0
         lastTime = obs.time
         updatePresence(obs.facePresent, dt: dt)
+        if obs.hint != nil || obs.facePresent { lastHint = obs.hint }
 
         if let level = obs.level {
             lastLevel = level
@@ -325,7 +345,7 @@ struct ChallengeRunner {
                 d.title = ExtraCheckCopy.showFace
             } else if paused {
                 d.tone = .warning
-                d.title = ExtraCheckCopy.centreFace
+                d.title = pauseTitle(ExtraCheckCopy.centreFace)
                 d.subtitle = ExtraCheckCopy.keepTurning
             } else if retrying {
                 d.title = ExtraCheckCopy.tryAgain
@@ -355,7 +375,7 @@ struct ChallengeRunner {
                 d.title = ExtraCheckCopy.showFace
             } else if paused {
                 d.tone = .warning
-                d.title = ExtraCheckCopy.showFace
+                d.title = pauseTitle(ExtraCheckCopy.showFace)
                 d.subtitle = ExtraCheckCopy.dotWaits
             } else {
                 d.title = stepIndex * 2 < pts.count ? ExtraCheckCopy.followDot : ExtraCheckCopy.keepFollowing
@@ -371,7 +391,7 @@ struct ChallengeRunner {
                 d.title = ExtraCheckCopy.showFace
             } else if paused {
                 d.tone = .warning
-                d.title = ExtraCheckCopy.showFace
+                d.title = pauseTitle(ExtraCheckCopy.showFace)
                 d.subtitle = ExtraCheckCopy.thenSayNumbers
             } else if quietFor >= Self.quietAfter {
                 d.tone = .warning
@@ -382,21 +402,5 @@ struct ChallengeRunner {
             }
             return d
         }
-    }
-}
-
-// MARK: - Presence in the oval during a challenge
-
-extension ChallengeRunner {
-    /// A face counts as in the oval while its centre (mean of landmarks 10,
-    /// 152, 234, 454, in oval radii from the expected face centre) is within
-    /// these bounds. Looser than the scan's gate: turning the head moves the
-    /// centre, and that is the point of the challenge.
-    static let presenceX: CGFloat = 0.55
-    static let presenceY: CGFloat = 0.45
-
-    static func faceInOval(centreOffset: CGPoint?) -> Bool {
-        guard let c = centreOffset else { return false }
-        return abs(c.x) <= presenceX && abs(c.y) <= presenceY
     }
 }

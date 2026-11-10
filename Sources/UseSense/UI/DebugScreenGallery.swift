@@ -20,7 +20,7 @@ public struct UseSenseDebugScreen: View {
         "primer_two", "primer_digits", "xc_head", "xc_dot", "xc_digits", "head_left", "head_right", "head_paused",
         "head_again", "dot_1", "dot_2", "dot_lost", "digits", "digits_quiet", "mic_denied", "xc_done", "leave",
         "approved", "review", "rejected_retry", "rejected", "perm_denied", "cam_error", "offline", "expired",
-        "error", "upload_failed", "rmas_blink", "rmas_turn", "rmas_smile", "flash",
+        "error", "upload_failed", "rmas_blink", "rmas_turn", "rmas_smile", "flash", "head_covered", "dot_two_people",
         "legacy_countdown", "legacy_head", "legacy_dot", "legacy_inline_stepup", "legacy_approved",
         "legacy_rejected", "legacy_error", "legacy_instructions",
     ]
@@ -139,17 +139,20 @@ public struct UseSenseDebugScreen: View {
         var r = ChallengeRunner(spec: spec(type))!
         var t: TimeInterval = 0
         var d = ChallengeDisplay.placeholder
-        func run(_ seconds: TimeInterval, face: Bool = true, yaw: Double = 25, level: Double? = nil) {
+        func run(_ seconds: TimeInterval, face: Bool = true, yaw: Double = 25, level: Double? = nil,
+                 hint: GateHint? = nil) {
             let end = t + seconds
             while t < end - 1e-9 {
                 t += 0.05
-                d = r.advance(ChallengeObservation(time: t, facePresent: face, yaw: yaw, pitch: 0, level: level))
+                d = r.advance(ChallengeObservation(time: t, facePresent: face, yaw: yaw, pitch: 0, level: level, hint: hint))
             }
         }
         switch name {
         case "head_left": run(0.6)
         case "head_right": run(2.6)
         case "head_paused": run(1.0); run(0.6, face: false)
+        case "head_covered": run(1.0); run(0.6, face: false, hint: .uncovered)
+        case "dot_two_people": run(1.3); run(0.6, face: false, hint: .onePerson)
         case "head_again": run(2.1, yaw: 3)
         case "dot_1": run(1.3)
         case "dot_2": run(2.4)
