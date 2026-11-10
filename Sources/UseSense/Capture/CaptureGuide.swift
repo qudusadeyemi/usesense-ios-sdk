@@ -515,8 +515,9 @@ struct CaptureGuide: Sendable {
 /// the oval is. Same size and offset the capture screens have always used.
 enum CaptureOvalLayout {
     /// Capture kit SPEC: centre (0.5 W, 0.40 H), rx = 0.36 W, ry = 0.235 H.
-    static func ovalRect(in size: CGSize) -> CGRect {
-        let rx = size.width * 0.36, ry = size.height * 0.235
+    /// `scale` grows the oval about its centre (EVIDENCE-v1 closer step).
+    static func ovalRect(in size: CGSize, scale: CGFloat = 1) -> CGRect {
+        let rx = size.width * 0.36 * scale, ry = size.height * 0.235 * scale
         return CGRect(x: size.width * 0.5 - rx, y: size.height * 0.40 - ry, width: rx * 2, height: ry * 2)
     }
 }

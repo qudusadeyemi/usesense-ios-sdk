@@ -559,7 +559,7 @@ struct VerifyingBadge: View {
 
 // MARK: - ViewModel
 
-final class UseSenseViewModel: ObservableObject {
+final class UseSenseViewModel: ObservableObject, ColourTintHost {
     @Published var state: SessionState = .idle
     @Published var qualityGuidance: [QualityGuidance] = []
     @Published var qualityLevel: QualityLevel = .good
@@ -570,6 +570,11 @@ final class UseSenseViewModel: ObservableObject {
     @Published var guide = GuidedCaptureUpdate(snapshot: .initial, shutterAvailable: false)
     @Published var scan = ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: 0, completed: false)
     @Published var uploadBackdrop: UIImage?
+    /// EVIDENCE-v1 colour sequence: the whole-screen tint showing now.
+    @Published var tint: (color: Color, opacity: Double)? = nil
+    /// EVIDENCE-v1 closer step: the oval's scale, and whether the person
+    /// still needs to come closer.
+    @Published var closer: (scale: CGFloat, needsCloser: Bool) = (1, false)
 
     // Guided extra check (storyboard flows 4 to 6)
     @Published var challenge = ChallengeDisplay.placeholder
@@ -583,6 +588,8 @@ final class UseSenseViewModel: ObservableObject {
 
     private let session: UseSenseSession
     private let fillLight = ScreenFillLight()
+    /// The colour sequence raised the brightness (not the fill light).
+    private var colourRaisedBrightness = false
     private let readyHaptic = UIImpactFeedbackGenerator(style: .light)
     private let doneHaptic = UINotificationFeedbackGenerator()
     private var lastAnnouncement = Date.distantPast
@@ -684,6 +691,10 @@ final class UseSenseViewModel: ObservableObject {
                                 bankedSeconds: 1.5, totalSeconds: 3, completed: false)
         }
         #endif
+        session.colourTintHost = self
+        session.onCloserUpdate = { [weak self] scale, needsCloser in
+            DispatchQueue.main.async { self?.closer = (scale, needsCloser) }
+        }
         session.onScanUpdate = { [weak self] progress in
             DispatchQueue.main.async { self?.apply(scan: progress) }
         }
@@ -823,6 +834,28 @@ final class UseSenseViewModel: ObservableObject {
     }
 
     func setViewport(_ size: CGSize) { session.setViewport(size) }
+
+    // MARK: EVIDENCE-v1 colour sequence (ColourTintHost, main thread)
+
+    func showTint(_ colour: String?, opacity: Double) {
+        guard let colour else { tint = nil; return }
+        tint = (CaptureColors.pick(colour, CaptureColors.RGB(r: 1, g: 1, b: 1)).color, opacity)
+    }
+
+    func holdFullBrightness() -> Double? {
+        if !fillLight.isActive {
+            fillLight.activate()
+            colourRaisedBrightness = fillLight.isActive
+        }
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return (scenes.first { $0.activationState == .foregroundActive } ?? scenes.first).map { Double($0.screen.brightness) }
+    }
+
+    func releaseFullBrightness() {
+        // The fill light, if it came on meanwhile, keeps the brightness.
+        if colourRaisedBrightness, !guide.snapshot.fillLight { fillLight.restore() }
+        colourRaisedBrightness = false
+    }
 
     func shutterTapped() { Task { await session.shutterTapped() } }
 

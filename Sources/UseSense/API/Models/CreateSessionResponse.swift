@@ -11,6 +11,9 @@ public struct CreateSessionResponse: Codable, Sendable {
     /// The org's dashboard branding (optional; absent on older servers). The
     /// layer below the integrator's code-set branding in session mode.
     public let branding: ServerBranding?
+    /// EVIDENCE-v1 collection instructions (optional; absent on older servers
+    /// and for another contract version).
+    public let evidence: EvidenceConfig?
 
     public init(
         sessionId: String,
@@ -20,7 +23,8 @@ public struct CreateSessionResponse: Codable, Sendable {
         policy: SessionPolicy,
         upload: UploadConfig,
         geometricCoherence: GeometricCoherenceConfig? = nil,
-        branding: ServerBranding? = nil
+        branding: ServerBranding? = nil,
+        evidence: EvidenceConfig? = nil
     ) {
         self.sessionId = sessionId
         self.sessionToken = sessionToken
@@ -30,6 +34,7 @@ public struct CreateSessionResponse: Codable, Sendable {
         self.upload = upload
         self.geometricCoherence = geometricCoherence
         self.branding = branding
+        self.evidence = evidence
     }
 
     enum CodingKeys: String, CodingKey {
@@ -39,6 +44,7 @@ public struct CreateSessionResponse: Codable, Sendable {
         case nonce, policy, upload
         case geometricCoherence = "geometric_coherence"
         case branding
+        case evidence
     }
 
     /// The identity fields (session_id, session_token, nonce, expires_at) and
@@ -55,6 +61,7 @@ public struct CreateSessionResponse: Codable, Sendable {
         upload = try c.decode(UploadConfig.self, forKey: .upload)
         geometricCoherence = (try? c.decodeIfPresent(GeometricCoherenceConfig.self, forKey: .geometricCoherence)) ?? nil
         branding = (try? c.decodeIfPresent(ServerBranding.self, forKey: .branding)) ?? nil
+        evidence = c.lenientEvidence(.evidence)
     }
 }
 

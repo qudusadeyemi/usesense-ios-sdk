@@ -103,6 +103,8 @@ struct SessionData: Sendable {
     let geometricCoherence: GeometricCoherenceConfig?
     /// Dashboard branding delivered with the session (nil on older servers).
     var branding: ServerBranding? = nil
+    /// EVIDENCE-v1 instructions (nil: collect and upload as before Phase 2).
+    var evidence: EvidenceConfig? = nil
 
     var isExpired: Bool { Date() >= expiresAt }
 }
@@ -121,5 +123,6 @@ extension SessionData {
         self.upload = response.upload
         self.geometricCoherence = response.geometricCoherence
         self.branding = response.branding
+        self.evidence = response.evidence
     }
 }

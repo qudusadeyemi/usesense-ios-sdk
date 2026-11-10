@@ -154,7 +154,8 @@ struct GuidedCaptureView<Camera: View>: View {
 
     /// The instruction shown, and whether it asks for an action.
     private var guidance: (title: String, subtitle: String?, action: Bool) {
-        Self.guidance(hint: hint, mode: mode, paused: paused, showShutter: showShutter)
+        Self.guidance(hint: hint, mode: mode, paused: paused, showShutter: showShutter,
+                      needsCloser: mode == .scan && viewModel.closer.needsCloser)
     }
 
     /// The shutter's "Tap the button when you're ready" never hides a check
@@ -162,7 +163,9 @@ struct GuidedCaptureView<Camera: View>: View {
     /// the tap starts a scan with the same quality bar, so the person still
     /// needs to know what to fix. Seen on device: a hand over the mouth for
     /// 20 s showed only the shutter copy.
-    static func guidance(hint: GateHint?, mode: Mode, paused: Bool, showShutter: Bool)
+    /// `needsCloser`: the EVIDENCE-v1 closer step is waiting for the face to
+    /// follow the grown oval (existing copy, "Move a little closer").
+    static func guidance(hint: GateHint?, mode: Mode, paused: Bool, showShutter: Bool, needsCloser: Bool = false)
         -> (title: String, subtitle: String?, action: Bool) {
         if showShutter {
             if let hint, hint.check != .stillness, hint.check != .light {
@@ -173,13 +176,14 @@ struct GuidedCaptureView<Camera: View>: View {
         if let hint, mode == .align || paused || hint.check == .light {
             return (hint.title, hint.subtitle, hint.check != .stillness)
         }
+        if needsCloser { return (GateHint.moveCloser.title, nil, true) }
         return (GateHint.holdStill.title, nil, false)
     }
 
     var body: some View {
         GeometryReader { geo in
             let size = geo.size
-            let oval = CaptureOvalLayout.ovalRect(in: size)
+            let oval = CaptureOvalLayout.ovalRect(in: size, scale: mode == .scan ? viewModel.closer.scale : 1)
             let insets = Self.windowInsets
             ZStack(alignment: .topLeading) {
                 camera.frame(width: size.width, height: size.height)
@@ -202,9 +206,18 @@ struct GuidedCaptureView<Camera: View>: View {
                         .accessibilityHidden(true)
                 }
 
-                // Fill light: a warm veil over the whole screen, under the
-                // guide (as Android). A border made the camera look inset.
-                if fillLight { FillLightVeil().allowsHitTesting(false) }
+                // EVIDENCE-v1 colour sequence: the server's colour over the
+                // whole screen, under the ring and guidance. It replaces the
+                // fill light veil while it shows, so the colour stays pure.
+                if mode == .scan, let tint = viewModel.tint {
+                    tint.color.opacity(tint.opacity)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                } else if fillLight {
+                    // Fill light: a warm veil over the whole screen, under the
+                    // guide (as Android). A border made the camera look inset.
+                    FillLightVeil().allowsHitTesting(false)
+                }
 
                 guideOrRing(oval)
 
@@ -230,6 +243,7 @@ struct GuidedCaptureView<Camera: View>: View {
             .animation(.easeInOut(duration: 0.3), value: fillLight)
             .animation(.easeInOut(duration: 0.3), value: showShutter)
             .animation(.easeInOut(duration: 0.3), value: cameraBlurred)
+            .animation(.easeInOut(duration: 0.5), value: viewModel.closer.scale)
             .task(id: mode == .scan) {
                 guard mode == .scan else { cameraBlurred = false; return }
                 try? await Task.sleep(nanoseconds: UInt64(CameraBlurView.afterSeconds * 1e9))

@@ -3,6 +3,9 @@ import AVFoundation
 import CoreImage
 import UIKit
 import Foundation
+#if canImport(DeviceCheck)
+import DeviceCheck
+#endif
 
 public final class UseSenseSession: @unchecked Sendable {
     // MARK: - Public Properties
@@ -205,6 +208,42 @@ public final class UseSenseSession: @unchecked Sendable {
     /// The guided passive scan (capture kit SPEC: ~3 s, as web).
     static let guidedScanDuration: TimeInterval = 3
     static let guidedMaxFps = 12
+
+    // MARK: EVIDENCE-v1 (capture redesign Phase 2)
+
+    /// Host time of the camera's first frame: 0 on the capture clock
+    /// (guarded by `latestLock`).
+    private var captureClockOrigin: CFTimeInterval?
+    /// The colour sequence of this attempt (main thread only).
+    private var colourPlayer: ColourSequencePlayer?
+    /// The closer step's outcome for this attempt.
+    private var closerEvidence: CloserEvidence?
+    /// Closer step: while set, a frame banks only when its eye distance (JPEG
+    /// width units) reaches this (guarded by `bankLock`).
+    private var nearBankThreshold: Double?
+    /// The oval's scale; above 1 during the closer step (guarded by `guideLock`).
+    private var ovalScale: CGFloat = 1
+    /// The screen that tints for the colour sequence (the view model).
+    weak var colourTintHost: ColourTintHost?
+    /// Closer step display: the oval's scale, and whether the person still
+    /// needs to come closer. (1, false) when it ends.
+    var onCloserUpdate: ((CGFloat, Bool) -> Void)?
+    /// A gate pause restarts the sequence; this many plays at most.
+    static let colourMaxRuns = 3
+    /// Frames each closer phase needs (EVIDENCE-v1 section 7: 3 or more).
+    static let closerPhaseFrames = 3
+    /// The closer step gives up after this (section 7: 4 s) and uploads anyway.
+    static let closerTimeout: TimeInterval = 4
+
+    /// What this build can do (EVIDENCE-v1 `capability`).
+    var evidenceCapability: EvidenceCapability {
+        var appAttest = false
+        #if canImport(DeviceCheck) && canImport(CryptoKit)
+        appAttest = DCAppAttestService.shared.isSupported
+        #endif
+        return EvidenceCapability.current(meshAvailable: faceMeshManager.available,
+                                          guided: guidedCapture, appAttest: appAttest)
+    }
 
     // MARK: Guided extra check (storyboard flows 4 and 5)
 
@@ -677,6 +716,7 @@ public final class UseSenseSession: @unchecked Sendable {
         primerShown = false
         audioChallengeResponse = nil
         resetGuidedState()
+        resetEvidence()
         framesDropped = 0
         frameBuffer.reset()
         challengeResponseBuilder.reset()
@@ -753,6 +793,7 @@ public final class UseSenseSession: @unchecked Sendable {
         }
 
         setCameraLive(false)
+        latestLock.withLock { captureClockOrigin = nil }
         frameCaptureManager.start()
 
         if !guidedCapture, let challenge = sessionData?.policy.challenge {
@@ -815,8 +856,14 @@ public final class UseSenseSession: @unchecked Sendable {
         var banked: TimeInterval = 0
         var pausedFor: TimeInterval = 0
         var last = Date()
+        var shown: Double = 0
+        // EVIDENCE-v1 section 6: the server's colours play inside the scan; a
+        // pause stops them and the scan holds until a full replay has run.
+        let player = await prepareColourPlayer()
+        let colourNeeds = player.map { TimeInterval($0.sequence.totalMs) / 1000 + 0.15 } ?? 0
+        var colourFrom: TimeInterval?
         onScanUpdate?(ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: duration, completed: false))
-        while banked < duration {
+        while true {
             try await Task.sleep(nanoseconds: 50_000_000)
             try Task.checkCancellation()
             let now = Date()
@@ -831,18 +878,166 @@ public final class UseSenseSession: @unchecked Sendable {
                 pausedFor += dt
                 if !manualStart, pausedFor > Self.scanDiscardAfter {
                     isCapturingFrames = false
+                    await stopColour(player, reason: "gate_pause")
                     pausedWindows += 1
                     USTrace.log("scan: pause > \(Self.scanDiscardAfter)s, window \(pausedWindows) dropped")
                     recordScanDrop()
                     return false
                 }
             }
-            onScanUpdate?(ScanProgress(fraction: min(1, banked / duration), paused: !passing,
-                                       bankedSeconds: banked, totalSeconds: duration, completed: false))
+            var needed = duration
+            if let player {
+                let state = await MainActor.run { (player.isPlaying, player.finished, player.runs) }
+                if !passing, state.0 {
+                    await stopColour(player, reason: "gate_pause")
+                    colourFrom = nil
+                } else if passing, !state.0, !state.1, state.2 < Self.colourMaxRuns {
+                    await MainActor.run { player.play() }
+                    colourFrom = banked
+                    USTrace.log("colour: play \(state.2 + 1) at \(String(format: "%.2f", banked))s")
+                }
+                let playing = await MainActor.run { player.isPlaying }
+                if playing, let from = colourFrom { needed = max(duration, from + colourNeeds) }
+            }
+            shown = max(shown, min(1, banked / needed))
+            if banked >= needed { break }
+            onScanUpdate?(ScanProgress(fraction: shown, paused: !passing,
+                                       bankedSeconds: banked, totalSeconds: needed, completed: false))
         }
         isCapturingFrames = false
-        onScanUpdate?(ScanProgress(fraction: 1, paused: false, bankedSeconds: duration, totalSeconds: duration, completed: true))
+        if let player { await stopColour(player, reason: "scan_ended") }
+        if let player {
+            let r = await MainActor.run { player.record }
+            USTrace.log("colour: completed=\(r.completed) segments=\(r.segments.count) awb=\(r.awbLocked)")
+        }
+        onScanUpdate?(ScanProgress(fraction: 1, paused: false, bankedSeconds: banked, totalSeconds: banked, completed: true))
         return try await finalCoverCheck()
+    }
+
+    // MARK: - EVIDENCE-v1: colour sequence and closer step
+
+    /// The colour player for this attempt, made on first use (nil when the
+    /// server sent no sequence). One sequence id per session.
+    private func prepareColourPlayer() async -> ColourSequencePlayer? {
+        guard guidedCapture, let sequence = sessionData?.evidence?.colourSequence else { return nil }
+        return await MainActor.run { () -> ColourSequencePlayer in
+            if let p = colourPlayer { return p }
+            let p = ColourSequencePlayer(sequence: sequence) { [weak self] t in self?.captureMs(host: t) }
+            p.host = colourTintHost
+            let camera = frameCaptureManager
+            p.lockWhiteBalance = { camera.lockWhiteBalance($0) }
+            colourPlayer = p
+            return p
+        }
+    }
+
+    private func stopColour(_ player: ColourSequencePlayer?, reason: String) async {
+        guard let player else { return }
+        await MainActor.run { player.interrupt(reason: reason) }
+    }
+
+    /// Host time (CACurrentMediaTime base) on the capture clock.
+    func captureMs(host: CFTimeInterval) -> Int? {
+        guard let origin = latestLock.withLock({ captureClockOrigin }) else { return nil }
+        return max(0, Int(((host - origin) * 1000).rounded()))
+    }
+
+    private func currentCaptureMs() -> Int? { captureMs(host: CACurrentMediaTime()) }
+
+    private func resetEvidence() {
+        let player = colourPlayer
+        DispatchQueue.main.async { player?.cancel() }
+        colourPlayer = nil
+        closerEvidence = nil
+        bankLock.withLock { nearBankThreshold = nil }
+        guideLock.withLock { ovalScale = 1 }
+    }
+
+    /// Frames the scan leaves free for the closer step's near frames.
+    private var closerReserve: Int { sessionData?.evidence?.closerEnabled == true ? Self.closerPhaseFrames : 0 }
+
+    /// EVIDENCE-v1 section 7, step 5 of the scan: the oval grows by the
+    /// server's `target_scale` and the person follows it. Far frames are the
+    /// last banked scan frames; near frames bank once the eye distance reaches
+    /// `min_scale` times the far median and the gate passes. Never blocks: a
+    /// timeout records `skipped_reason: "timeout"` and the capture goes on.
+    private func runCloserStep() async throws {
+        guard let evidence = sessionData?.evidence else { return }
+        guard let step = evidence.closerStep, step.enabled else {
+            closerEvidence = .skipped(.disabled)
+            return
+        }
+        let banked = faceMeshManager.getResults()
+        let total = frameBuffer.count
+        guard banked.count >= Self.closerPhaseFrames, total == banked.count else {
+            USTrace.log("closer: \(banked.count) banked frames, skipped")
+            closerEvidence = .skipped(.timeout)
+            return
+        }
+        let far = Array(banked.suffix(Self.closerPhaseFrames))
+        let aspect: Double = {
+            let r = frameBuffer.getResolutions().last
+            return r.map { Double($0.height) / Double(max(1, $0.width)) } ?? 16.0 / 9.0
+        }()
+        let farEyes = far.compactMap { Self.eyeDistance($0.landmarks, aspect: aspect) }
+        guard farEyes.count == far.count, let farMedian = Self.median(farEyes), farMedian > 0 else {
+            closerEvidence = .skipped(.timeout)
+            return
+        }
+        var record = CloserEvidence()
+        record.farFrames = far.map(\.frameIndex)
+        record.startedAtMs = currentCaptureMs()
+        let threshold = farMedian * step.minScale
+        let startCount = frameBuffer.count
+        frameBuffer.reconfigure(maxFrames: serverMaxFrames ?? sessionData?.upload.maxFrames ?? 30,
+                                targetFps: Self.guidedMaxFps)
+        guideLock.withLock { ovalScale = CGFloat(step.targetScale) }
+        onCloserUpdate?(CGFloat(step.targetScale), true)
+        bankLock.withLock { nearBankThreshold = threshold }
+        defer {
+            isCapturingFrames = false
+            bankLock.withLock { nearBankThreshold = nil }
+            guideLock.withLock { ovalScale = 1 }
+            onCloserUpdate?(1, false)
+        }
+        USTrace.log(String(format: "closer: far median eye %.4f, need %.4f", farMedian, threshold))
+        let started = Date()
+        var near = false
+        while Date().timeIntervalSince(started) < Self.closerTimeout {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            try Task.checkCancellation()
+            let eye = latestMeshResult().flatMap { Self.eyeDistance($0.landmarks, aspect: aspect) } ?? 0
+            let close = eye >= threshold
+            if close != near {
+                near = close
+                onCloserUpdate?(CGFloat(step.targetScale), !close)
+            }
+            isCapturingFrames = close && guideAllPass
+            if frameBuffer.count - startCount >= Self.closerPhaseFrames || frameBuffer.isFull { break }
+        }
+        isCapturingFrames = false
+        let nearMeshes = faceMeshManager.getResults().dropFirst(startCount)
+        record.endedAtMs = currentCaptureMs()
+        if nearMeshes.count >= Self.closerPhaseFrames {
+            record.nearFrames = nearMeshes.map(\.frameIndex)
+            let nearEyes = nearMeshes.compactMap { Self.eyeDistance($0.landmarks, aspect: aspect) }
+            record.achievedScale = Self.median(nearEyes).map { $0 / farMedian }
+            record.completed = true
+        } else {
+            // A timeout uploads no closer frames (section 8: "closer:none").
+            record.farFrames = []
+            record.nearFrames = []
+            record.skippedReason = .timeout
+        }
+        USTrace.log("closer: completed=\(record.completed) near=\(nearMeshes.count)"
+            + " scale=\(record.achievedScale.map { String(format: "%.2f", $0) } ?? "-")")
+        closerEvidence = record
+    }
+
+    static func median(_ xs: [Double]) -> Double? {
+        guard !xs.isEmpty else { return nil }
+        let s = xs.sorted()
+        return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
     }
 
     /// COVER-v1 final check: segmentation lags (~1 s on slow phones), so a
@@ -1010,11 +1205,13 @@ public final class UseSenseSession: @unchecked Sendable {
                 let serverFps = sessionData?.upload.targetFps ?? 3
                 let fps = min(Self.guidedMaxFps, max(serverFps,
                     Int((Double(min(maxFrames, Int(oldWindow * Double(serverFps)))) / Self.guidedScanDuration).rounded(.up))))
-                frameBuffer.reconfigure(maxFrames: maxFrames, targetFps: fps)
+                // The closer step's near frames come out of the same budget.
+                frameBuffer.reconfigure(maxFrames: max(1, maxFrames - closerReserve), targetFps: fps)
                 guard try await runGatedScan(duration: Self.guidedScanDuration) else {
                     await returnToAlign()
                     return
                 }
+                try await runCloserStep()
             } else if guidedExtraCheck {
                 // A check known before the scan: the same gated scan (the
                 // baseline's length, frames as before), then the movement
@@ -1025,6 +1222,7 @@ public final class UseSenseSession: @unchecked Sendable {
                     await returnToAlign()
                     return
                 }
+                try await runCloserStep()
             } else if guidedCapture {
                 // v4 baseline: not gated, but the ring still fills.
                 let start = Date()
@@ -1426,7 +1624,9 @@ public final class UseSenseSession: @unchecked Sendable {
             || session.geometricCoherence?.onDevice3dmmRequired == true
         var verificationPackage: [String: Any]?
         if meshRequested, !meshResults.isEmpty {
-            let fittingResults = meshResults.compactMap { mesh in
+            // One fit per mesh, by position: a failed fit leaves its frame
+            // without an entry instead of shifting every later frame.
+            let fittingResults = meshResults.map { mesh in
                 threeDMMFitter.fit(landmarks: mesh.landmarks, pose: mesh.headPose)
             }
             verificationPackage = verificationPackageBuilder.build(
@@ -1435,8 +1635,18 @@ public final class UseSenseSession: @unchecked Sendable {
                 frameHashes: frameHashes,
                 // An omitted challenge decodes as ""; treat it as absent.
                 meshBindingChallenge: session.geometricCoherence?.meshBindingChallenge.nilIfEmpty,
-                attestFields: attestFields
+                attestFields: attestFields,
+                evidence: session.evidence != nil
             )
+        }
+
+        // EVIDENCE-v1 `metadata.evidence` (round 1; absent when the server
+        // issued no contract, so old servers see the upload as before).
+        var evidenceBlock: [String: Any]?
+        if round2 == nil, let issued = session.evidence {
+            evidenceBlock = await buildEvidenceBlock(issued: issued, session: session,
+                                                     verificationPackage: verificationPackage,
+                                                     attestFields: attestFields)
         }
 
         // Suspicion engine data (ALWAYS included per spec)
@@ -1620,11 +1830,63 @@ public final class UseSenseSession: @unchecked Sendable {
                     : nil,
                 coveredCheck: round2 == nil ? coveredCheckJSON() : nil,
                 audioChallengeResponse: round2 == nil ? audioChallengeResponse : nil,
-                extra: round2 == nil ? [:] : ["step_up_round": 2, "capture_channel": "ios"]
+                extra: round2 == nil
+                    ? (evidenceBlock.map { ["evidence": $0] } ?? [:])
+                    : ["step_up_round": 2, "capture_channel": "ios"]
             )
         } catch {
             return nil
         }
+    }
+
+    /// `metadata.evidence`: capability, the colour and closer records, and
+    /// binding v2 (an App Attest assertion over the evidence digest).
+    private func buildEvidenceBlock(issued: EvidenceConfig, session: SessionData,
+                                    verificationPackage: [String: Any]?,
+                                    attestFields: [String: Any]) async -> [String: Any] {
+        let capability = evidenceCapability
+        let colour: ColourEvidence? = await MainActor.run { colourPlayer?.record }
+        let digestFrames = EvidenceDigest.frames(fromPackage: verificationPackage)
+        // Closer frames must point at uploaded frames with a mesh entry.
+        var closer = closerEvidence
+        // The step was not part of this flow (flag off, or the v4 zoom flow).
+        if guidedCapture, closer == nil { closer = .skipped(.disabled) }
+        if let c = closer { closer = c.restricted(to: Set(digestFrames.map(\.frameIndex))) }
+        var block = EvidenceUploadBlock(capability: capability, colour: colour, closer: closer, binding: nil)
+
+        #if canImport(DeviceCheck) && canImport(CryptoKit)
+        if issued.bindingV2Enabled, capability.bindingV2, verificationPackage != nil,
+           let challenge = session.geometricCoherence?.meshBindingChallenge.nilIfEmpty {
+            let digest = EvidenceDigest.digest(sessionId: session.sessionId, challenge: challenge,
+                                               frames: digestFrames, colour: colour, closer: closer)
+            var binding = BindingV2Evidence(digest: digest)
+            if let keyId = attestFields["app_attest_key_id"] as? String {
+                let manager = appAttestManager
+                let result: Result<String, Error>? = await Deadline.run(seconds: Self.appAttestWaitSeconds) {
+                    do { return .success(try await manager.generateAssertion(keyId: keyId, clientData: digest)) }
+                    catch { return .failure(error) }
+                }
+                switch result {
+                case .success(let assertion)?:
+                    binding.keyId = keyId
+                    binding.assertion = assertion
+                case .failure(let error)?:
+                    let ns = error as NSError
+                    binding.error = (name: "\(ns.domain)#\(ns.code)", message: ns.localizedDescription)
+                case nil:
+                    binding.error = (name: "Timeout", message: "App Attest assertion took over \(Int(Self.appAttestWaitSeconds))s")
+                }
+            } else {
+                binding.error = (name: "NoAttestedKey", message: "App Attest key unavailable for this session")
+            }
+            USTrace.log("evidence: binding v2 digest=\(digest.prefix(12)) signed=\(binding.assertion != nil)"
+                + (binding.error.map { " error=\($0.name)" } ?? ""))
+            block.binding = binding
+        }
+        #endif
+        USTrace.log("evidence: frames=\(digestFrames.count) colour=\(colour?.segments.count ?? -1)"
+            + " closer=\(closer.map { $0.completed ? "done" : ($0.skippedReason?.rawValue ?? "-") } ?? "nil")")
+        return block.json
     }
 
     /// Upload the kept capture (round 1), then complete. Also the "Retry" path.
@@ -2015,7 +2277,14 @@ extension UseSenseSession: FrameCaptureDelegate {
         // are ALSO being buffered to the JPEG upload buffer below. See
         // `FaceMeshManager.recordResult` for the full rationale.
         let timestampMs = Int64(CMTimeGetSeconds(timestamp) * 1000)
-        let meshResult = faceMeshManager.processFrame(pixelBuffer, timestampMs: timestampMs)
+        // EVIDENCE-v1 capture clock: ms since the camera's first frame, on the
+        // host clock the colour sequence's display link also uses.
+        let host = manager.hostSeconds(for: timestamp)
+        latestLock.lock()
+        if captureClockOrigin == nil { captureClockOrigin = host }
+        let captureMs = max(0, Int(((host - (captureClockOrigin ?? host)) * 1000).rounded()))
+        latestLock.unlock()
+        let meshResult = faceMeshManager.processFrame(pixelBuffer, timestampMs: timestampMs, captureMs: captureMs)
         latestLock.lock()
         latestMesh = meshResult
         latestPixelBuffer = pixelBuffer
@@ -2048,6 +2317,11 @@ extension UseSenseSession: FrameCaptureDelegate {
         defer { bankLock.unlock() }
         // Re-checked under the lock: the guided scan may have paused.
         guard isCapturingFrames else { return }
+        // Closer step: only frames close enough count as near frames.
+        if let near = nearBankThreshold {
+            let aspect = Double(CVPixelBufferGetHeight(pixelBuffer)) / Double(max(1, CVPixelBufferGetWidth(pixelBuffer)))
+            guard let eye = Self.eyeDistance(meshResult.landmarks, aspect: aspect), eye >= near else { return }
+        }
         if frameBuffer.shouldCapture() && !frameBuffer.isFull {
             let frameIndex = frameBuffer.count
             frameBuffer.addFrame(pixelBuffer, timestamp: CMTimeGetSeconds(timestamp))
@@ -2159,6 +2433,7 @@ extension UseSenseSession {
         guideLock.lock()
         let viewport = viewportSize
         let rules = inChallenge ? challengeRules : nil
+        let scale = ovalScale
         guideLock.unlock()
 
         let isScanning: Bool
@@ -2168,7 +2443,7 @@ extension UseSenseSession {
         if let mesh, bufferW > 0, bufferH > 0 {
             let mapper = PreviewMapper(bufferSize: CGSize(width: bufferW, height: bufferH), viewSize: viewport)
             let points = mesh.landmarks.map { mapper.viewPoint(x: $0.x, y: $0.y) }
-            let oval = CaptureOvalLayout.ovalRect(in: viewport)
+            let oval = CaptureOvalLayout.ovalRect(in: viewport, scale: scale)
             // Spec v1.2.2: eye ratio = eye distance / (oval width / 0.72), in
             // screen space (= screen width on a phone). Stillness anchors use
             // the same unit so jitter / eye distance stays consistent.
