@@ -127,6 +127,23 @@ enum ExtraCheckCopy {
     }
 }
 
+/// How one challenge step went on the device, for the server's timing
+/// checks: a live person turns after the prompt, from straight ahead; a
+/// replayed or looping video doesn't line up with prompts it can't see.
+struct ChallengeStepLog: Equatable {
+    /// The spec's step index.
+    var index: Int
+    /// Challenge clock (seconds) when the step was prompted, and when it ended.
+    var promptedAt: TimeInterval
+    var endedAt: TimeInterval
+    /// When the pose first reached the target (Head Turn), if it did.
+    var reachedAt: TimeInterval?
+    /// The step ended on the target (true), on time-out (false), or by the
+    /// server's time with no pose to judge (nil).
+    var reached: Bool?
+    var hinted: Bool
+}
+
 struct ChallengeRunner {
     /// A face must be gone this long before the challenge pauses (one dropped
     /// frame is not a pause), and back this long before it resumes.
@@ -180,6 +197,11 @@ struct ChallengeRunner {
     /// Head Turn: time at the target so far, and whether a pose was seen.
     private var atTarget: TimeInterval = 0
     private var poseSeen = false
+    /// Step timing (see `ChallengeStepLog`).
+    private(set) var stepLog: [ChallengeStepLog] = []
+    private var stepPromptedAt: TimeInterval?
+    private var stepReachedAt: TimeInterval?
+    private var stepHinted = false
     private var lastTime: TimeInterval?
     private var present = false
     private var everPresent = false
@@ -254,6 +276,8 @@ struct ChallengeRunner {
     mutating func advance(_ obs: ChallengeObservation) -> ChallengeDisplay {
         let dt = lastTime.map { min(0.25, max(0, obs.time - $0)) } ?? 0
         lastTime = obs.time
+        // A step is prompted when it first shows to a person in the oval.
+        if stepPromptedAt == nil, present || obs.facePresent, !finished { stepPromptedAt = obs.time }
         updatePresence(obs.facePresent, dt: dt)
         if obs.hint != nil || obs.facePresent { lastHint = obs.hint }
 
@@ -302,9 +326,11 @@ struct ChallengeRunner {
             return
         }
         poseSeen = true
+        if reached, atTarget == 0 { stepReachedAt = lastTime }
         atTarget = reached ? atTarget + dt : 0
+        if !reached { stepReachedAt = nil }
         if atTarget >= Self.holdAtTarget {
-            endStep(overflow: 0)
+            endStep(overflow: 0, reached: true)
             return
         }
         let window = max(Self.hintAfter, server)
@@ -313,9 +339,10 @@ struct ChallengeRunner {
                 // One hint per challenge, with the same time again.
                 retriesLeft -= 1
                 retrying = true
+                stepHinted = true
                 stepElapsed = 0
             } else {
-                endStep(overflow: 0)   // the server judges this step
+                endStep(overflow: 0, reached: false)   // the server judges this step
             }
         }
     }
@@ -336,7 +363,16 @@ struct ChallengeRunner {
         }
     }
 
-    private mutating func endStep(overflow: TimeInterval) {
+    private mutating func endStep(overflow: TimeInterval, reached: Bool? = nil) {
+        if case .headTurn(let steps) = plan, stepIndex < steps.count {
+            let now = lastTime ?? 0
+            stepLog.append(ChallengeStepLog(index: steps[stepIndex].index, promptedAt: stepPromptedAt ?? now,
+                                            endedAt: now, reachedAt: reached == true ? stepReachedAt : nil,
+                                            reached: reached, hinted: stepHinted))
+        }
+        stepPromptedAt = finished ? nil : lastTime
+        stepReachedAt = nil
+        stepHinted = false
         retrying = false
         stepIndex += 1
         stepElapsed = max(0, overflow)

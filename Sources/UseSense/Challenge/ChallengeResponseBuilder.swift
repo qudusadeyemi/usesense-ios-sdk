@@ -9,6 +9,8 @@ final class ChallengeResponseBuilder: @unchecked Sendable {
     private var completedAt: String?
     private var completed = false
     private var currentStepIndex = 0
+    /// Guided Head Turn: per-step timing (`step_events`), ms since the epoch.
+    private var stepEvents: [[String: Any]] = []
     private let lock = NSLock()
 
     private let isoFormatter: ISO8601DateFormatter = {
@@ -28,6 +30,24 @@ final class ChallengeResponseBuilder: @unchecked Sendable {
         defer { lock.unlock() }
         completedAt = isoFormatter.string(from: Date())
         completed = true
+    }
+
+    /// Per-step timing from the guided challenge: when each step was prompted,
+    /// when the pose reached it, and how it ended. `start` is the wall-clock
+    /// time of the challenge clock's zero.
+    func setStepEvents(_ log: [ChallengeStepLog], start: Date) {
+        let ms = { (t: TimeInterval) in Int(((start.timeIntervalSince1970 + t) * 1000).rounded()) }
+        let events: [[String: Any]] = log.map { e in
+            var d: [String: Any] = ["index": e.index, "prompted_at_ms": ms(e.promptedAt), "ended_at_ms": ms(e.endedAt),
+                                    "hinted": e.hinted]
+            if let r = e.reachedAt {
+                d["reached_at_ms"] = ms(r)
+                d["reaction_ms"] = Int(((r - e.promptedAt) * 1000).rounded())
+            }
+            d["outcome"] = e.reached.map { $0 ? "reached" : "timed_out" } ?? "timed"
+            return d
+        }
+        lock.lock(); stepEvents = events; lock.unlock()
     }
 
     func setCurrentStep(_ stepIndex: Int) {
@@ -61,6 +81,7 @@ final class ChallengeResponseBuilder: @unchecked Sendable {
         let started = startedAt
         let ended = completedAt
         let isCompleted = completed
+        let events = stepEvents
         lock.unlock()
 
         var json: [String: Any] = [:]
@@ -87,6 +108,7 @@ final class ChallengeResponseBuilder: @unchecked Sendable {
         if let s = started { json["started_at"] = s }
         if let e = ended { json["completed_at"] = e }
         json["frame_timestamps"] = timestamps
+        if !events.isEmpty { json["step_events"] = events }
 
         return json
     }
@@ -95,6 +117,7 @@ final class ChallengeResponseBuilder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         waypointFrames.removeAll()
+        stepEvents.removeAll()
         frameTimestamps.removeAll()
         startedAt = nil
         completedAt = nil

@@ -613,6 +613,58 @@ final class ExtraCheckTests: XCTestCase {
                        "Tap the button when you're ready")
     }
 
+    // MARK: Step timing for the server (replay defence)
+
+    func testEachStepLogsWhenItWasPromptedAndReached() {
+        var r = headTurn([.left, .right, .center])
+        hold(&r, .center, 0.7)             // prompted, not yet turning
+        hold(&r, .left, 0.6)               // reached ~0.7 s after the prompt
+        hold(&r, .right, ChallengeRunner.hintAfter + 0.1, deg: 8)   // short: hint
+        hold(&r, .right, 0.6)              // then reached
+        hold(&r, .center, 0.6)
+        let log = r.stepLog
+        XCTAssertEqual(log.map(\.index), [0, 1, 2])
+        XCTAssertEqual(log.map(\.reached), [true, true, true])
+        XCTAssertEqual(log.map(\.hinted), [false, true, false])
+        let reaction = log[0].reachedAt! - log[0].promptedAt
+        XCTAssertEqual(reaction, 0.75, accuracy: 0.11)
+        XCTAssertLessThan(log[0].endedAt, log[1].promptedAt + 0.06, "the next step is prompted as one ends")
+
+        let builder = ChallengeResponseBuilder()
+        builder.setStepEvents(log, start: Date(timeIntervalSince1970: 1000))
+        let spec = ChallengeSpecWrapper.headTurn(HeadTurnChallenge(type: "head_turn", seed: "s", sequence: [],
+                                                                    totalDurationMs: 0, framesPerStep: nil, captureFpsHint: nil))
+        let events = builder.build(challenge: spec)["step_events"] as? [[String: Any]]
+        XCTAssertEqual(events?.count, 3)
+        XCTAssertEqual(events?.first?["outcome"] as? String, "reached")
+        XCTAssertEqual(events?[1]["hinted"] as? Bool, true)
+        XCTAssertNotNil(events?.first?["reaction_ms"] as? Int)
+    }
+
+    func testAStepThatNeverArrivesIsLoggedAsTimedOut() {
+        var r = headTurn([.left, .center])
+        hold(&r, .left, ChallengeRunner.hintAfter * 2 + 0.3, deg: 5)
+        XCTAssertEqual(r.stepLog.first?.reached, false)
+        XCTAssertNil(r.stepLog.first?.reachedAt)
+    }
+
+    // MARK: Frame budget per step (device finding)
+
+    func testEveryStepKeepsAShareOfTheFrames() {
+        // The device run: 30 frames, 4 banked by the scan, 4 steps.
+        var remaining = 26
+        var perStep: [Int] = []
+        for stepsLeft in stride(from: 4, through: 1, by: -1) {
+            let q = UseSenseSession.stepFrameQuota(remaining: remaining, stepsLeft: stepsLeft)
+            perStep.append(q)
+            remaining -= q
+        }
+        XCTAssertEqual(perStep, [6, 6, 7, 7])
+        XCTAssertTrue(perStep.allSatisfy { $0 >= 2 }, "every step, the last one included, gets frames")
+        XCTAssertEqual(UseSenseSession.stepFrameQuota(remaining: 3, stepsLeft: 4), 2)
+        XCTAssertEqual(UseSenseSession.stepFrameQuota(remaining: 0, stepsLeft: 2), 0)
+    }
+
     // MARK: Helpers
 
     private func decodeSpec(_ json: String) throws -> ChallengeSpecWrapper {

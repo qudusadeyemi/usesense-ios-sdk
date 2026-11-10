@@ -1144,6 +1144,12 @@ public final class UseSenseSession: @unchecked Sendable {
         if isDigits { audioCaptureManager.enableMetering() }
         let clock = Date()
         var lastStep = -1
+        // Every step gets its share of the frames left (device run: a 30-frame
+        // budget ran out by the third of four steps, and the server failed the
+        // last step, which had no frames).
+        let cap = serverMaxFrames ?? sessionData?.upload.maxFrames ?? 30
+        var stepStartCount = frameBuffer.count
+        var stepQuota = cap
         while true {
             try await Task.sleep(nanoseconds: 50_000_000)
             try Task.checkCancellation()
@@ -1153,18 +1159,37 @@ public final class UseSenseSession: @unchecked Sendable {
                                            hint: challengeHint)
             guideLock.unlock()
             // As in the scan: frames bank only while every check passes.
-            isCapturingFrames = banksFrames && obs.facePresent && !obs.held
-            if isDigits { obs.level = audioCaptureManager.level() }
-            let display = runner.advance(obs)
             if runner.specStepIndex != lastStep {
                 lastStep = runner.specStepIndex
                 challengeResponseBuilder.setCurrentStep(lastStep)
+                stepStartCount = frameBuffer.count
+                stepQuota = Self.stepFrameQuota(remaining: cap - stepStartCount,
+                                                stepsLeft: runner.stepCount - runner.stepIndex)
             }
+            isCapturingFrames = banksFrames && obs.facePresent && !obs.held
+                && frameBuffer.count - stepStartCount < stepQuota
+            if isDigits { obs.level = audioCaptureManager.level() }
+            let display = runner.advance(obs)
             guideLock.lock(); challengeRules = runner.gateRules; guideLock.unlock()
             onChallengeUpdate?(display)
             if display.finished { break }
         }
-        USTrace.log("challenge: \(spec.challengeType.rawValue) finished, retries left \(runner.retriesLeft)")
+        challengeResponseBuilder.setStepEvents(runner.stepLog, start: clock)
+        let steps = runner.stepLog.map { e -> String in
+            let reaction = e.reachedAt.map { String(format: " %.0fms", ($0 - e.promptedAt) * 1000) } ?? ""
+            return "\(e.index):\(e.reached.map { $0 ? "reached" : "timed_out" } ?? "timed")\(reaction)"
+        }
+        USTrace.log("challenge: \(spec.challengeType.rawValue) finished, retries left \(runner.retriesLeft),"
+            + " steps [\(steps.joined(separator: ", "))]")
+    }
+
+    /// Frames one challenge step may bank so every later step still gets
+    /// its share of what is left (at least `minimum`, the server's
+    /// `frames_per_step`, while any remain).
+    static func stepFrameQuota(remaining: Int, stepsLeft: Int, minimum: Int = 2) -> Int {
+        let remaining = max(0, remaining)
+        guard stepsLeft > 0 else { return remaining }
+        return max(min(minimum, remaining), remaining / stepsLeft)
     }
 
     /// Round 2, after "Continue": the challenge on the scan screen, a short
