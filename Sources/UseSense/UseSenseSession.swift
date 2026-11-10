@@ -1172,8 +1172,11 @@ public final class UseSenseSession: @unchecked Sendable {
             let display = runner.advance(obs)
             // Bank while the gate passes, within the step's share, and (Head
             // Turn) only while the asked pose is held.
-            isCapturingFrames = banksFrames && obs.facePresent && !obs.held && runner.banksNow
-                && frameBuffer.count - stepStartCount < stepQuota
+            let framesThisStep = frameBuffer.count - stepStartCount
+            let reason = runner.bankReason
+            let allowed = reason == .onTarget || (reason == .settled && framesThisStep < Self.settledFramesPerStep)
+            isCapturingFrames = banksFrames && obs.facePresent && !obs.held && allowed
+                && framesThisStep < stepQuota
             guideLock.lock(); challengeRules = runner.gateRules; guideLock.unlock()
             onChallengeUpdate?(display)
             if display.finished { break }
@@ -1186,6 +1189,10 @@ public final class UseSenseSession: @unchecked Sendable {
         USTrace.log("challenge: \(spec.challengeType.rawValue) finished, retries left \(runner.retriesLeft),"
             + " steps [\(steps.joined(separator: ", "))]")
     }
+
+    /// Follow Dot: frames a waypoint banks after the dot settles even when
+    /// the phone thinks the head isn't on it (the server judges them).
+    static let settledFramesPerStep = 2
 
     /// Frames one challenge step may bank so every later step still gets
     /// its share of what is left (at least `minimum`, the server's

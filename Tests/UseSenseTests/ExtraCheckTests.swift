@@ -274,13 +274,22 @@ final class ExtraCheckTests: XCTestCase {
         XCTAssertEqual(r.specStepIndex, 1)
     }
 
-    func testDotFramesBankOnlyWhileTheHeadIsOnTheDot() {
+    func testEveryDotSpotSendsFramesEvenWhenThePhoneThinksItWasMissed() {
         var r = followDot()
-        point(&r, right: 0, up: 0, 1.2)
-        point(&r, right: 0, up: 0, 1.0)
-        XCTAssertFalse(r.banksNow)
-        point(&r, right: 20, up: 15, 0.2)
-        XCTAssertTrue(r.banksNow)
+        point(&r, right: 0, up: 0, 1.2)                  // first spot done
+        point(&r, right: 0, up: 0, 0.3)                  // dot still gliding to spot 2
+        XCTAssertEqual(r.bankReason, .none, "the dot hasn't arrived and settled")
+        point(&r, right: 0, up: 0, 0.7)                  // arrived + settled, head not on it
+        XCTAssertEqual(r.bankReason, .settled, "a couple of frames go up for the server anyway")
+        point(&r, right: 20, up: 15, 0.2)                // head on the dot
+        XCTAssertEqual(r.bankReason, .onTarget)
+        XCTAssertEqual(UseSenseSession.settledFramesPerStep, 2)
+    }
+
+    func testHeadTurnStillBanksOnlyOnTheTarget() {
+        var r = headTurn([.left, .center])
+        hold(&r, .center, 3)
+        XCTAssertEqual(r.bankReason, .none, "big, unambiguous poses: the phone's verdict is reliable")
     }
 
     // MARK: Speak Digits

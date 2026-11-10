@@ -290,11 +290,35 @@ struct ChallengeRunner {
     /// judges each step on frames that show it; frames from the way there
     /// (still turned from the last step) made the server fail steps the
     /// person did (device run, 2026-11-10). No pose to judge: always.
-    var banksNow: Bool {
-        guard !finished else { return true }
+    var banksNow: Bool { bankReason != .none }
+
+    enum BankReason: Equatable {
+        case none
+        /// The pose is on the step's target (or there's no pose to judge).
+        case onTarget
+        /// Follow Dot: the dot has arrived and settled, whatever the phone
+        /// makes of the head. A phone can't tell reliably whether a head
+        /// "landed" on a dot (a few degrees of turn), so each waypoint sends
+        /// a couple of frames for the server to judge, even when the phone
+        /// thinks it was missed (device run: a spot the phone misjudged
+        /// reached the server with no frames, and was judged on estimates).
+        case settled
+    }
+
+    /// Follow Dot: time after the dot arrives before settled frames count
+    /// (a person's reaction to the move).
+    static let dotSettle: TimeInterval = 0.5
+
+    var bankReason: BankReason {
+        guard !finished else { return .onTarget }
         switch plan {
-        case .headTurn, .followDot: return lastAtTarget ?? true
-        case .digits: return true
+        case .headTurn:
+            return (lastAtTarget ?? true) ? .onTarget : .none
+        case .followDot:
+            if lastAtTarget ?? true { return .onTarget }
+            return stepAge >= dotGlideTime(stepIndex) + Self.dotSettle ? .settled : .none
+        case .digits:
+            return .onTarget
         }
     }
 
