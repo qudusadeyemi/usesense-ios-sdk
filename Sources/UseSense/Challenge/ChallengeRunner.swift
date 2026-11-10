@@ -72,6 +72,8 @@ enum ExtraCheckCopy {
     static let followDot = "Follow the dot with your head"
     static let keepFollowing = "Keep following"
     static let pointAtDot = "Turn your head toward the dot"
+    /// After a step that timed out: honest, not a tick.
+    static let nextOne = "Let's try the next one"
     static let sayNumbers = "Say these numbers"
     static let cantHear = "We can't hear you"
     static let speakLouder = "Speak a little louder"
@@ -163,6 +165,8 @@ struct ChallengeRunner {
     /// once per challenge. Not there again after the same time: move on and
     /// leave the result to the server. Never shorter than the server's step.
     static let hintAfter: TimeInterval = 4
+    /// How long "Let's try the next one" shows after a missed step.
+    static let missedNotice: TimeInterval = 1.2
     /// Which way "left" reads in the face transform's yaw. Measured on an
     /// iPhone 17 Pro front camera, 2026-11-10 (sandbox head-turn run): turning
     /// left read -42 degrees, right +33, looking up gave pitch +33. The server
@@ -214,6 +218,11 @@ struct ChallengeRunner {
     private var stepReachedAt: TimeInterval?
     private var stepHinted = false
     private var lastAtTarget: Bool?
+    /// Steps the person actually did (the ring fills only for these; a
+    /// step that timed out leaves its segment empty, so moving on never
+    /// looks like a confirmation: device run, 2026-11-10).
+    private(set) var reachedSteps = 0
+    private var missedUntil: TimeInterval?
     /// Follow Dot: time since the step began (the glide; not reset by the
     /// hint), and the head pose at the central waypoint (the reference).
     private var stepAge: TimeInterval = 0
@@ -441,6 +450,8 @@ struct ChallengeRunner {
     }
 
     private mutating func endStep(overflow: TimeInterval, reached: Bool? = nil) {
+        if reached != false { reachedSteps += 1 }
+        missedUntil = reached == false ? (lastTime ?? 0) + Self.missedNotice : nil
         let specIndex: Int?
         switch plan {
         case .headTurn(let steps): specIndex = stepIndex < steps.count ? steps[stepIndex].index : nil
@@ -481,15 +492,21 @@ struct ChallengeRunner {
         let durs = durations
         let total = durs.reduce(0, +)
         guard total > 0 else { return 1 }
-        if finished { return 1 }
+        if finished, case .digits = plan { return 1 }
+        if finished, reachedSteps >= stepCount { return 1 }
         switch plan {
         case .headTurn, .followDot:
-            // One segment per step, filled by the hold at the target.
-            return min(1, (Double(stepIndex) + min(1, atTarget / Self.holdAtTarget)) / Double(stepCount))
+            // One segment per step done, plus the hold on the current one.
+            return min(1, (Double(reachedSteps) + min(1, atTarget / Self.holdAtTarget)) / Double(stepCount))
         case .digits: break
         }
         let done = durs.prefix(stepIndex).reduce(0, +)
         return min(1, (done + min(stepElapsed, durs[stepIndex])) / total)
+    }
+
+    private var missedNoticeShowing: Bool {
+        guard let until = missedUntil, let now = lastTime, !finished else { return false }
+        return now < until
     }
 
     func display(held: Bool = false) -> ChallengeDisplay {
@@ -505,6 +522,9 @@ struct ChallengeRunner {
                 d.tone = .warning
                 d.title = pauseTitle(ExtraCheckCopy.centreFace)
                 d.subtitle = ExtraCheckCopy.keepTurning
+            } else if missedNoticeShowing {
+                d.tone = .warning
+                d.title = ExtraCheckCopy.nextOne
             } else if retrying {
                 d.title = ExtraCheckCopy.tryAgain
                 d.subtitle = ExtraCheckCopy.furtherHint(step.direction)
@@ -535,6 +555,9 @@ struct ChallengeRunner {
                 d.tone = .warning
                 d.title = pauseTitle(ExtraCheckCopy.showFace)
                 d.subtitle = ExtraCheckCopy.dotWaits
+            } else if missedNoticeShowing {
+                d.tone = .warning
+                d.title = ExtraCheckCopy.nextOne
             } else if retrying {
                 d.title = ExtraCheckCopy.tryAgain
                 d.subtitle = ExtraCheckCopy.pointAtDot

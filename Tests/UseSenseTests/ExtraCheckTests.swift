@@ -93,9 +93,10 @@ final class ExtraCheckTests: XCTestCase {
         XCTAssertEqual(d.arrow, .left)
         XCTAssertEqual(r.specStepIndex, 0, "the same step, more time")
         d = hold(&r, .left, ChallengeRunner.hintAfter + 0.1, deg: 8)
-        XCTAssertEqual(d.title, "Now to the right", "still short: it moves on and the server judges")
+        XCTAssertEqual(r.specStepIndex, 1, "still short: it moves on and the server judges")
+        XCTAssertEqual(d.title, "Let's try the next one", "and says so")
         d = hold(&r, .right, ChallengeRunner.hintAfter + 0.1, deg: 8)
-        XCTAssertEqual(d.title, "Now look straight ahead", "the hint is once per challenge")
+        XCTAssertEqual(r.specStepIndex, 2, "the hint is once per challenge")
     }
 
     func testAHintedStepStillEndsWhenTheTurnArrives() {
@@ -230,6 +231,29 @@ final class ExtraCheckTests: XCTestCase {
         XCTAssertEqual(r.specStepIndex, 2)
         XCTAssertEqual(r.stepLog.count, 2)
         XCTAssertEqual(r.stepLog.last?.reached, false)
+    }
+
+    func testAMissedStepNeverLooksConfirmed() {
+        var r = followDot()
+        point(&r, right: 0, up: 0, 1.2)                                   // first: reached
+        let one = r.progress
+        point(&r, right: 0, up: 0, ChallengeRunner.hintAfter * 2 + 0.3)   // hint, then times out
+        XCTAssertEqual(r.specStepIndex, 2)
+        XCTAssertEqual(r.stepLog.last?.reached, false)
+        let d = r.display()
+        XCTAssertEqual(d.title, "Let's try the next one")
+        XCTAssertEqual(d.tone, .warning)
+        XCTAssertEqual(r.progress, one, accuracy: 0.001, "the missed spot's segment stays empty")
+        let later = point(&r, right: 0, up: 0, ChallengeRunner.missedNotice + 0.1)
+        XCTAssertEqual(later.title, "Keep following", "the notice is brief")
+    }
+
+    func testAMissedHeadTurnStepSaysSoToo() {
+        var r = headTurn([.left, .right, .center])
+        hold(&r, .left, ChallengeRunner.hintAfter * 2 + 0.3, deg: 5)
+        let d = r.display()
+        XCTAssertEqual(d.title, "Let's try the next one")
+        XCTAssertEqual(r.progress, 0, accuracy: 0.001)
     }
 
     func testTheDotWaitsWhileTheFaceIsAway() {
