@@ -154,7 +154,22 @@ struct GuidedCaptureView<Camera: View>: View {
 
     /// The instruction shown, and whether it asks for an action.
     private var guidance: (title: String, subtitle: String?, action: Bool) {
-        if showShutter { return (CaptureTokens.shutterCopy, nil, true) }
+        Self.guidance(hint: hint, mode: mode, paused: paused, showShutter: showShutter)
+    }
+
+    /// The shutter's "Tap the button when you're ready" never hides a check
+    /// that holds the scan (a covered face, a second person, distance...):
+    /// the tap starts a scan with the same quality bar, so the person still
+    /// needs to know what to fix. Seen on device: a hand over the mouth for
+    /// 20 s showed only the shutter copy.
+    static func guidance(hint: GateHint?, mode: Mode, paused: Bool, showShutter: Bool)
+        -> (title: String, subtitle: String?, action: Bool) {
+        if showShutter {
+            if let hint, hint.check != .stillness, hint.check != .light {
+                return (hint.title, hint.subtitle, true)
+            }
+            return (CaptureTokens.shutterCopy, nil, true)
+        }
         if let hint, mode == .align || paused || hint.check == .light {
             return (hint.title, hint.subtitle, hint.check != .stillness)
         }

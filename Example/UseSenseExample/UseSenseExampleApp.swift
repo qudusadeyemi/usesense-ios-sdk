@@ -46,12 +46,14 @@ struct CapturePreview: View {
         UserDefaults.standard.string(forKey: key) ?? ProcessInfo.processInfo.environment[key]
     }
 
-    /// A live session made outside the app (`-USESENSE_SESSION_JSON <file>`: a
-    /// POST /v1/sessions response, with `-USESENSE_API_BASE` and
+    /// A live session made outside the app (`-USESENSE_SESSION_JSON <file>` or
+    /// `-USESENSE_SESSION_B64 <base64>`: a POST /v1/sessions response, with `-USESENSE_API_BASE` and
     /// `-USESENSE_ENV`). The app holds no API key: everything after create
     /// authenticates with the session token. Without it, a stand-in session.
     private let session: UseSenseSession = {
+        // A file on the simulator, or the response inline as base64 (a device).
         let live = arg("USESENSE_SESSION_JSON").flatMap { FileManager.default.contents(atPath: $0) }
+            ?? arg("USESENSE_SESSION_B64").flatMap { Data(base64Encoded: $0) }
         let environment: UseSenseSDK.Environment? = arg("USESENSE_ENV").flatMap(UseSenseSDK.Environment.init(rawValue:))
         let session = UseSenseSession(
             config: UseSenseConfig(apiEndpoint: live != nil ? (arg("USESENSE_API_BASE") ?? UseSenseConfig.defaultEndpoint)
@@ -73,13 +75,28 @@ struct CapturePreview: View {
         return session
     }()
 
+    /// Set when the capture hands its result back (an app would close the screen).
+    @State private var finished: String?
+
     var body: some View {
-        UseSenseView(session: session, onComplete: { result in
-            switch result {
-            case .success(let d): print("[UseSense e2e] RESULT \(d.sessionId) \(d.decision)")
-            case .failure(let e): print("[UseSense e2e] ERROR \(e.code.rawValue) \(e.details ?? "")")
+        if let finished {
+            VStack(spacing: 12) {
+                Text("Run finished").font(.title2.bold())
+                Text(finished).font(.body.monospaced()).multilineTextAlignment(.center)
             }
-        })
+            .padding()
+        } else {
+            UseSenseView(session: session, onComplete: { result in
+                switch result {
+                case .success(let d):
+                    print("[UseSense e2e] RESULT \(d.sessionId) \(d.decision)")
+                    finished = d.decision
+                case .failure(let e):
+                    print("[UseSense e2e] ERROR \(e.code.rawValue) \(e.details ?? "")")
+                    finished = e.code.rawValue
+                }
+            }, onCancel: { finished = "Cancelled" })
+        }
     }
 }
 #endif

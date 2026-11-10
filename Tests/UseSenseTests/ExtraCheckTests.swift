@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import UseSenseSDK
 
 /// The extra check drawn on the scan screen (storyboard flows 4 to 6):
@@ -565,6 +566,22 @@ final class ExtraCheckTests: XCTestCase {
         XCTAssertNil(r2["covered_check"], "round-1 only")
         XCTAssertNil(r2["inline_step_up"], "round-1 only")
         XCTAssertNil(r1["step_up_round"])
+    }
+
+    // MARK: Shutter copy (device finding)
+
+    func testTheShutterNeverHidesACheckThatHoldsTheScan() {
+        typealias V = GuidedCaptureView<EmptyView>
+        XCTAssertEqual(V.guidance(hint: .uncovered, mode: .align, paused: false, showShutter: true).title,
+                       "Keep your face uncovered")
+        XCTAssertEqual(V.guidance(hint: .onePerson, mode: .align, paused: false, showShutter: true).title,
+                       "Only you in the picture")
+        XCTAssertEqual(V.guidance(hint: .holdStill, mode: .align, paused: false, showShutter: true).title,
+                       "Tap the button when you're ready")
+        XCTAssertEqual(V.guidance(hint: .faceALight, mode: .align, paused: false, showShutter: true).title,
+                       "Tap the button when you're ready", "light is advice only")
+        XCTAssertEqual(V.guidance(hint: nil, mode: .align, paused: false, showShutter: true).title,
+                       "Tap the button when you're ready")
     }
 
     // MARK: Helpers
