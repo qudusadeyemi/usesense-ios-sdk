@@ -518,15 +518,18 @@ enum CaptureOvalLayout {
     /// Space kept between the grown oval's ring and the screen edge.
     static let grownEdgeMargin: CGFloat = 16
 
-    /// `scale` grows the oval about its centre (EVIDENCE-v1 closer step),
-    /// capped so the ring (6 pt gap + 3 pt) stays `grownEdgeMargin` inside the
-    /// screen: the server's 1.4 would make a phone's oval wider than the
-    /// screen. The near frames are judged on eye distance, not on the oval.
+    /// `scale` grows the oval about its centre (EVIDENCE-v1 closer step).
+    /// The height grows by the full `scale`; the width is capped so the ring
+    /// (6 pt gap + 3 pt) stays `grownEdgeMargin` inside the screen, since the
+    /// server's 1.4 would make a phone's oval wider than the screen. A width-
+    /// capped oval alone (about 1.22x) let people stop short of `min_scale`
+    /// 1.25 (device run 4: 1.24x); filling the taller oval top to bottom
+    /// gets there. The near frames are judged on eye distance, not the oval.
     static func ovalRect(in size: CGSize, scale: CGFloat = 1) -> CGRect {
         let base = size.width * 0.36
         let fit = base > 0 ? (size.width / 2 - grownEdgeMargin - 9) / base : 1
-        let s = scale > 1 ? max(1, min(scale, fit)) : scale
-        let rx = base * s, ry = size.height * 0.235 * s
+        let sx = scale > 1 ? max(1, min(scale, fit)) : scale
+        let rx = base * sx, ry = size.height * 0.235 * scale
         return CGRect(x: size.width * 0.5 - rx, y: size.height * 0.40 - ry, width: rx * 2, height: ry * 2)
     }
 }

@@ -583,7 +583,10 @@ final class EvidenceTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(grown.minX - ring, CaptureOvalLayout.grownEdgeMargin - 1e-9)
             XCTAssertLessThanOrEqual(grown.maxX + ring, size.width - CaptureOvalLayout.grownEdgeMargin + 1e-9)
             XCTAssertGreaterThanOrEqual(grown.minY, 0)
-            XCTAssertGreaterThan(grown.width, CaptureOvalLayout.ovalRect(in: size).width, "it still grows")
+            let base = CaptureOvalLayout.ovalRect(in: size)
+            XCTAssertGreaterThan(grown.width, base.width, "it still grows")
+            XCTAssertEqual(grown.height, base.height * 1.4, accuracy: 1e-9, "the height grows the full scale")
+            XCTAssertEqual(grown.midY, base.midY, accuracy: 1e-9)
         }
     }
 }
