@@ -256,6 +256,11 @@ final class ExtraCheckTests: XCTestCase {
         XCTAssertEqual(r.progress, 0, accuracy: 0.001)
     }
 
+    func testFollowDotSaysThePreviewIsMirrored() throws {
+        let spec = try JSONDecoder().decode(ChallengeSpecWrapper.self, from: Data(#"{"type":"follow_dot","seed":"s","dot_size_px":24,"total_duration_ms":1000,"waypoints":[{"x":0.5,"y":0.5,"duration_ms":1000,"index":0}]}"#.utf8))
+        XCTAssertEqual(ChallengeResponseBuilder().build(challenge: spec)["preview_mirrored"] as? Bool, true)
+    }
+
     func testTheDotWaitsWhileTheFaceIsAway() {
         var r = followDot()
         point(&r, right: 0, up: 0, 1.2)

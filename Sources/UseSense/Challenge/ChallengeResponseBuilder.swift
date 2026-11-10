@@ -100,6 +100,13 @@ final class ChallengeResponseBuilder: @unchecked Sendable {
         case .speakPhrase: framesKey = nil
         }
 
+        if challenge.challengeType == .followDot {
+            // The capture screens show the front camera mirrored (a dot moving
+            // right on screen means the person turns their own right). Said
+            // explicitly so the server never has to assume it.
+            json["preview_mirrored"] = true
+        }
+
         if let key = framesKey {
             var framesObj: [String: [Int]] = [:]
             for (stepIdx, frameList) in frames {
