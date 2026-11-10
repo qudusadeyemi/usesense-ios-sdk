@@ -234,6 +234,18 @@ public final class UseSenseSession: @unchecked Sendable {
     static let closerPhaseFrames = 3
     /// The closer step gives up after this (section 7: 4 s) and uploads anyway.
     static let closerTimeout: TimeInterval = 4
+    /// The face holds still, close enough, this long before near frames bank.
+    static let closerSettle: TimeInterval = 0.4
+    /// Near frames bank at most this often, so three span about 0.75 s.
+    static let closerNearFps = 4
+    /// Once close enough in time, this long to settle and bank.
+    static let closerHoldBudget: TimeInterval = 3
+    /// "Move a little closer" comes back only below this share of the threshold.
+    static let closerReleaseShare = 0.95
+
+    static func closerShowsNear(eye: Double, threshold: Double, wasNear: Bool) -> Bool {
+        wasNear ? eye >= threshold * closerReleaseShare : eye >= threshold
+    }
 
     /// What this build can do (EVIDENCE-v1 `capability`).
     var evidenceCapability: EvidenceCapability {
@@ -990,8 +1002,9 @@ public final class UseSenseSession: @unchecked Sendable {
         record.startedAtMs = currentCaptureMs()
         let threshold = farMedian * step.minScale
         let startCount = frameBuffer.count
+        // Near frames spread over the hold, not one burst as the face arrives.
         frameBuffer.reconfigure(maxFrames: serverMaxFrames ?? sessionData?.upload.maxFrames ?? 30,
-                                targetFps: Self.guidedMaxFps)
+                                targetFps: Self.closerNearFps)
         guideLock.withLock { ovalScale = CGFloat(step.targetScale) }
         onCloserUpdate?(CGFloat(step.targetScale), true)
         bankLock.withLock { nearBankThreshold = threshold }
@@ -1003,17 +1016,33 @@ public final class UseSenseSession: @unchecked Sendable {
         }
         USTrace.log(String(format: "closer: far median eye %.4f, need %.4f", farMedian, threshold))
         let started = Date()
-        var near = false
-        while Date().timeIntervalSince(started) < Self.closerTimeout {
+        var deadline = started.addingTimeInterval(Self.closerTimeout)
+        var shownNear = false
+        var holdingSince: Date?
+        while Date() < deadline {
             try await Task.sleep(nanoseconds: 50_000_000)
             try Task.checkCancellation()
+            let now = Date()
             let eye = latestMeshResult().flatMap { Self.eyeDistance($0.landmarks, aspect: aspect) } ?? 0
-            let close = eye >= threshold
-            if close != near {
-                near = close
-                onCloserUpdate?(CGFloat(step.targetScale), !close)
+            // The copy switches at the threshold and only goes back to
+            // "Move a little closer" a little below it, so it doesn't flicker.
+            let showNear = Self.closerShowsNear(eye: eye, threshold: threshold, wasNear: shownNear)
+            if showNear != shownNear {
+                shownNear = showNear
+                onCloserUpdate?(CGFloat(step.targetScale), !showNear)
+                if showNear, holdingSince == nil {
+                    // Reached in time: allow the hold and the frames.
+                    deadline = max(deadline, now.addingTimeInterval(Self.closerHoldBudget))
+                }
             }
-            isCapturingFrames = close && closerGatePasses
+            // Bank only after the face has held still, close enough, for a
+            // moment (device run: three frames in 0.26 s while still moving).
+            if eye >= threshold && closerGatePasses {
+                holdingSince = holdingSince ?? now
+            } else {
+                holdingSince = nil
+            }
+            isCapturingFrames = holdingSince.map { now.timeIntervalSince($0) >= Self.closerSettle } ?? false
             if frameBuffer.count - startCount >= Self.closerPhaseFrames || frameBuffer.isFull { break }
         }
         isCapturingFrames = false

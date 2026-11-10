@@ -557,6 +557,15 @@ final class EvidenceTests: XCTestCase {
         XCTAssertFalse(UseSenseSession.closerGatePasses(failing: [.eyesOpen]))
     }
 
+    func testCloserCopyHasHysteresis() {
+        XCTAssertFalse(UseSenseSession.closerShowsNear(eye: 0.25, threshold: 0.26, wasNear: false))
+        XCTAssertTrue(UseSenseSession.closerShowsNear(eye: 0.26, threshold: 0.26, wasNear: false))
+        XCTAssertTrue(UseSenseSession.closerShowsNear(eye: 0.25, threshold: 0.26, wasNear: true), "a small drift keeps Hold still")
+        XCTAssertFalse(UseSenseSession.closerShowsNear(eye: 0.24, threshold: 0.26, wasNear: true))
+        XCTAssertGreaterThanOrEqual(UseSenseSession.closerSettle, 0.3)
+        XCTAssertLessThanOrEqual(UseSenseSession.closerNearFps, 5, "near frames span the hold")
+    }
+
     func testOvalScalesAboutItsCentre() {
         let size = CGSize(width: 390, height: 844)
         let a = CaptureOvalLayout.ovalRect(in: size)
