@@ -42,6 +42,9 @@ public final class HostedVerificationViewController: UIViewController {
     private var session: UseSenseSession?
     private var captureDecision: String?
     private var hostingController: UIHostingController<AnyView>?
+    /// BRAND-v1 6: the capture screens follow the brand (seeded before capture).
+    private let brandSeed = CaptureBrandSeed()
+    private var serverBranding: ServerBranding?
 
     private var currentStep: PageStep = .loading {
         didSet { updateUI() }
@@ -85,6 +88,7 @@ public final class HostedVerificationViewController: UIViewController {
             let data = try await apiClient.getRemoteSessionData(sessionId: remoteSessionId)
             self.sessionData = data
             self.branding = EffectiveBranding.merge(sdk: sdkBranding, server: data.branding)
+            self.serverBranding = data.branding
 
             // Mark as opened (fire-and-forget)
             Task { try? await apiClient.markSessionOpened(sessionId: remoteSessionId) }
@@ -110,6 +114,8 @@ public final class HostedVerificationViewController: UIViewController {
             self.session = session
 
             session.injectHostedSessionData(initResponse.toCreateSessionResponse())
+            let layers = CaptureBrandSeed.hostedLayers(config: config, sdk: sdkBranding, server: serverBranding)
+            brandSeed.seed(appearance: layers.appearance, copy: layers.copy, displayName: layers.displayName)
 
             currentStep = .capture
         } catch {
@@ -150,6 +156,7 @@ public final class HostedVerificationViewController: UIViewController {
     }
 
     private func handleCaptureComplete(_ result: Result<RedactedDecisionObject, UseSenseError>) async {
+        brandSeed.clear()
         currentStep = .finalizing
         self.captureDecision = (try? result.get())?.decision
 
@@ -226,6 +233,7 @@ public final class HostedVerificationViewController: UIViewController {
                         Task { await self?.handleCaptureComplete(result) }
                     },
                     onCancel: { [weak self] in
+                        self?.brandSeed.clear()
                         self?.onComplete?(.failure(UseSenseError(code: .userCancelled)))
                         self?.dismiss(animated: true)
                     }

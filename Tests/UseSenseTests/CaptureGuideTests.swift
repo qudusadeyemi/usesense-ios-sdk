@@ -221,6 +221,152 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertNil(snap.hint)
     }
 
+    /// Device run (2026-11-11): a room too dark to find a face never turned
+    /// the fill light on. The middle of the frame now decides when no face is found.
+    func testNoFaceInADarkFrameTurnsOnFillLight() {
+        var guide = CaptureGuide()
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        func noFace(_ luma: Float?) -> GateObservation {
+            var o = GateObservation.noFace(at: t); o.frameLuma = luma; return o
+        }
+        while t < 0.45 { snap = guide.update(noFace(25)); t += 1.0 / 30 }
+        XCTAssertTrue(snap.fillLight, "dark frame, no face: fill light after the hint delay")
+        while t < 1.5 { snap = guide.update(noFace(25)); t += 1.0 / 30 }
+        XCTAssertNil(snap.hint, "silent while the light settles")
+        while t < 3.5 { snap = guide.update(noFace(30)); t += 1.0 / 30 }
+        XCTAssertEqual(snap.hint, .faceALight, "still no face in the dark: ask for light, not a face")
+
+        // A bright frame with no face is just no face.
+        var bright = CaptureGuide()
+        t = 0
+        while t < 2.0 { snap = bright.update(noFace(140)); t += 1.0 / 30 }
+        XCTAssertFalse(snap.fillLight)
+        XCTAssertEqual(snap.hint, .showFace)
+        // No measurement: unchanged behaviour.
+        var unknown = CaptureGuide()
+        t = 0
+        while t < 2.0 { snap = unknown.update(noFace(nil)); t += 1.0 / 30 }
+        XCTAssertFalse(snap.fillLight)
+    }
+
+    func testDarkFrameDoesNotToggleTheFillLightDuringAScan() {
+        var guide = CaptureGuide()
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        while t < 1.0 {
+            var o = GateObservation.noFace(at: t); o.frameLuma = 20
+            snap = guide.update(o, scanning: true); t += 1.0 / 30
+        }
+        XCTAssertFalse(snap.fillLight, "frozen during a scan (COVER-v1)")
+        XCTAssertEqual(snap.hint, .showFace, "a paused scan still says what holds it")
+    }
+
+    /// Android A03 dark-room run: a turning head in the dark blurs every
+    /// frame, so sharpness must not hold a movement. Speak Digits and the
+    /// scan still check it.
+    func testSharpnessGivesWayWhileTurningOnly() {
+        let blurry = FaceRegionQuality(meanLuma: 120, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 5)
+        var gate = QualityGate()
+        let turning = gate.evaluate(good(at: 0) { $0.face = blurry }, scanning: true, challenge: .turnSideways)
+        XCTAssertNil(turning.failing[.sharpness])
+        var gate2 = QualityGate()
+        let dot = gate2.evaluate(good(at: 0) { $0.face = blurry }, scanning: true, challenge: .followDot)
+        XCTAssertNil(dot.failing[.sharpness])
+        var gate3 = QualityGate()
+        let digits = gate3.evaluate(good(at: 0) { $0.face = blurry }, scanning: true, challenge: .digits)
+        XCTAssertEqual(digits.failing[.sharpness], .holdSteady)
+        var gate4 = QualityGate()
+        let scan = gate4.evaluate(good(at: 0) { $0.face = blurry }, scanning: true)
+        XCTAssertEqual(scan.failing[.sharpness], .holdSteady)
+    }
+
+    /// Android A03: the fill light coming on made the movement wait for a
+    /// cover re-baseline ("Hold still"). On iOS the light-change hold is a
+    /// scan-only rule and round 2 keeps the light's state: check it stays so.
+    func testFillLightFromTheScanDoesNotHoldTheMovement() {
+        var guide = CaptureGuide()
+        let dark = FaceRegionQuality(meanLuma: 40, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 50)
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        while t < 1.0 { snap = guide.update(good(at: t) { $0.face = dark }); t += 1.0 / 30 }
+        XCTAssertTrue(snap.fillLight)
+        guide.reset(keepFillLight: true)   // round 2
+        let start = t
+        while t < start + 2.0 {
+            snap = guide.update(good(at: t) { $0.yaw = 30; $0.face = dark }, challenge: .turnSideways)
+            t += 1.0 / 30
+        }
+        XCTAssertTrue(snap.fillLight, "still on for the movement")
+        XCTAssertTrue(snap.allPass, "nothing holds the turn")
+        XCTAssertNotEqual(snap.hint, .holdStill)
+    }
+
+    /// SPEC v1.7 (user decision, iPhone dark-room run at face luma ~7): a
+    /// face too dark to scan holds the start and asks for light.
+    func testAFaceTooDarkToScanAsksForLightInsteadOfStarting() {
+        let black = FaceRegionQuality(meanLuma: 7, clippedHighRatio: 0, clippedLowRatio: 0.9, sharpness: 60)
+        var guide = CaptureGuide()
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        while t < 3.5 { snap = guide.update(good(at: t) { $0.face = black }); t += 1.0 / 30 }
+        XCTAssertTrue(snap.fillLight)
+        XCTAssertTrue(snap.tooDark)
+        XCTAssertFalse(snap.allPass, "no auto start")
+        XCTAssertEqual(snap.hint, .faceALight, "Find more light")
+
+        // Release: 20 or more held for 0.5 s (a dip below restarts the clock).
+        let lit = FaceRegionQuality(meanLuma: 22, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 60)
+        let s1 = t
+        while t < s1 + 0.3 { snap = guide.update(good(at: t) { $0.face = lit }); t += 1.0 / 30 }
+        XCTAssertTrue(snap.tooDark, "not held long enough yet")
+        snap = guide.update(good(at: t) { $0.face = black }); t += 1.0 / 30
+        let s2 = t
+        while t < s2 + 0.4 { snap = guide.update(good(at: t) { $0.face = lit }); t += 1.0 / 30 }
+        XCTAssertTrue(snap.tooDark, "a dip restarts the release clock")
+        while t < s2 + 0.6 { snap = guide.update(good(at: t) { $0.face = lit }); t += 1.0 / 30 }
+        XCTAssertFalse(snap.tooDark, "22 held 0.5 s: released (the A03 hovered at 18-24)")
+        XCTAssertTrue(snap.allPass, "dim but scannable: light is advice")
+    }
+
+    /// The floor must not trap a darker face in ordinary indoor light
+    /// (Galaxy A03 read 45-67 with the fill light on).
+    func testADarkerFaceInRoomLightIsNotHeld() {
+        for luma: Float in [21, 30, 45, 67] {
+            let face = FaceRegionQuality(meanLuma: luma, clippedHighRatio: 0, clippedLowRatio: 0.02, sharpness: 60)
+            var guide = CaptureGuide()
+            var t = 0.0
+            var snap = GuideSnapshot.initial
+            while t < 3.5 { snap = guide.update(good(at: t) { $0.face = face }); t += 1.0 / 30 }
+            XCTAssertFalse(snap.tooDark, "luma \(luma)")
+            XCTAssertTrue(snap.allPass, "luma \(luma): the scan may start")
+        }
+    }
+
+    /// A running scan isn't held (the A03 completed one at face luma 18-22).
+    func testARunningScanIsNotHeldByTheDark() {
+        let dim = FaceRegionQuality(meanLuma: 18, clippedHighRatio: 0, clippedLowRatio: 0.3, sharpness: 60)
+        var guide = CaptureGuide()
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        while t < 2.0 { snap = guide.update(good(at: t) { $0.face = dim }, scanning: true); t += 1.0 / 30 }
+        XCTAssertFalse(snap.tooDark)
+        XCTAssertTrue(snap.allPass)
+    }
+
+    func testAChallengeIsNotHeldByTheDark() {
+        let black = FaceRegionQuality(meanLuma: 7, clippedHighRatio: 0, clippedLowRatio: 0.9, sharpness: 60)
+        var guide = CaptureGuide()
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        while t < 2.0 {
+            snap = guide.update(good(at: t) { $0.face = black; $0.yaw = 25 }, challenge: .turnSideways)
+            t += 1.0 / 30
+        }
+        XCTAssertFalse(snap.tooDark)
+        XCTAssertTrue(snap.allPass, "the dark head turn flowed on device")
+    }
+
     // MARK: Pose from the transformation matrix
 
     private func rotation(yaw: Double = 0, pitch: Double = 0, roll: Double = 0) -> (Int, Int) -> Double {
@@ -448,13 +594,12 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertEqual(d, .default)
         XCTAssertEqual(d.ring, CaptureColors.RGB(hex: 0x4F7CFF))
         // A readable brand colour is used.
-        let custom = CaptureColors.resolve(AppearanceCapture(ring: "#00D4AA"))
+        let custom = CaptureColors.resolve(FlowAppearance(capture: AppearanceCapture(ring: "#00D4AA")))
         XCTAssertEqual(custom.ring, CaptureColors.RGB(hex: 0x00D4AA))
-        // Navy on the dark scrim is under 3:1: back to the default.
+        // Navy on the dark scrim is under 3:1: back to the default (no primary set).
         XCTAssertLessThan(CaptureColors.RGB(hex: 0x1A237E).contrast(against: CaptureColors.scrim), 3)
-        let navy = CaptureColors.resolve(AppearanceCapture(ring: "#1A237E", contourStart: "nope", warning: "#FF0000"))
+        let navy = CaptureColors.resolve(FlowAppearance(capture: AppearanceCapture(ring: "#1A237E", contourStart: "nope", warning: "#FF0000")))
         XCTAssertEqual(navy.ring, CaptureColors.default.ring)
-        XCTAssertEqual(navy.contourStart, CaptureColors.default.contourStart)
         XCTAssertEqual(navy.warning, CaptureColors.RGB(hex: 0xFF0000))
     }
 

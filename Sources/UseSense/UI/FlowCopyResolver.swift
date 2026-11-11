@@ -20,17 +20,32 @@ public enum FlowCopyResolver {
     // `nonisolated(unsafe)` documents that main-thread-only contract while
     // keeping the screens' `text(...)` lookups callable from their existing
     // (non-isolated) static contexts.
+    // The capture gate reads capture copy off the main thread, so reads and
+    // writes go through a lock.
     nonisolated(unsafe) private static var _current: FlowCopy?
+    nonisolated(unsafe) private static var _displayName: String?
+    private static let lock = NSLock()
 
     /// The merged copy currently driving the runner. `nil` = built-in copy.
-    public static var current: FlowCopy? { _current }
+    public static var current: FlowCopy? { lock.lock(); defer { lock.unlock() }; return _current }
+
+    /// The resolved `display_name` (`{app}` in capture copy). nil = the host app's name.
+    static var displayName: String? { lock.lock(); defer { lock.unlock() }; return _displayName }
 
     @MainActor public static func set(_ copy: FlowCopy?) {
-        _current = copy
+        lock.lock(); _current = copy; lock.unlock()
+        CaptureBrandStore.shared.bump()
+    }
+
+    @MainActor static func setDisplayName(_ name: String?) {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        lock.lock(); _displayName = (trimmed?.isEmpty ?? true) ? nil : trimmed; lock.unlock()
+        CaptureBrandStore.shared.bump()
     }
 
     @MainActor public static func reset() {
-        _current = nil
+        lock.lock(); _current = nil; _displayName = nil; lock.unlock()
+        CaptureBrandStore.shared.bump()
     }
 
     // MARK: Lookup

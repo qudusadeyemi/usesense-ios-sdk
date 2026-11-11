@@ -66,6 +66,18 @@ public final class UseSenseSession: @unchecked Sendable {
     }
     var brandDisplayName: String? { sessionData?.branding?.displayName }
 
+    /// The capture needed the fill light (it stays on for the rest of it):
+    /// the movement turns it back on after the sheet.
+    var guidedFillLightOn: Bool {
+        guideLock.lock(); defer { guideLock.unlock() }
+        return guide.fillLightSince != nil
+    }
+
+    /// Session-mode copy: code (SDK init) over the dashboard copy, per field.
+    var brandingCopy: FlowCopy? {
+        FlowCopy.merge(high: config.branding?.copy, low: sessionData?.branding?.copy)
+    }
+
     /// A session handed in by the Flows runner or the hosted page. Its outcome
     /// is settled on the server when it completes, so the result screen offers
     /// no in-place "Try Again" (a Flow's retries follow its own policy).
@@ -2531,6 +2543,9 @@ extension UseSenseSession {
         } else {
             contourField.noFace(at: time)
             coverSegmenter.clear()
+            // Dark-room fallback: how bright the middle of the frame is.
+            observation.frameLuma = qualityAnalyzer.analyzeFaceRegion(
+                pixelBuffer, faceRect: NormalizedRect(x: 0.2, y: 0.2, w: 0.6, h: 0.6))?.meanLuma
         }
 
         let isAlign: Bool
@@ -2542,6 +2557,8 @@ extension UseSenseSession {
         if DebugCaptureRig.forcedState != nil { shutter = false }
         #endif
 
+        // Too dark to scan: no shutter either (the light hint stays up).
+        if latestGuide.tooDark { shutter = false }
         guideLock.lock()
         let dt = latestGuideFrameTime.isFinite ? min(0.25, max(0, time - latestGuideFrameTime)) : 0
         latestGuideFrameTime = time
@@ -2577,6 +2594,9 @@ extension UseSenseSession {
                 + " pitch=\(observation.pitch.map { String(format: "%.1f", $0) } ?? "-")"
                 + " roll=\(observation.roll.map { String(format: "%.1f", $0) } ?? "-")"
                 + " luma=\(f.map { String(format: "%.0f", $0.meanLuma) } ?? "-")"
+                + " frameLuma=\(observation.frameLuma.map { String(format: "%.0f", $0) } ?? "-")"
+                + " fill=\(snapshot.fillLight ? "on" : "off")"
+                + (snapshot.tooDark ? " tooDark=hold" : "")
                 + " sharp=\(f.map { String(format: "%.1f", $0.sharpness) } ?? "-")"
                 + " jitter=\(e.jitter.map { String(format: "%.3f", $0) } ?? "-")"
                 + " cover=\(observation.cover.map { String(format: "%.2f/%.2f", $0.bodySkin, $0.other) } ?? (observation.coverPending ? "pending" : "-"))"

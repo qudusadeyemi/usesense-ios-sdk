@@ -46,22 +46,30 @@ struct GateHint: Equatable, Sendable {
     let subtitle: String?
     let icon: Icon
 
-    static let showFace = GateHint(check: .faceFound, title: "Show your face in the oval", subtitle: nil, icon: .face)
-    static let onePerson = GateHint(check: .onePerson, title: "Only you in the picture", subtitle: nil, icon: .people)
+    // Titles read `copy.capture.guidance` first (BRAND-v1 section 5); the
+    // defaults are the SPEC v1.1 copy.
+    private typealias T = CaptureText
+    static var showFace: GateHint { GateHint(check: .faceFound, title: T.text(\.capture?.guidance?.showFace, "Show your face in the oval"), subtitle: nil, icon: .face) }
+    static var onePerson: GateHint { GateHint(check: .onePerson, title: T.text(\.capture?.guidance?.onePerson, "Only you in the picture"), subtitle: nil, icon: .people) }
     /// COVER-v1: a hand or an object over the face.
-    static let uncovered = GateHint(check: .covered, title: "Keep your face uncovered", subtitle: nil, icon: .covered)
-    static let centre = GateHint(check: .inFrame, title: "Move your face to the centre", subtitle: nil, icon: .centre)
-    static let moveCloser = GateHint(check: .distance, title: "Move a little closer", subtitle: nil, icon: .closer)
-    static let moveBack = GateHint(check: .distance, title: "Move back a little", subtitle: nil, icon: .back)
+    static var uncovered: GateHint { GateHint(check: .covered, title: T.text(\.capture?.guidance?.covered, "Keep your face uncovered"), subtitle: nil, icon: .covered) }
+    static var centre: GateHint { GateHint(check: .inFrame, title: T.text(\.capture?.guidance?.centre, "Move your face to the centre"), subtitle: nil, icon: .centre) }
+    static var moveCloser: GateHint { GateHint(check: .distance, title: T.text(\.capture?.guidance?.closer, "Move a little closer"), subtitle: nil, icon: .closer) }
+    static var moveBack: GateHint { GateHint(check: .distance, title: T.text(\.capture?.guidance?.back, "Move back a little"), subtitle: nil, icon: .back) }
     /// Spec v1.2.1: in-frame fails on a well-placed face that is too close.
-    static let moveBackToFit = GateHint(check: .inFrame, title: "Move back a little", subtitle: nil, icon: .back)
-    static let lookStraight = GateHint(check: .pose, title: "Look straight ahead", subtitle: nil, icon: .pose)
-    static let faceALight = GateHint(check: .light, title: "Find more light", subtitle: "Face a window or lamp", icon: .light)
-    static let tooBright = GateHint(check: .light, title: "Too much light behind you",
-                                    subtitle: "Turn away from the window", icon: .light)
-    static let holdSteady = GateHint(check: .sharpness, title: "Hold your phone steady", subtitle: nil, icon: .steady)
-    static let eyesOpen = GateHint(check: .eyesOpen, title: "Keep your eyes open", subtitle: nil, icon: .eyes)
-    static let holdStill = GateHint(check: .stillness, title: "Hold still", subtitle: nil, icon: .still)
+    static var moveBackToFit: GateHint { GateHint(check: .inFrame, title: T.text(\.capture?.guidance?.back, "Move back a little"), subtitle: nil, icon: .back) }
+    static var lookStraight: GateHint { GateHint(check: .pose, title: T.text(\.capture?.guidance?.straight, "Look straight ahead"), subtitle: nil, icon: .pose) }
+    static var faceALight: GateHint {
+        GateHint(check: .light, title: T.text(\.capture?.guidance?.dark, "Find more light"),
+                 subtitle: T.text(\.capture?.guidance?.darkHint, "Face a window or lamp"), icon: .light)
+    }
+    static var tooBright: GateHint {
+        GateHint(check: .light, title: T.text(\.capture?.guidance?.bright, "Too much light behind you"),
+                 subtitle: T.text(\.capture?.guidance?.brightHint, "Turn away from the window"), icon: .light)
+    }
+    static var holdSteady: GateHint { GateHint(check: .sharpness, title: T.text(\.capture?.guidance?.blur, "Hold your phone steady"), subtitle: nil, icon: .steady) }
+    static var eyesOpen: GateHint { GateHint(check: .eyesOpen, title: T.text(\.capture?.guidance?.eyes, "Keep your eyes open"), subtitle: nil, icon: .eyes) }
+    static var holdStill: GateHint { GateHint(check: .stillness, title: T.text(\.capture?.guidance?.holdStill, "Hold still"), subtitle: nil, icon: .still) }
 }
 
 /// Pass thresholds. Starting points from the spec, to tune on session data.
@@ -158,6 +166,9 @@ struct GateObservation: Sendable {
     var coverPending = false
     /// Six face regions for the change watch (scan only).
     var regions: FaceRegions? = nil
+    /// No face found: mean luma of the middle of the frame (where the face
+    /// should be), so a room too dark to find a face still gets the fill light.
+    var frameLuma: Float? = nil
 
     static func noFace(at time: TimeInterval) -> GateObservation {
         GateObservation(time: time, faceCount: 0, anchors: [])
@@ -174,6 +185,9 @@ struct GuideSnapshot: Equatable, Sendable {
     var fillLight: Bool
     /// Checks failing on this frame (debug chips).
     var failing: Set<GateCheck>
+    /// The face is too dark to scan (SPEC v1.7): no auto start, no shutter,
+    /// a running scan pauses; the light hint is the only hint.
+    var tooDark = false
 
     static let initial = GuideSnapshot(allPass: false, hint: nil, fillLight: false, failing: Set(GateCheck.allCases))
 }
@@ -317,8 +331,12 @@ struct QualityGate: Sendable {
             if e.light != nil {
                 e.failing[.light] = e.light == .tooDark ? .faceALight : .tooBright
             }
-            // Sharpness is judged in every light (light no longer blocks).
-            if face.sharpness < t.minFaceSharpness {
+            // Sharpness is judged in every light (light no longer blocks),
+            // but not while a challenge asks the head to move: a turning
+            // head in a dark room blurs every frame (Android A03 run). The
+            // scan and Speak Digits (no movement) still check it.
+            let moving = challenge.map { !$0.checksStillness } ?? false
+            if face.sharpness < t.minFaceSharpness, !moving {
                 e.failing[.sharpness] = .holdSteady
             }
         } else {
@@ -453,15 +471,35 @@ struct CaptureGuide: Sendable {
     var hints = HintScheduler()
     /// How long the fill light gets before "Face a light" is shown.
     var fillLightSettle: TimeInterval = 1.5
+    /// No face and the middle of the frame below this luma: too dark to find
+    /// a face, so the fill light comes on anyway (same floor as the face).
+    var darkFrameLuma: Float = 70
+    /// Too dark to scan (SPEC v1.7, user decision 2026-11-11): face-box mean
+    /// luma below this holds the start on align (no auto start, no shutter)
+    /// and the only hint is "Find more light". A running scan isn't held:
+    /// the Galaxy A03 scanned fine at 18-22. iPhone dark-room run: ~7 with the fill
+    /// light on, and the scan dropped 15 times (sharpness, covered-face watch
+    /// reading noise). A darker face in ordinary indoor light reads 45-67
+    /// (Galaxy A03), so this floor only catches near-black faces.
+    var minScanFaceLuma: Float = 20
+    /// Released once the face holds this luma for `tooDarkRelease` (same
+    /// level: the A03 hovered at 18-24 with the fill light, so a higher
+    /// release level could hold it for good; the time gives the stability).
+    var releaseScanFaceLuma: Float = 20
+    var tooDarkRelease: TimeInterval = 0.5
 
     private var darkSince: TimeInterval?
     private(set) var fillLightSince: TimeInterval?
+    private var tooDarkLatched = false
+    private var brightSince: TimeInterval?
     private(set) var lastEvaluation = QualityGate.Evaluation()
 
     mutating func reset(keepFillLight: Bool = false) {
         gate.reset()
         hints.reset()
         darkSince = nil
+        tooDarkLatched = false
+        brightSince = nil
         if !keepFillLight { fillLightSince = nil }
     }
 
@@ -479,7 +517,9 @@ struct CaptureGuide: Sendable {
         // Fill light first: once the face has been too dark for the hint
         // delay, the screen becomes a fill light. It stays on for the rest of
         // the capture (turning it off would make the face dark again).
-        if e.light == .tooDark {
+        // A room too dark to find a face: judge the middle of the frame.
+        let darkNoFace = o.faceCount == 0 && (o.frameLuma.map { $0 < darkFrameLuma } ?? false)
+        if e.light == .tooDark || darkNoFace {
             if darkSince == nil { darkSince = o.time }
             // Frozen during a scan (COVER-v1): decided before it starts, no
             // toggle until it ends, so the change watch's baseline holds.
@@ -496,15 +536,49 @@ struct CaptureGuide: Sendable {
         if e.light == .tooDark, let since = fillLightSince, o.time - since < fillLightSettle {
             hintable[.light] = nil
         }
+        // Still no face once the light has settled: the room is the problem,
+        // so ask for light rather than for a face (silent while it settles).
+        // (With no face every check fails with "Show your face", so the whole
+        // set is replaced.)
+        if darkNoFace, !scanning, !hintable.isEmpty {
+            let settled = fillLightSince.map { o.time - $0 >= fillLightSettle } ?? false
+            hintable = settled ? [.faceFound: .faceALight] : [:]
+        }
+        // Too dark to scan, on align only (a running scan and a movement are
+        // not held: both completed in the dark on device). Latched below the
+        // floor, released after the face holds the release level for
+        // `tooDarkRelease`; no face keeps the latch.
+        if !scanning, let face = o.face {
+            if face.meanLuma < minScanFaceLuma {
+                tooDarkLatched = true
+                brightSince = nil
+            } else if tooDarkLatched {
+                if face.meanLuma >= releaseScanFaceLuma {
+                    if brightSince == nil { brightSince = o.time }
+                    if let since = brightSince, o.time - since >= tooDarkRelease { tooDarkLatched = false; brightSince = nil }
+                } else {
+                    brightSince = nil
+                }
+            }
+        }
+        let tooDark = !scanning && tooDarkLatched
+        if tooDark {
+            // Darkness is the cause: only the light hint (silent while the
+            // fill light comes on and settles).
+            // Silent while the fill light comes on (0.4 s) and settles.
+            let waiting = fillLightSince.map { o.time - $0 < fillLightSettle } ?? true
+            hintable = waiting ? [:] : [.light: .faceALight]
+        }
         lastEvaluation = e
         if (fillLightSince != nil) != lightWasOn { gate.lightChanged(at: o.time, scanning: scanning) }
 
         let hint = hints.update(failing: hintable, at: o.time)
         return GuideSnapshot(
-            allPass: e.blocking.isEmpty,
+            allPass: e.blocking.isEmpty && !tooDark,
             hint: hint,
             fillLight: fillLightSince != nil,
-            failing: Set(e.failing.keys)
+            failing: Set(e.failing.keys),
+            tooDark: tooDark
         )
     }
 }
