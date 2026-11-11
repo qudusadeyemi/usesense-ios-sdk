@@ -102,6 +102,8 @@ struct GuidedChallengeView<Camera: View>: View {
     var meter: [Double] = []
     /// The short tick after the check.
     var done = false
+    /// The fill light veil (the scan needed it).
+    var fillLight = false
     /// Help text, when not the challenge's own.
     var help: String?
     let onBack: () -> Void
@@ -125,6 +127,7 @@ struct GuidedChallengeView<Camera: View>: View {
                 camera.frame(width: size.width, height: size.height)
                 CaptureTokens.cam.opacity(CaptureTokens.feedDimDuringScan)
                     .allowsHitTesting(false)
+                if fillLight { FillLightVeil().allowsHitTesting(false) }
 
                 ring(oval)
 

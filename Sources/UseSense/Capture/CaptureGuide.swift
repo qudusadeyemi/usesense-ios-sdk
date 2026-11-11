@@ -328,8 +328,12 @@ struct QualityGate: Sendable {
             if e.light != nil {
                 e.failing[.light] = e.light == .tooDark ? .faceALight : .tooBright
             }
-            // Sharpness is judged in every light (light no longer blocks).
-            if face.sharpness < t.minFaceSharpness {
+            // Sharpness is judged in every light (light no longer blocks),
+            // but not while a challenge asks the head to move: a turning
+            // head in a dark room blurs every frame (Android A03 run). The
+            // scan and Speak Digits (no movement) still check it.
+            let moving = challenge.map { !$0.checksStillness } ?? false
+            if face.sharpness < t.minFaceSharpness, !moving {
                 e.failing[.sharpness] = .holdSteady
             }
         } else {

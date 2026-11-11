@@ -68,7 +68,14 @@ enum ExtraCheckCopy {
     static var done: String { T.text(\.capture?.extraCheck?.done, "Done") }
     static var showFace: String { T.text(\.capture?.guidance?.showFace, "Show your face in the oval") }
     static var centreFace: String { T.text(\.capture?.guidance?.centre, "Move your face to the centre") }
-    static var keepTurning: String { T.text(\.capture?.extraCheck?.keepTurning, "Then keep turning") }
+    /// Paused mid Head Turn: which way to carry on (Android A03 dark-room run).
+    static func pausedTurn(_ d: HeadDirection) -> String {
+        switch d {
+        case .left, .right: return T.text(\.capture?.extraCheck?.pausedTurnSide, "Then keep turning \(phrase(d))", side: phrase(d))
+        case .up, .down: return T.text(\.capture?.extraCheck?.pausedTurnSide, "Then keep tilting your head \(phrase(d))", side: phrase(d))
+        case .center: return T.text(\.capture?.extraCheck?.pausedLookCentre, "Then look straight ahead")
+        }
+    }
     static var dotWaits: String { T.text(\.capture?.extraCheck?.dotWaits, "The dot will wait for you") }
     static var thenSayNumbers: String { T.text(\.capture?.extraCheck?.thenSayNumbers, "Then say the numbers") }
     static var followDot: String { T.text(\.capture?.extraCheck?.followDot, "Follow the dot with your head") }
@@ -583,7 +590,7 @@ struct ChallengeRunner {
             } else if paused {
                 d.tone = .warning
                 d.title = pauseTitle(ExtraCheckCopy.centreFace)
-                d.subtitle = ExtraCheckCopy.keepTurning
+                d.subtitle = ExtraCheckCopy.pausedTurn(step.direction)
             } else if missedNoticeShowing {
                 d.tone = .warning
                 d.title = ExtraCheckCopy.nextOne

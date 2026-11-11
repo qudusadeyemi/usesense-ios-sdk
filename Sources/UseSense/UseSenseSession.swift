@@ -66,6 +66,13 @@ public final class UseSenseSession: @unchecked Sendable {
     }
     var brandDisplayName: String? { sessionData?.branding?.displayName }
 
+    /// The capture needed the fill light (it stays on for the rest of it):
+    /// the movement turns it back on after the sheet.
+    var guidedFillLightOn: Bool {
+        guideLock.lock(); defer { guideLock.unlock() }
+        return guide.fillLightSince != nil
+    }
+
     /// Session-mode copy: code (SDK init) over the dashboard copy, per field.
     var brandingCopy: FlowCopy? {
         FlowCopy.merge(high: config.branding?.copy, low: sessionData?.branding?.copy)

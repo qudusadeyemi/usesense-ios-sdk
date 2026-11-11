@@ -12,7 +12,7 @@ import Foundation
 // Keys iOS adds beyond the contract list (report to the other platforms):
 //   primer.twoStepsDigitsBody
 //   guidance.helpTitle, guidance.helpBody
-//   extraCheck.keepTurning, keepFollowing, dotWaits, pointAtDot, thenSayNumbers,
+//   extraCheck.pausedTurnSide ({side}), pausedLookCentre (as Android), keepFollowing, dotWaits, pointAtDot, thenSayNumbers,
 //     cantHear, speakLouder, retryStep, slowly, further,
 //     helpTitle, helpHeadTurn, helpFollowDot, helpSpeakDigits
 //   result.retryTips (array)
@@ -87,7 +87,10 @@ public struct CaptureCopy: Codable, Equatable, Sendable {
         public var lookCentre: String?
         public var tryNext: String?
         public var done: String?
-        public var keepTurning: String?
+        /// Paused Head Turn detail; `{side}` = the side asked.
+        public var pausedTurnSide: String?
+        /// Paused on the centre step.
+        public var pausedLookCentre: String?
         public var keepFollowing: String?
         public var dotWaits: String?
         public var pointAtDot: String?

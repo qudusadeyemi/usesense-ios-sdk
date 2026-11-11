@@ -262,6 +262,46 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertEqual(snap.hint, .showFace, "a paused scan still says what holds it")
     }
 
+    /// Android A03 dark-room run: a turning head in the dark blurs every
+    /// frame, so sharpness must not hold a movement. Speak Digits and the
+    /// scan still check it.
+    func testSharpnessGivesWayWhileTurningOnly() {
+        let blurry = FaceRegionQuality(meanLuma: 120, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 5)
+        var gate = QualityGate()
+        let turning = gate.evaluate(good(at: 0) { $0.face = blurry }, scanning: true, challenge: .turnSideways)
+        XCTAssertNil(turning.failing[.sharpness])
+        var gate2 = QualityGate()
+        let dot = gate2.evaluate(good(at: 0) { $0.face = blurry }, scanning: true, challenge: .followDot)
+        XCTAssertNil(dot.failing[.sharpness])
+        var gate3 = QualityGate()
+        let digits = gate3.evaluate(good(at: 0) { $0.face = blurry }, scanning: true, challenge: .digits)
+        XCTAssertEqual(digits.failing[.sharpness], .holdSteady)
+        var gate4 = QualityGate()
+        let scan = gate4.evaluate(good(at: 0) { $0.face = blurry }, scanning: true)
+        XCTAssertEqual(scan.failing[.sharpness], .holdSteady)
+    }
+
+    /// Android A03: the fill light coming on made the movement wait for a
+    /// cover re-baseline ("Hold still"). On iOS the light-change hold is a
+    /// scan-only rule and round 2 keeps the light's state: check it stays so.
+    func testFillLightFromTheScanDoesNotHoldTheMovement() {
+        var guide = CaptureGuide()
+        let dark = FaceRegionQuality(meanLuma: 40, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 50)
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        while t < 1.0 { snap = guide.update(good(at: t) { $0.face = dark }); t += 1.0 / 30 }
+        XCTAssertTrue(snap.fillLight)
+        guide.reset(keepFillLight: true)   // round 2
+        let start = t
+        while t < start + 2.0 {
+            snap = guide.update(good(at: t) { $0.yaw = 30; $0.face = dark }, challenge: .turnSideways)
+            t += 1.0 / 30
+        }
+        XCTAssertTrue(snap.fillLight, "still on for the movement")
+        XCTAssertTrue(snap.allPass, "nothing holds the turn")
+        XCTAssertNotEqual(snap.hint, .holdStill)
+    }
+
     // MARK: Pose from the transformation matrix
 
     private func rotation(yaw: Double = 0, pitch: Double = 0, roll: Double = 0) -> (Int, Int) -> Double {

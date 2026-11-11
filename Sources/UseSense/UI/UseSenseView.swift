@@ -101,7 +101,8 @@ public struct UseSenseView: View {
             case .challenge(let spec):
                 if viewModel.extraCheckOnScanScreen {
                     GuidedChallengeView(camera: cameraLayer, display: viewModel.challenge,
-                                        meter: viewModel.meter, onBack: viewModel.askToLeave)
+                                        meter: viewModel.meter, fillLight: viewModel.challengeFillLight,
+                                        onBack: viewModel.askToLeave)
                 } else {
                     ZStack {
                         cameraLayer
@@ -123,7 +124,7 @@ public struct UseSenseView: View {
 
             case .extraCheckDone:
                 GuidedChallengeView(camera: cameraLayer, display: viewModel.challenge, done: true,
-                                    onBack: viewModel.askToLeave)
+                                    fillLight: viewModel.challengeFillLight, onBack: viewModel.askToLeave)
 
             case .micUnavailable:
                 GuidedPageView(content: GuidedScreen.micNeeded.content(),
@@ -596,6 +597,8 @@ final class UseSenseViewModel: ObservableObject, ColourTintHost {
     @Published var meter: [Double] = Array(repeating: 0, count: ExtraCheckTokens.meterBars)
     @Published var inlineStepUp = InlineStepUpDisplay.preparing
     @Published var leavePrompt = false
+    /// The fill light during the movement (the scan needed it).
+    @Published var challengeFillLight = false
     @Published var fallbackBusy = false
     /// "Try again" taps used from the reject screen in this verification.
     private var rejectRetriesUsed = 0
@@ -757,6 +760,12 @@ final class UseSenseViewModel: ObservableObject, ColourTintHost {
             scan = ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: 0, completed: false)
             readyHaptic.prepare()
         case .challenge(let spec):
+            // The scan needed the fill light: on again for the movement (the
+            // sheet before it turned it off). Android A03 dark-room run.
+            if extraCheckOnScanScreen, session.guidedFillLightOn {
+                fillLight.activate()
+                challengeFillLight = true
+            }
             if extraCheckOnScanScreen, case .challenge = previous {} else {
                 challenge = ChallengeRunner(spec: spec)?.display() ?? .placeholder
                 meter = Array(repeating: 0, count: ExtraCheckTokens.meterBars)
@@ -788,6 +797,10 @@ final class UseSenseViewModel: ObservableObject, ColourTintHost {
             }
         default:
             fillLight.restore()
+        }
+        switch newState {
+        case .challenge, .extraCheckDone: break
+        default: challengeFillLight = false
         }
         if newState.isTerminal || newState.isIdle {
             if leavePrompt { session.setChallengeHeld(false) }

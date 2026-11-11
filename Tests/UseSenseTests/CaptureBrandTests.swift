@@ -340,6 +340,19 @@ final class CaptureBrandTests: XCTestCase {
         XCTAssertEqual(ExtraCheckCopy.sheetBody(for: DebugFixtures.headTurn(["right", "left"])), "Turn to the right first.")
     }
 
+    func testPausedTurnCopyNamesTheSide() {
+        XCTAssertEqual(ExtraCheckCopy.pausedTurn(.left), "Then keep turning to the left")
+        XCTAssertEqual(ExtraCheckCopy.pausedTurn(.up), "Then keep tilting your head up")
+        XCTAssertEqual(ExtraCheckCopy.pausedTurn(.down), "Then keep tilting your head down")
+        XCTAssertEqual(ExtraCheckCopy.pausedTurn(.center), "Then look straight ahead")
+        var xc = CaptureCopy.ExtraCheck()
+        xc.pausedTurnSide = "Keep going {side}"
+        xc.pausedLookCentre = "Back to the middle"
+        FlowCopyResolver.set(FlowCopy(capture: CaptureCopy(extraCheck: xc)))
+        XCTAssertEqual(ExtraCheckCopy.pausedTurn(.right), "Keep going to the right")
+        XCTAssertEqual(ExtraCheckCopy.pausedTurn(.center), "Back to the middle")
+    }
+
     func testCaptureCopyMergeAndDecode() throws {
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(#"""
         {"capture":{"primer":{"twoStepsTips":["A","B"],"start":"Go"},"leave":{"title":"Leave?"},"upload":{"title":5}}}
