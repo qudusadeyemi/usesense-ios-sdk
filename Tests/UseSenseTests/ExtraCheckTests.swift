@@ -181,6 +181,7 @@ final class ExtraCheckTests: XCTestCase {
     // MARK: Follow Dot (the dot waits for the head)
 
     /// Device yaw/pitch for a head pointing right/up by these degrees.
+    @discardableResult
     private func point(_ r: inout ChallengeRunner, right: Double, up: Double, _ seconds: TimeInterval) -> ChallengeDisplay {
         run(&r, seconds, yaw: right * -ChallengeRunner.leftYawSign, pitch: up * ChallengeRunner.upPitchSign)
     }
@@ -758,6 +759,83 @@ final class ExtraCheckTests: XCTestCase {
         hold(&r, .left, ChallengeRunner.hintAfter * 2 + 0.3, deg: 5)
         XCTAssertEqual(r.stepLog.first?.reached, false)
         XCTAssertNil(r.stepLog.first?.reachedAt)
+    }
+
+    // MARK: First move (step_events v2)
+
+    private func events(_ log: [ChallengeStepLog]) -> [[String: Any]] {
+        let builder = ChallengeResponseBuilder()
+        builder.setStepEvents(log, start: Date(timeIntervalSince1970: 1000))
+        let spec = ChallengeSpecWrapper.headTurn(HeadTurnChallenge(type: "head_turn", seed: "s", sequence: [],
+                                                                    totalDurationMs: 0, framesPerStep: nil, captureFpsHint: nil))
+        return builder.build(challenge: spec)["step_events"] as? [[String: Any]] ?? []
+    }
+
+    func testAHeadThatTurnsTheRightWayFirstMovesTowardTheTarget() {
+        var r = headTurn([.left, .center])
+        hold(&r, .center, 0.5)              // prompted, still
+        hold(&r, .left, 0.2, deg: 3)        // under 4 degrees: not a move yet
+        hold(&r, .left, 0.2, deg: 6)        // the first move, toward the left
+        hold(&r, .left, 0.75)               // reached
+        hold(&r, .center, 0.75)             // back to the centre
+        let log = r.stepLog
+        XCTAssertEqual(log.map(\.reached), [true, true])
+        XCTAssertEqual(log[0].firstMoveDeg ?? .nan, 6, accuracy: 0.01)
+        XCTAssertEqual(Double(log[0].firstMoveMs ?? -1), 700, accuracy: 60)
+        XCTAssertEqual(log[0].maxAwayDeg, 0)
+        XCTAssertEqual(log[1].firstMoveDeg ?? .nan, 25, accuracy: 0.01, "centre: the distance from straight ahead shrinks")
+        XCTAssertEqual(log[1].maxAwayDeg, 0)
+
+        let e = events(log)
+        XCTAssertEqual(e[0]["first_move_deg"] as? Double, 6)
+        XCTAssertNotNil(e[0]["first_move_ms"] as? Int)
+        XCTAssertEqual(e[0]["max_away_deg"] as? Double, 0)
+    }
+
+    func testAHeadThatMovesAwayFirstIsLoggedNegative() {
+        var r = headTurn([.left, .center])
+        hold(&r, .center, 0.3)
+        hold(&r, .right, 0.2, deg: 8)       // the wrong way first
+        hold(&r, .right, 0.2, deg: 12)      // and further
+        hold(&r, .left, 0.75)               // then the asked side
+        hold(&r, .right, 0.2, deg: 30)      // after reaching: no longer the way there
+        hold(&r, .center, 0.75)
+        let log = r.stepLog
+        XCTAssertEqual(log[0].reached, true)
+        XCTAssertEqual(log[0].firstMoveDeg ?? .nan, -8, accuracy: 0.01)
+        XCTAssertEqual(Double(log[0].firstMoveMs ?? -1), 300, accuracy: 60)
+        XCTAssertEqual(log[0].maxAwayDeg ?? .nan, 12, accuracy: 0.01)
+
+        let e = events(log)
+        XCTAssertEqual(e[0]["first_move_deg"] as? Double, -8)
+        XCTAssertEqual(e[0]["max_away_deg"] as? Double, 12)
+    }
+
+    func testAStillHeadHasNoFirstMove() {
+        var r = headTurn([.left, .center])
+        hold(&r, .center, ChallengeRunner.hintAfter * 2 + 0.3)
+        XCTAssertNil(r.stepLog.first?.firstMoveDeg)
+        XCTAssertNil(r.stepLog.first?.firstMoveMs)
+        XCTAssertEqual(r.stepLog.first?.maxAwayDeg, 0)
+        XCTAssertNil(events(r.stepLog).first?["first_move_deg"])
+    }
+
+    func testFollowDotFirstMoveIsMeasuredFromThePreviousWaypoint() {
+        var r = followDot()   // centre, up-right, left-down, right
+        point(&r, right: 0, up: 0, 1.2)       // waypoint 0: the reference
+        point(&r, right: -8, up: 0, 0.3)      // the dot went right: head left first
+        point(&r, right: 20, up: 15, 1.2)     // then follows
+        point(&r, right: -5, up: 0, 1.2)      // left-down from (20, 15): the right way
+        point(&r, right: 10, up: 0, 1.2)
+        let log = r.stepLog
+        XCTAssertEqual(log.map(\.reached), [true, true, true, true])
+        XCTAssertNil(log[0].firstMoveDeg, "waypoint 0 has nothing to move toward")
+        XCTAssertNil(log[0].maxAwayDeg)
+        XCTAssertEqual(log[1].firstMoveDeg ?? .nan, -8, accuracy: 0.01)
+        XCTAssertEqual(log[1].maxAwayDeg ?? .nan, 8, accuracy: 0.01)
+        XCTAssertEqual(log[2].firstMoveDeg ?? .nan, 25, accuracy: 0.01, "moved with the dot (left)")
+        XCTAssertEqual(log[2].maxAwayDeg, 0)
+        XCTAssertNil(events(log)[0]["max_away_deg"])
     }
 
     // MARK: Which frames count for a step (device finding)

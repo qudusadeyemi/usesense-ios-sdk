@@ -4,6 +4,27 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.12.0] - 2026-11-11
+
+### Added
+
+- **Challenge `step_events` v2: the first move.** Each Head Turn step and
+  each Follow Dot waypoint after the first now reports how the head first
+  moved, so the server can catch a replayed or looping video that moves the
+  wrong way before the right one. All values are "toward the target"
+  (positive = toward, negative = away), measured from the pose on every
+  frame the camera sees, banked or not:
+  - `first_move_deg`: movement along the step's main axis at the first
+    frame more than 4 degrees from the pose at the prompt (omitted if the
+    head never moved that far).
+  - `first_move_ms`: ms from the prompt to that frame.
+  - `max_away_deg` (>= 0): the furthest the head went away from the target
+    before reaching it (or before the step ended).
+  Head Turn uses yaw for left/right, pitch for up/down, and the distance
+  from straight ahead for centre. Follow Dot uses the axis the dot moved most
+  along from the previous waypoint (x wins ties). Additive: the server
+  records these before it enforces anything.
+
 ## [4.11.0] - 2026-11-11
 
 One release for the extra check (storyboard flows 4 to 6), the LiveSense

@@ -9,7 +9,7 @@ final class ChallengeResponseBuilder: @unchecked Sendable {
     private var completedAt: String?
     private var completed = false
     private var currentStepIndex = 0
-    /// Guided Head Turn: per-step timing (`step_events`), ms since the epoch.
+    /// Guided Head Turn / Follow Dot: per-step timing and first move (`step_events`).
     private var stepEvents: [[String: Any]] = []
     private let lock = NSLock()
 
@@ -45,6 +45,13 @@ final class ChallengeResponseBuilder: @unchecked Sendable {
                 d["reaction_ms"] = Int(((r - e.promptedAt) * 1000).rounded())
             }
             d["outcome"] = e.reached.map { $0 ? "reached" : "timed_out" } ?? "timed"
+            // step_events v2: the first move, toward the target (+) or away (-).
+            let deg = { (v: Double) in (v * 10).rounded() / 10 }
+            if let f = e.firstMoveDeg, let t = e.firstMoveMs {
+                d["first_move_deg"] = deg(f)
+                d["first_move_ms"] = t
+            }
+            if let a = e.maxAwayDeg { d["max_away_deg"] = deg(a) }
             return d
         }
         lock.lock(); stepEvents = events; lock.unlock()
