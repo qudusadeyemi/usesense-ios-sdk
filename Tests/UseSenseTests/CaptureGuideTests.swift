@@ -221,6 +221,47 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertNil(snap.hint)
     }
 
+    /// Device run (2026-11-11): a room too dark to find a face never turned
+    /// the fill light on. The middle of the frame now decides when no face is found.
+    func testNoFaceInADarkFrameTurnsOnFillLight() {
+        var guide = CaptureGuide()
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        func noFace(_ luma: Float?) -> GateObservation {
+            var o = GateObservation.noFace(at: t); o.frameLuma = luma; return o
+        }
+        while t < 0.45 { snap = guide.update(noFace(25)); t += 1.0 / 30 }
+        XCTAssertTrue(snap.fillLight, "dark frame, no face: fill light after the hint delay")
+        while t < 1.5 { snap = guide.update(noFace(25)); t += 1.0 / 30 }
+        XCTAssertNil(snap.hint, "silent while the light settles")
+        while t < 3.5 { snap = guide.update(noFace(30)); t += 1.0 / 30 }
+        XCTAssertEqual(snap.hint, .faceALight, "still no face in the dark: ask for light, not a face")
+
+        // A bright frame with no face is just no face.
+        var bright = CaptureGuide()
+        t = 0
+        while t < 2.0 { snap = bright.update(noFace(140)); t += 1.0 / 30 }
+        XCTAssertFalse(snap.fillLight)
+        XCTAssertEqual(snap.hint, .showFace)
+        // No measurement: unchanged behaviour.
+        var unknown = CaptureGuide()
+        t = 0
+        while t < 2.0 { snap = unknown.update(noFace(nil)); t += 1.0 / 30 }
+        XCTAssertFalse(snap.fillLight)
+    }
+
+    func testDarkFrameDoesNotToggleTheFillLightDuringAScan() {
+        var guide = CaptureGuide()
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        while t < 1.0 {
+            var o = GateObservation.noFace(at: t); o.frameLuma = 20
+            snap = guide.update(o, scanning: true); t += 1.0 / 30
+        }
+        XCTAssertFalse(snap.fillLight, "frozen during a scan (COVER-v1)")
+        XCTAssertEqual(snap.hint, .showFace, "a paused scan still says what holds it")
+    }
+
     // MARK: Pose from the transformation matrix
 
     private func rotation(yaw: Double = 0, pitch: Double = 0, roll: Double = 0) -> (Int, Int) -> Double {

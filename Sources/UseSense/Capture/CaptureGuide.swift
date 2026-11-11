@@ -166,6 +166,9 @@ struct GateObservation: Sendable {
     var coverPending = false
     /// Six face regions for the change watch (scan only).
     var regions: FaceRegions? = nil
+    /// No face found: mean luma of the middle of the frame (where the face
+    /// should be), so a room too dark to find a face still gets the fill light.
+    var frameLuma: Float? = nil
 
     static func noFace(at time: TimeInterval) -> GateObservation {
         GateObservation(time: time, faceCount: 0, anchors: [])
@@ -461,6 +464,9 @@ struct CaptureGuide: Sendable {
     var hints = HintScheduler()
     /// How long the fill light gets before "Face a light" is shown.
     var fillLightSettle: TimeInterval = 1.5
+    /// No face and the middle of the frame below this luma: too dark to find
+    /// a face, so the fill light comes on anyway (same floor as the face).
+    var darkFrameLuma: Float = 70
 
     private var darkSince: TimeInterval?
     private(set) var fillLightSince: TimeInterval?
@@ -487,7 +493,9 @@ struct CaptureGuide: Sendable {
         // Fill light first: once the face has been too dark for the hint
         // delay, the screen becomes a fill light. It stays on for the rest of
         // the capture (turning it off would make the face dark again).
-        if e.light == .tooDark {
+        // A room too dark to find a face: judge the middle of the frame.
+        let darkNoFace = o.faceCount == 0 && (o.frameLuma.map { $0 < darkFrameLuma } ?? false)
+        if e.light == .tooDark || darkNoFace {
             if darkSince == nil { darkSince = o.time }
             // Frozen during a scan (COVER-v1): decided before it starts, no
             // toggle until it ends, so the change watch's baseline holds.
@@ -503,6 +511,14 @@ struct CaptureGuide: Sendable {
         var hintable = scanning ? e.blocking : e.failing
         if e.light == .tooDark, let since = fillLightSince, o.time - since < fillLightSettle {
             hintable[.light] = nil
+        }
+        // Still no face once the light has settled: the room is the problem,
+        // so ask for light rather than for a face (silent while it settles).
+        // (With no face every check fails with "Show your face", so the whole
+        // set is replaced.)
+        if darkNoFace, !scanning, !hintable.isEmpty {
+            let settled = fillLightSince.map { o.time - $0 >= fillLightSettle } ?? false
+            hintable = settled ? [.faceFound: .faceALight] : [:]
         }
         lastEvaluation = e
         if (fillLightSince != nil) != lightWasOn { gate.lightChanged(at: o.time, scanning: scanning) }
