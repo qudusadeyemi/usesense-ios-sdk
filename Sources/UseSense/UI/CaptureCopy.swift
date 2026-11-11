@@ -6,13 +6,13 @@ import Foundation
 // key is optional; a missing or blank value keeps the SDK's shipped English
 // (the defaults live next to each use, byte-identical to before).
 // Placeholders: `{app}` = the resolved display name, else the host app's
-// name; `{side}` = "to the left", "to the right", "up" or "down", as the SDK
-// words it. Unknown placeholders render literally.
+// name; `{side}` = the bare word: "left", "right", "up" or "down" (the
+// preposition lives in the string: "Now to the {side}"). Unknown placeholders render literally.
 //
 // Keys iOS adds beyond the contract list (report to the other platforms):
 //   primer.twoStepsDigitsBody
 //   guidance.helpTitle, guidance.helpBody
-//   extraCheck.pausedTurnSide ({side}), pausedLookCentre (as Android), keepFollowing, dotWaits, pointAtDot, thenSayNumbers,
+//   extraCheck.headTurnNext ({side}), pausedTurnSide ({side}), pausedLookCentre (as Android), keepFollowing, dotWaits, pointAtDot, thenSayNumbers,
 //     cantHear, speakLouder, retryStep, slowly, further,
 //     helpTitle, helpHeadTurn, helpFollowDot, helpSpeakDigits
 //   result.retryTips (array)
@@ -80,11 +80,14 @@ public struct CaptureCopy: Codable, Equatable, Sendable {
         /// The sheet's sentence for every check; `{side}` = the first side asked.
         public var sheetBody: String?
         public var `continue`: String?
-        /// Head Turn step title; `{side}` = the side asked.
+        /// First Head Turn step title ("Turn your head to the {side}").
         public var headTurn: String?
+        /// Later Head Turn step titles ("Now to the {side}").
+        public var headTurnNext: String?
         public var followDot: String?
         public var speakDigits: String?
         public var lookCentre: String?
+        /// Only "Let's try the next one" (after a missed step).
         public var tryNext: String?
         public var done: String?
         /// Paused Head Turn detail; `{side}` = the side asked.

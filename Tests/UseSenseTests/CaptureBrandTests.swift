@@ -334,10 +334,11 @@ final class CaptureBrandTests: XCTestCase {
                        ["Face a window or a lamp", "Hold your phone at eye level"], "all-blank list = default")
         XCTAssertEqual(GateHint.moveCloser.title, "Come closer")
         XCTAssertEqual(CaptureCopyText.ready, "Stay {unknown}", "unknown placeholders stay literal")
-        XCTAssertEqual(ExtraCheckCopy.headTurnTitle(.right, first: false), "Look to the right please")
+        XCTAssertEqual(ExtraCheckCopy.headTurnTitle(.right, first: true), "Look right please", "{side} is the bare word")
+        XCTAssertEqual(ExtraCheckCopy.headTurnTitle(.right, first: false), "Now to the right", "later turns use headTurnNext")
         XCTAssertEqual(ExtraCheckCopy.headTurnTitle(.up, first: true), "Look up please")
         XCTAssertEqual(ExtraCheckCopy.headTurnTitle(.center, first: false), "Now look straight ahead", "centre has its own key")
-        XCTAssertEqual(ExtraCheckCopy.sheetBody(for: DebugFixtures.headTurn(["right", "left"])), "Turn to the right first.")
+        XCTAssertEqual(ExtraCheckCopy.sheetBody(for: DebugFixtures.headTurn(["right", "left"])), "Turn right first.")
     }
 
     func testPausedTurnCopyNamesTheSide() {
@@ -349,8 +350,34 @@ final class CaptureBrandTests: XCTestCase {
         xc.pausedTurnSide = "Keep going {side}"
         xc.pausedLookCentre = "Back to the middle"
         FlowCopyResolver.set(FlowCopy(capture: CaptureCopy(extraCheck: xc)))
-        XCTAssertEqual(ExtraCheckCopy.pausedTurn(.right), "Keep going to the right")
+        XCTAssertEqual(ExtraCheckCopy.pausedTurn(.right), "Keep going right")
         XCTAssertEqual(ExtraCheckCopy.pausedTurn(.center), "Back to the middle")
+    }
+
+    /// BRAND-v1 section 5: `{side}` is the bare word and the preposition is
+    /// in the string, so the contract's own templates render today's English.
+    func testSideIsTheBareWordAndTheEnglishIsUnchanged() {
+        let defaults = [(HeadDirection.left, true), (.right, false), (.up, true), (.down, false), (.center, false)]
+            .map { ExtraCheckCopy.headTurnTitle($0.0, first: $0.1) }
+        let paused = [HeadDirection.left, .right, .up, .center].map(ExtraCheckCopy.pausedTurn)
+        let further = ExtraCheckCopy.furtherHint(.left)
+        XCTAssertEqual(defaults, ["Turn your head to the left", "Now to the right", "Look up", "Now look down", "Now look straight ahead"])
+        XCTAssertEqual(further, "Turn a little further to the left")
+
+        var xc = CaptureCopy.ExtraCheck()
+        xc.headTurn = "Turn your head to the {side}"
+        xc.headTurnNext = "Now to the {side}"
+        xc.pausedTurnSide = "Then keep turning to the {side}"
+        xc.further = "Turn a little further to the {side}"
+        xc.tryNext = "Let's try the next one"
+        FlowCopyResolver.set(FlowCopy(capture: CaptureCopy(extraCheck: xc)))
+        XCTAssertEqual(ExtraCheckCopy.headTurnTitle(.left, first: true), defaults[0])
+        XCTAssertEqual(ExtraCheckCopy.headTurnTitle(.right, first: false), defaults[1])
+        XCTAssertEqual(ExtraCheckCopy.pausedTurn(.left), paused[0])
+        XCTAssertEqual(ExtraCheckCopy.pausedTurn(.right), paused[1])
+        XCTAssertEqual(ExtraCheckCopy.furtherHint(.left), further)
+        XCTAssertEqual(ExtraCheckCopy.nextOne, "Let's try the next one", "tryNext is only the missed-step notice")
+        XCTAssertEqual(ExtraCheckCopy.word(.left), "left")
     }
 
     func testCaptureCopyMergeAndDecode() throws {

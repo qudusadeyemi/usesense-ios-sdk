@@ -71,8 +71,8 @@ enum ExtraCheckCopy {
     /// Paused mid Head Turn: which way to carry on (Android A03 dark-room run).
     static func pausedTurn(_ d: HeadDirection) -> String {
         switch d {
-        case .left, .right: return T.text(\.capture?.extraCheck?.pausedTurnSide, "Then keep turning \(phrase(d))", side: phrase(d))
-        case .up, .down: return T.text(\.capture?.extraCheck?.pausedTurnSide, "Then keep tilting your head \(phrase(d))", side: phrase(d))
+        case .left, .right: return T.text(\.capture?.extraCheck?.pausedTurnSide, "Then keep turning \(phrase(d))", side: word(d))
+        case .up, .down: return T.text(\.capture?.extraCheck?.pausedTurnSide, "Then keep tilting your head \(phrase(d))", side: word(d))
         case .center: return T.text(\.capture?.extraCheck?.pausedLookCentre, "Then look straight ahead")
         }
     }
@@ -111,7 +111,7 @@ enum ExtraCheckCopy {
         case .followDot: fallback = "Keep your face in the oval and follow the dot with your head."
         case .speakPhrase: fallback = "Say the numbers you see out loud. We'll need your microphone."
         }
-        return T.text(\.capture?.extraCheck?.sheetBody, fallback, side: side ?? phrase(.left))
+        return T.text(\.capture?.extraCheck?.sheetBody, fallback, side: side ?? word(.left))
     }
 
     /// Head Turn: the sheet names the first two sides the server asked for.
@@ -122,10 +122,22 @@ enum ExtraCheckCopy {
         let fallback = sides.count == 1
             ? "Slowly turn your head \(phrase(first))."
             : "Slowly turn your head \(phrase(first)), then \(phrase(sides[1]))."
-        return T.text(\.capture?.extraCheck?.sheetBody, fallback, side: phrase(first))
+        return T.text(\.capture?.extraCheck?.sheetBody, fallback, side: word(first))
     }
 
-    /// "to the left", "up", ... (`{side}` in capture copy).
+    /// `{side}` in capture copy: the bare word (BRAND-v1 section 5). The
+    /// preposition lives in the string ("Now to the {side}").
+    static func word(_ d: HeadDirection) -> String {
+        switch d {
+        case .left: return "left"
+        case .right: return "right"
+        case .up: return "up"
+        case .down: return "down"
+        case .center: return "centre"
+        }
+    }
+
+    /// "to the left", "up", ... (the shipped English).
     static func phrase(_ d: HeadDirection) -> String {
         switch d {
         case .left: return "to the left"
@@ -145,7 +157,9 @@ enum ExtraCheckCopy {
         case .down: fallback = first ? "Look down" : "Now look down"
         case .center: return T.text(\.capture?.extraCheck?.lookCentre, "Now look straight ahead")
         }
-        return T.text(\.capture?.extraCheck?.headTurn, fallback, side: phrase(d))
+        // First turn: `headTurn`; later turns: `headTurnNext` ("Now to the {side}").
+        let key: KeyPath<FlowCopy, String?> = first ? \.capture?.extraCheck?.headTurn : \.capture?.extraCheck?.headTurnNext
+        return T.text(key, fallback, side: word(d))
     }
 
     /// The retry hint: "Turn a little further to the left".
@@ -157,7 +171,7 @@ enum ExtraCheckCopy {
         case .down: fallback = "Look a little further down"
         case .center: return T.text(\.capture?.guidance?.straight, "Look straight at the screen")
         }
-        return T.text(\.capture?.extraCheck?.further, fallback, side: phrase(d))
+        return T.text(\.capture?.extraCheck?.further, fallback, side: word(d))
     }
 }
 
