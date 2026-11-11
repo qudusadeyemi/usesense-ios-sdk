@@ -2557,6 +2557,8 @@ extension UseSenseSession {
         if DebugCaptureRig.forcedState != nil { shutter = false }
         #endif
 
+        // Too dark to scan: no shutter either (the light hint stays up).
+        if latestGuide.tooDark { shutter = false }
         guideLock.lock()
         let dt = latestGuideFrameTime.isFinite ? min(0.25, max(0, time - latestGuideFrameTime)) : 0
         latestGuideFrameTime = time

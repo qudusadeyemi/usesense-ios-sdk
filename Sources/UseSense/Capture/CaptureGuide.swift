@@ -185,6 +185,9 @@ struct GuideSnapshot: Equatable, Sendable {
     var fillLight: Bool
     /// Checks failing on this frame (debug chips).
     var failing: Set<GateCheck>
+    /// The face is too dark to scan at all (align only): no auto start, no
+    /// shutter, the light hint stays up.
+    var tooDark = false
 
     static let initial = GuideSnapshot(allPass: false, hint: nil, fillLight: false, failing: Set(GateCheck.allCases))
 }
@@ -471,6 +474,11 @@ struct CaptureGuide: Sendable {
     /// No face and the middle of the frame below this luma: too dark to find
     /// a face, so the fill light comes on anyway (same floor as the face).
     var darkFrameLuma: Float = 70
+    /// Below this face luma the scan doesn't start, fill light or not
+    /// (user decision 2026-11-11, iPhone dark-room run: at luma ~7 the scan
+    /// dropped 15 times on sharpness and the covered-face watch reading
+    /// noise). Light stays advice above it.
+    var minScanFaceLuma: Float = 20
 
     private var darkSince: TimeInterval?
     private(set) var fillLightSince: TimeInterval?
@@ -528,11 +536,13 @@ struct CaptureGuide: Sendable {
         if (fillLightSince != nil) != lightWasOn { gate.lightChanged(at: o.time, scanning: scanning) }
 
         let hint = hints.update(failing: hintable, at: o.time)
+        let tooDark = !scanning && (o.face.map { $0.meanLuma < minScanFaceLuma } ?? false)
         return GuideSnapshot(
-            allPass: e.blocking.isEmpty,
+            allPass: e.blocking.isEmpty && !tooDark,
             hint: hint,
             fillLight: fillLightSince != nil,
-            failing: Set(e.failing.keys)
+            failing: Set(e.failing.keys),
+            tooDark: tooDark
         )
     }
 }

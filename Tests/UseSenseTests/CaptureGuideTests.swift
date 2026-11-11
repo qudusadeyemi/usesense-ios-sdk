@@ -302,6 +302,33 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertNotEqual(snap.hint, .holdStill)
     }
 
+    /// User decision (iPhone dark-room run, face luma ~7): a face too dark
+    /// to scan holds the start and asks for light, fill light or not.
+    func testAFaceTooDarkToScanAsksForLightInsteadOfStarting() {
+        let black = FaceRegionQuality(meanLuma: 7, clippedHighRatio: 0, clippedLowRatio: 0.9, sharpness: 60)
+        var guide = CaptureGuide()
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        while t < 3.5 { snap = guide.update(good(at: t) { $0.face = black }); t += 1.0 / 30 }
+        XCTAssertTrue(snap.fillLight)
+        XCTAssertTrue(snap.tooDark)
+        XCTAssertFalse(snap.allPass, "no auto start")
+        XCTAssertEqual(snap.hint, .faceALight, "Find more light")
+
+        // Dim but scannable: light is advice, the scan may start.
+        let dim = FaceRegionQuality(meanLuma: 35, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 60)
+        var g2 = CaptureGuide()
+        t = 0
+        while t < 3.5 { snap = g2.update(good(at: t) { $0.face = dim }); t += 1.0 / 30 }
+        XCTAssertFalse(snap.tooDark)
+        XCTAssertTrue(snap.allPass)
+
+        // A running scan isn't changed by it.
+        var g3 = CaptureGuide()
+        snap = g3.update(good(at: 0) { $0.face = black }, scanning: true)
+        XCTAssertFalse(snap.tooDark)
+    }
+
     // MARK: Pose from the transformation matrix
 
     private func rotation(yaw: Double = 0, pitch: Double = 0, roll: Double = 0) -> (Int, Int) -> Double {
