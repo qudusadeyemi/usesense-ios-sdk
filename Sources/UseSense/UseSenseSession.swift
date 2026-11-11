@@ -66,6 +66,11 @@ public final class UseSenseSession: @unchecked Sendable {
     }
     var brandDisplayName: String? { sessionData?.branding?.displayName }
 
+    /// Session-mode copy: code (SDK init) over the dashboard copy, per field.
+    var brandingCopy: FlowCopy? {
+        FlowCopy.merge(high: config.branding?.copy, low: sessionData?.branding?.copy)
+    }
+
     /// A session handed in by the Flows runner or the hosted page. Its outcome
     /// is settled on the server when it completes, so the result screen offers
     /// no in-place "Try Again" (a Flow's retries follow its own policy).

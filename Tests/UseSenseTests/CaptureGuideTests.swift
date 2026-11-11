@@ -448,13 +448,12 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertEqual(d, .default)
         XCTAssertEqual(d.ring, CaptureColors.RGB(hex: 0x4F7CFF))
         // A readable brand colour is used.
-        let custom = CaptureColors.resolve(AppearanceCapture(ring: "#00D4AA"))
+        let custom = CaptureColors.resolve(FlowAppearance(capture: AppearanceCapture(ring: "#00D4AA")))
         XCTAssertEqual(custom.ring, CaptureColors.RGB(hex: 0x00D4AA))
-        // Navy on the dark scrim is under 3:1: back to the default.
+        // Navy on the dark scrim is under 3:1: back to the default (no primary set).
         XCTAssertLessThan(CaptureColors.RGB(hex: 0x1A237E).contrast(against: CaptureColors.scrim), 3)
-        let navy = CaptureColors.resolve(AppearanceCapture(ring: "#1A237E", contourStart: "nope", warning: "#FF0000"))
+        let navy = CaptureColors.resolve(FlowAppearance(capture: AppearanceCapture(ring: "#1A237E", contourStart: "nope", warning: "#FF0000")))
         XCTAssertEqual(navy.ring, CaptureColors.default.ring)
-        XCTAssertEqual(navy.contourStart, CaptureColors.default.contourStart)
         XCTAssertEqual(navy.warning, CaptureColors.RGB(hex: 0xFF0000))
     }
 

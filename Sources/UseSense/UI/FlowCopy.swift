@@ -37,6 +37,8 @@ public struct FlowCopy: Codable, Equatable, Sendable {
     public var privacy: Privacy?
     /// Free-form help text / tooltips keyed by an SDK-defined slot id.
     public var help: [String: String]?
+    /// Face capture screens (BRAND-v1 section 5).
+    public var capture: CaptureCopy?
 
     public struct Welcome: Codable, Equatable, Sendable {
         public var title: String?
@@ -189,7 +191,8 @@ public struct FlowCopy: Codable, Equatable, Sendable {
         result: Result? = nil,
         errors: Errors? = nil,
         privacy: Privacy? = nil,
-        help: [String: String]? = nil
+        help: [String: String]? = nil,
+        capture: CaptureCopy? = nil
     ) {
         self.welcome = welcome
         self.buttons = buttons
@@ -202,6 +205,7 @@ public struct FlowCopy: Codable, Equatable, Sendable {
         self.errors = errors
         self.privacy = privacy
         self.help = help
+        self.capture = capture
     }
 }
 
@@ -287,7 +291,8 @@ public extension FlowCopy {
                 consentTitle: pick(high.privacy?.consentTitle, low.privacy?.consentTitle),
                 consentBody: pick(high.privacy?.consentBody, low.privacy?.consentBody)
             ),
-            help: mergeHelp(high: high.help, low: low.help)
+            help: mergeHelp(high: high.help, low: low.help),
+            capture: CaptureCopy.merge(high: high.capture, low: low.capture)
         )
     }
 

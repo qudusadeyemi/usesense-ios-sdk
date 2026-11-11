@@ -60,33 +60,51 @@ struct ChallengeDisplay: Equatable {
 }
 
 /// Every string the extra check shows (storyboard copy, no em dashes).
+/// Each reads `copy.capture.extraCheck` first (BRAND-v1 section 5).
 enum ExtraCheckCopy {
-    static let sheetTitle = "One more quick check"
-    static let continueButton = "Continue"
-    static let done = "Done"
-    static let showFace = "Show your face in the oval"
-    static let centreFace = "Move your face to the centre"
-    static let keepTurning = "Then keep turning"
-    static let dotWaits = "The dot will wait for you"
-    static let thenSayNumbers = "Then say the numbers"
-    static let followDot = "Follow the dot with your head"
-    static let keepFollowing = "Keep following"
-    static let pointAtDot = "Turn your head toward the dot"
+    private typealias T = CaptureText
+    static var sheetTitle: String { T.text(\.capture?.extraCheck?.sheetTitle, "One more quick check") }
+    static var continueButton: String { T.text(\.capture?.extraCheck?.continue, "Continue") }
+    static var done: String { T.text(\.capture?.extraCheck?.done, "Done") }
+    static var showFace: String { T.text(\.capture?.guidance?.showFace, "Show your face in the oval") }
+    static var centreFace: String { T.text(\.capture?.guidance?.centre, "Move your face to the centre") }
+    static var keepTurning: String { T.text(\.capture?.extraCheck?.keepTurning, "Then keep turning") }
+    static var dotWaits: String { T.text(\.capture?.extraCheck?.dotWaits, "The dot will wait for you") }
+    static var thenSayNumbers: String { T.text(\.capture?.extraCheck?.thenSayNumbers, "Then say the numbers") }
+    static var followDot: String { T.text(\.capture?.extraCheck?.followDot, "Follow the dot with your head") }
+    static var keepFollowing: String { T.text(\.capture?.extraCheck?.keepFollowing, "Keep following") }
+    static var pointAtDot: String { T.text(\.capture?.extraCheck?.pointAtDot, "Turn your head toward the dot") }
     /// After a step that timed out: honest, not a tick.
-    static let nextOne = "Let's try the next one"
-    static let sayNumbers = "Say these numbers"
-    static let cantHear = "We can't hear you"
-    static let speakLouder = "Speak a little louder"
-    static let tryAgain = "Let's try that again"
-    static let slowly = "Slowly"
+    static var nextOne: String { T.text(\.capture?.extraCheck?.tryNext, "Let's try the next one") }
+    static var sayNumbers: String { T.text(\.capture?.extraCheck?.speakDigits, "Say these numbers") }
+    static var cantHear: String { T.text(\.capture?.extraCheck?.cantHear, "We can't hear you") }
+    static var speakLouder: String { T.text(\.capture?.extraCheck?.speakLouder, "Speak a little louder") }
+    static var tryAgain: String { T.text(\.capture?.extraCheck?.retryStep, "Let's try that again") }
+    static var slowly: String { T.text(\.capture?.extraCheck?.slowly, "Slowly") }
+
+    static var helpTitle: String { T.text(\.capture?.extraCheck?.helpTitle, "Quick extra check") }
+    static var helpHeadTurn: String {
+        T.text(\.capture?.extraCheck?.helpHeadTurn, "Keep your face in the oval and turn your head slowly the way the arrow points.")
+    }
+    static var helpFollowDot: String {
+        T.text(\.capture?.extraCheck?.helpFollowDot,
+               "Keep your face in the oval and move your head to follow the dot. The dot waits if your face leaves the oval.")
+    }
+    static var helpSpeakDigits: String {
+        T.text(\.capture?.extraCheck?.helpSpeakDigits, "Keep your face in the oval and say the numbers out loud in a normal voice.")
+    }
+    /// The inline step-up's help (no key in the contract yet).
+    static let helpInline = "Do what the screen asks, one step at a time. It only takes a few seconds."
 
     /// The sheet's one sentence for each challenge.
-    static func sheetBody(_ kind: ChallengeType) -> String {
+    static func sheetBody(_ kind: ChallengeType, side: String? = nil) -> String {
+        let fallback: String
         switch kind {
-        case .headTurn: return "Slowly turn your head to the left, then to the right."
-        case .followDot: return "Keep your face in the oval and follow the dot with your head."
-        case .speakPhrase: return "Say the numbers you see out loud. We'll need your microphone."
+        case .headTurn: fallback = "Slowly turn your head to the left, then to the right."
+        case .followDot: fallback = "Keep your face in the oval and follow the dot with your head."
+        case .speakPhrase: fallback = "Say the numbers you see out loud. We'll need your microphone."
         }
+        return T.text(\.capture?.extraCheck?.sheetBody, fallback, side: side ?? phrase(.left))
     }
 
     /// Head Turn: the sheet names the first two sides the server asked for.
@@ -94,11 +112,13 @@ enum ExtraCheckCopy {
         guard case .headTurn(let c) = spec else { return sheetBody(spec.challengeType) }
         let sides = c.sequence.map(\.direction).filter { $0 != .center }
         guard let first = sides.first else { return sheetBody(.headTurn) }
-        if sides.count == 1 { return "Slowly turn your head \(phrase(first))." }
-        return "Slowly turn your head \(phrase(first)), then \(phrase(sides[1]))."
+        let fallback = sides.count == 1
+            ? "Slowly turn your head \(phrase(first))."
+            : "Slowly turn your head \(phrase(first)), then \(phrase(sides[1]))."
+        return T.text(\.capture?.extraCheck?.sheetBody, fallback, side: phrase(first))
     }
 
-    /// "to the left", "up", ...
+    /// "to the left", "up", ... (`{side}` in capture copy).
     static func phrase(_ d: HeadDirection) -> String {
         switch d {
         case .left: return "to the left"
@@ -111,22 +131,26 @@ enum ExtraCheckCopy {
 
     /// The instruction for a Head Turn step.
     static func headTurnTitle(_ d: HeadDirection, first: Bool) -> String {
+        let fallback: String
         switch d {
-        case .left, .right: return first ? "Turn your head \(phrase(d))" : "Now \(phrase(d))"
-        case .up: return first ? "Look up" : "Now look up"
-        case .down: return first ? "Look down" : "Now look down"
-        case .center: return "Now look straight ahead"
+        case .left, .right: fallback = first ? "Turn your head \(phrase(d))" : "Now \(phrase(d))"
+        case .up: fallback = first ? "Look up" : "Now look up"
+        case .down: fallback = first ? "Look down" : "Now look down"
+        case .center: return T.text(\.capture?.extraCheck?.lookCentre, "Now look straight ahead")
         }
+        return T.text(\.capture?.extraCheck?.headTurn, fallback, side: phrase(d))
     }
 
     /// The retry hint: "Turn a little further to the left".
     static func furtherHint(_ d: HeadDirection) -> String {
+        let fallback: String
         switch d {
-        case .left, .right: return "Turn a little further \(phrase(d))"
-        case .up: return "Look a little further up"
-        case .down: return "Look a little further down"
-        case .center: return "Look straight at the screen"
+        case .left, .right: fallback = "Turn a little further \(phrase(d))"
+        case .up: fallback = "Look a little further up"
+        case .down: fallback = "Look a little further down"
+        case .center: return T.text(\.capture?.guidance?.straight, "Look straight at the screen")
         }
+        return T.text(\.capture?.extraCheck?.further, fallback, side: phrase(d))
     }
 }
 

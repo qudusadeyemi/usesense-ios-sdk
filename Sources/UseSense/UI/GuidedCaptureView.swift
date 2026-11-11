@@ -2,67 +2,6 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Colours
-
-/// Capture screen colours: FlowAppearance `capture` over the Sense defaults.
-/// A colour under 3:1 contrast on the dark camera scrim (#333333, the same
-/// reference Android uses) falls back to the default, so a brand colour can
-/// never make the guide unreadable.
-struct CaptureColors: Equatable {
-    struct RGB: Equatable {
-        var r: Double, g: Double, b: Double
-        var color: Color { Color(red: r, green: g, blue: b) }
-        func mix(_ o: RGB, _ t: Double) -> RGB {
-            RGB(r: r + (o.r - r) * t, g: g + (o.g - g) * t, b: b + (o.b - b) * t)
-        }
-        init(r: Double, g: Double, b: Double) { self.r = r; self.g = g; self.b = b }
-        init(hex: UInt32) {
-            r = Double((hex >> 16) & 0xFF) / 255; g = Double((hex >> 8) & 0xFF) / 255; b = Double(hex & 0xFF) / 255
-        }
-        /// WCAG relative luminance.
-        var luminance: Double {
-            func lin(_ c: Double) -> Double { c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
-            return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
-        }
-        func contrast(against o: RGB) -> Double {
-            let a = luminance, b = o.luminance
-            return (max(a, b) + 0.05) / (min(a, b) + 0.05)
-        }
-    }
-
-    static let scrim = RGB(hex: 0x333333)
-    static let minimumContrast = 3.0
-    static let `default` = CaptureColors(
-        ring: RGB(hex: 0x4F7CFF), contourStart: RGB(hex: 0x7A96FF),
-        contourEnd: RGB(hex: 0xA878FC), warning: RGB(hex: 0xFFB84D)
-    )
-
-    var ring: RGB
-    var contourStart: RGB
-    var contourEnd: RGB
-    var warning: RGB
-
-    static func resolve(_ capture: AppearanceCapture?) -> CaptureColors {
-        let d = CaptureColors.default
-        return CaptureColors(
-            ring: pick(capture?.ring, d.ring),
-            contourStart: pick(capture?.contourStart, d.contourStart),
-            contourEnd: pick(capture?.contourEnd, d.contourEnd),
-            warning: pick(capture?.warning, d.warning)
-        )
-    }
-
-    /// The custom colour when it parses and reads on the scrim; else `fallback`.
-    static func pick(_ raw: String?, _ fallback: RGB) -> RGB {
-        guard let raw, let c = FlowAppearance.parseHexComponents(raw) else { return fallback }
-        let rgb = RGB(r: Double(c.r), g: Double(c.g), b: Double(c.b))
-        return rgb.contrast(against: scrim) >= minimumContrast ? rgb : fallback
-    }
-
-    /// The active capture colours (Flow / session appearance).
-    static var current: CaptureColors { resolve(FlowAppearanceResolver.current?.capture) }
-}
-
 // MARK: - Screen fill light
 
 /// Turns the screen into a fill light (brightness to max) and puts the
@@ -95,27 +34,18 @@ final class ScreenFillLight {
     }
 }
 
-// MARK: - Tokens (capture test kit SPEC; reference/index.html `SPEC`)
+// MARK: - Copy (BRAND-v1 copy.capture; defaults = capture test kit SPEC v1.1)
 
-enum CaptureTokens {
-    static let cam = Color(red: 13 / 255, green: 15 / 255, blue: 20 / 255)     // #0d0f14
-    static let panel = Color(red: 29 / 255, green: 32 / 255, blue: 41 / 255)   // #1d2029
-    static let ink = Color(red: 244 / 255, green: 245 / 255, blue: 248 / 255)  // #f4f5f8
-    static let ink2 = Color(red: 163 / 255, green: 169 / 255, blue: 184 / 255) // #a3a9b8
-    /// Fill light veil colour (#FFF4E2, as Android).
-    static let fillVeil = Color(red: 1, green: 244 / 255, blue: 226 / 255)
-    /// Camera darkening under the lines during the scan.
-    static let feedDimDuringScan = 0.12
-    static let guideFill = 0.14
-    static let guideStroke = 0.90
-    static let guideWidth: CGFloat = 2
-    static let ringTrack = 0.18
-    static let ringWidth: CGFloat = 3
-    static let ringGap: CGFloat = 6
-    static let hintGapBelowOval: CGFloat = 28
-    static let topBarTop: CGFloat = 54
-    static let uploadCopy = "Usually under 10 seconds"
-    static let shutterCopy = "Tap the button when you're ready"
+enum CaptureCopyText {
+    static var shutter: String { CaptureText.text(\.capture?.guidance?.shutterHint, "Tap the button when you're ready") }
+    static var ready: String { CaptureText.text(\.capture?.guidance?.ready, "Hold still") }
+    static var helpTitle: String { CaptureText.text(\.capture?.guidance?.helpTitle, "Quick face scan") }
+    static var helpBody: String {
+        CaptureText.text(\.capture?.guidance?.helpBody,
+                         "Look straight at the screen with a neutral face. Face the light; your screen will brighten to help. The scan starts by itself when your face is in the oval and still.")
+    }
+    static var uploadTitle: String { CaptureText.text(\.capture?.upload?.title, "Checking it's you") }
+    static var uploadCaption: String { CaptureText.text(\.capture?.upload?.caption, "Usually under 10 seconds") }
 }
 
 // MARK: - Align + scan screen
@@ -133,6 +63,7 @@ struct GuidedCaptureView<Camera: View>: View {
 
     @State private var scanStartedAt: Date
     @State private var showHelp = false
+    @SwiftUI.Environment(\.captureTheme) private var theme
     @State private var cameraBlurred = false
     private let fixedDate: Date?
 
@@ -146,7 +77,7 @@ struct GuidedCaptureView<Camera: View>: View {
         self._scanStartedAt = State(initialValue: sweepStartedAt)
     }
 
-    private var colors: CaptureColors { .current }
+    private var colors: CaptureColors { theme.camera }
     private var hint: GateHint? { viewModel.guide.snapshot.hint }
     private var paused: Bool { mode == .scan && viewModel.scan.paused }
     private var fillLight: Bool { viewModel.guide.snapshot.fillLight }
@@ -171,13 +102,13 @@ struct GuidedCaptureView<Camera: View>: View {
             if let hint, hint.check != .stillness, hint.check != .light {
                 return (hint.title, hint.subtitle, true)
             }
-            return (CaptureTokens.shutterCopy, nil, true)
+            return (CaptureCopyText.shutter, nil, true)
         }
         if let hint, mode == .align || paused || hint.check == .light {
             return (hint.title, hint.subtitle, hint.check != .stillness)
         }
         if needsCloser { return (GateHint.moveCloser.title, nil, true) }
-        return (GateHint.holdStill.title, nil, false)
+        return (CaptureCopyText.ready, nil, false)
     }
 
     var body: some View {
@@ -231,7 +162,7 @@ struct GuidedCaptureView<Camera: View>: View {
                         if Self.showsGateChips { debugChips }
                         if showShutter { shutterButton }
                     }
-                    .frame(width: size.width, height: size.height - insets.bottom - 24)
+                    .frame(width: size.width, height: size.height - insets.bottom - CaptureFooter.clearance)
                 }
 
                 CaptureTopBar(onBack: onClose, onHelp: { showHelp = true })
@@ -256,11 +187,12 @@ struct GuidedCaptureView<Camera: View>: View {
             .onChange(of: size) { viewModel.setViewport($0) }
         }
         .ignoresSafeArea()
-        .alert("Quick face scan", isPresented: $showHelp) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Look straight at the screen with a neutral face. Face the light; your screen will brighten to help. The scan starts by itself when your face is in the oval and still.")
+        .overlay {
+            if showHelp {
+                CaptureHelpDialog(title: CaptureCopyText.helpTitle, message: CaptureCopyText.helpBody) { showHelp = false }
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: showHelp)
     }
 
     /// Gate debug chips: off by default in every build. DEBUG builds show them
@@ -287,10 +219,10 @@ struct GuidedCaptureView<Camera: View>: View {
         ZStack {
             if mode == .align {
                 Ellipse()
-                    .fill(Color.white.opacity(CaptureTokens.guideFill))
+                    .fill(CaptureTokens.guideInk.opacity(CaptureTokens.guideFill))
                     .frame(width: oval.width, height: oval.height)
                 Ellipse()
-                    .stroke(guidance.action ? colors.warning.color : Color.white.opacity(CaptureTokens.guideStroke),
+                    .stroke(guidance.action ? colors.warning.color : CaptureTokens.guideInk.opacity(CaptureTokens.guideStroke),
                             lineWidth: CaptureTokens.guideWidth)
                     .frame(width: oval.width, height: oval.height)
                     .animation(.easeInOut(duration: 0.2), value: guidance.action)
@@ -298,7 +230,7 @@ struct GuidedCaptureView<Camera: View>: View {
                 let g = CaptureTokens.ringGap
                 ZStack {
                     TopStartEllipse()
-                        .stroke(Color.white.opacity(CaptureTokens.ringTrack), lineWidth: CaptureTokens.ringWidth)
+                        .stroke(CaptureTokens.guideInk.opacity(CaptureTokens.ringTrack), lineWidth: CaptureTokens.ringWidth)
                     TopStartEllipse()
                         .trim(from: 0, to: viewModel.scan.fraction)
                         .stroke(paused ? colors.warning.color : colors.ring.color,
@@ -316,32 +248,7 @@ struct GuidedCaptureView<Camera: View>: View {
     // MARK: Guidance text (SPEC v1.1: plain text, no box, no icon, no counters)
 
     private var guidanceText: some View {
-        let g = guidance
-        let key = g.title + (g.subtitle ?? "")
-        return ZStack(alignment: .top) {
-            VStack(spacing: 6) {
-                Text(g.title)
-                    .font(.usBody(22, .semibold))
-                    .tracking(-0.22)
-                if let sub = g.subtitle {
-                    Text(sub)
-                        .font(.usBody(15, .medium))
-                        .foregroundColor(.white.opacity(0.82))
-                }
-            }
-            .foregroundColor(.white)
-            .multilineTextAlignment(.center)
-            .lineLimit(2)
-            .shadow(color: .black.opacity(0.35), radius: 1, y: 1)
-            .shadow(color: .black.opacity(0.45), radius: 7, y: 2)
-            .frame(maxWidth: .infinity)
-            .id(key)
-            .transition(.opacity)
-        }
-        .animation(.easeInOut(duration: 0.2), value: key)
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.updatesFrequently)
-        .accessibilityIdentifier("usesense.capture.hint")
+        CaptureGuidanceText(title: guidance.title, subtitle: guidance.subtitle)
     }
 
     // MARK: Shutter, chips
@@ -349,9 +256,9 @@ struct GuidedCaptureView<Camera: View>: View {
     private var shutterButton: some View {
         Button(action: { viewModel.shutterTapped() }) {
             Circle()
-                .fill(Color.white)
+                .fill(CaptureTokens.shutter)
                 .frame(width: 72, height: 72)
-                .overlay(Circle().stroke(Color.white.opacity(0.25), lineWidth: 6).padding(-6))
+                .overlay(Circle().stroke(CaptureTokens.shutter.opacity(0.25), lineWidth: 6).padding(-6))
         }
         .accessibilityLabel("Start scan")
         .accessibilityIdentifier("usesense.capture.shutter")
@@ -367,10 +274,9 @@ struct GuidedCaptureView<Camera: View>: View {
                     .font(.usMono(9))
                     .lineLimit(1)
                     .fixedSize()
-                    .foregroundColor(bad ? Color(red: 1, green: 0.8, blue: 0.48) : Color(red: 0.37, green: 0.94, blue: 0.8))
+                    .foregroundColor(bad ? CaptureTokens.debugBadInk : CaptureTokens.debugGoodInk)
                     .padding(.horizontal, 5).padding(.vertical, 3)
-                    .background(Capsule().fill(bad ? Color(red: 1, green: 0.72, blue: 0.3).opacity(0.18)
-                                                   : Color(red: 0, green: 0.83, blue: 0.67).opacity(0.16)))
+                    .background(Capsule().fill(bad ? CaptureTokens.debugBadFill : CaptureTokens.debugGoodFill))
             }
         }
         .accessibilityHidden(true)
@@ -378,9 +284,13 @@ struct GuidedCaptureView<Camera: View>: View {
 }
 
 /// Back (left) and help (right): 32 pt circles, 16 pt from the sides.
+/// On the camera: fixed light glyph on the dimmed camera. On a page: the
+/// page's foreground on its surface.
 struct CaptureTopBar: View {
     let onBack: () -> Void
     var onHelp: (() -> Void)?
+    var onPage = false
+    @SwiftUI.Environment(\.captureTheme) private var theme
 
     var body: some View {
         HStack {
@@ -394,9 +304,9 @@ struct CaptureTopBar: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(CaptureTokens.ink)
+                .foregroundColor(onPage ? theme.foreground : CaptureTokens.chromeInk)
                 .frame(width: 32, height: 32)
-                .background(Circle().fill(CaptureTokens.cam.opacity(0.55)))
+                .background(Circle().fill(onPage ? theme.surface : CaptureTokens.cam.opacity(CaptureTokens.chromeFillOpacity)))
                 .contentShape(Circle().inset(by: -6))
         }
         .accessibilityLabel(label)
@@ -665,7 +575,8 @@ struct GuidedUploadView: View {
     var field: ContourDepthField?
     let onBack: () -> Void
 
-    private var colors: CaptureColors { .current }
+    @SwiftUI.Environment(\.captureTheme) private var theme
+    private var colors: CaptureColors { theme.camera }
 
     var body: some View {
         GeometryReader { geo in
@@ -701,30 +612,33 @@ struct GuidedUploadView: View {
                     .padding(.top, max(CaptureTokens.topBarTop, GuidedCaptureView<EmptyView>.windowInsets.top))
 
                 VStack(spacing: 10) {
-                    Text("Checking it's you")
-                        .font(.usBody(18, .semibold))
-                        .foregroundColor(CaptureTokens.ink)
+                    Text(CaptureCopyText.uploadTitle)
+                        .font(.usDisplay(18, .bold))
+                        .foregroundColor(theme.foreground)
+                        .accessibilityAddTraits(.isHeader)
                     TimelineView(.animation(minimumInterval: 1.0 / 30, paused: bar.stage == .done || bar.fixed != nil)) { tl in
                         let progress = min(1, max(UploadBar.floor, bar.value(at: tl.date)))
                         GeometryReader { track in
                             ZStack(alignment: .leading) {
-                                Capsule().fill(Color.white.opacity(0.12))
+                                Capsule().fill(theme.border)
                                 Capsule().fill(colors.ring.color)
                                     .frame(width: track.size.width * CGFloat(progress))
                             }
                         }
                         .frame(height: 4)
                         .accessibilityElement()
-                        .accessibilityLabel("Checking it's you")
+                        .accessibilityLabel(CaptureCopyText.uploadTitle)
                         .accessibilityValue("\(Int(progress * 10) * 10) percent")
                     }
-                    Text(CaptureTokens.uploadCopy)
+                    Text(CaptureCopyText.uploadCaption)
                         .font(.usBody(13))
-                        .foregroundColor(CaptureTokens.ink2)
+                        .foregroundColor(theme.muted)
+                    CapturePoweredBy(onCamera: false)
+                        .padding(.bottom, -12)
                 }
                 .padding(22)
                 .frame(width: geo.size.width - 16)
-                .background(RoundedRectangle(cornerRadius: 28, style: .continuous).fill(CaptureTokens.panel))
+                .background(RoundedRectangle(cornerRadius: theme.sheetRadius, style: .continuous).fill(theme.surface))
                 .accessibilityIdentifier("usesense.capture.upload")
                 .frame(width: geo.size.width, height: geo.size.height - 8, alignment: .bottom)
             }

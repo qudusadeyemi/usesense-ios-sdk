@@ -19,19 +19,34 @@ public struct UseSenseView: View {
     }
 
     public var body: some View {
+        CaptureThemeRoot { screens }
+    }
+
+    private var screens: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
             switch viewModel.displayState {
+            case .idle where viewModel.guided:
+                CaptureLoadingView()
+                    .onAppear { viewModel.start() }
+
             case .idle:
                 ProgressView()
                     .tint(.white)
                     .onAppear { viewModel.start() }
 
+            case .created where viewModel.guided:
+                CaptureLoadingView()
+
             case .created:
                 ProgressView("Creating session...")
                     .tint(.white)
                     .foregroundColor(.white)
+
+            case .permissionsRequired where viewModel.guided:
+                GuidedPageView(content: GuidedScreen.cameraRequest.content(),
+                               onPrimary: { viewModel.requestPermissions() }, onClose: close)
 
             case .permissionsRequired:
                 permissionsView
@@ -217,6 +232,7 @@ public struct UseSenseView: View {
         }
         .overlay(alignment: .bottom) {
             if viewModel.showsCaptureFooter { CaptureFooter() }
+            if viewModel.showsGuidedCameraFooter { CapturePoweredBy(onCamera: true) }
         }
         .overlay {
             if viewModel.leavePrompt {
@@ -245,8 +261,7 @@ public struct UseSenseView: View {
         switch screen {
         case .uploadFailed:
             GuidedSheetScreen(backdrop: viewModel.uploadBackdropImage, onBack: close) {
-                GuidedSheet(icon: "arrow.up", iconFill: CaptureColors.current.warning.color.opacity(0.16),
-                            iconInk: CaptureColors.current.warning.color,
+                GuidedSheet(icon: "arrow.up", iconTone: .tone(.warning),
                             title: screen.content().title, message: screen.content().body,
                             primary: screen.content().primary, onPrimary: { viewModel.resumeFinalization() })
                 .accessibilityIdentifier("usesense.upload.failed")
@@ -665,6 +680,17 @@ final class UseSenseViewModel: ObservableObject, ColourTintHost {
         }
     }
 
+    /// "Powered by Sense" on the guided camera screens (BRAND-v1 decision 4).
+    /// Pages and sheets draw their own, in the page colours.
+    var showsGuidedCameraFooter: Bool {
+        guard guided else { return false }
+        switch displayState {
+        case .faceGuide, .baseline: return true
+        case .challenge, .inlineStepUp, .extraCheckDone: return extraCheckOnScanScreen
+        default: return false
+        }
+    }
+
     /// "Try Again" on a reject: standalone sessions only (see isInjected).
     var canRetryFromResult: Bool { !session.isInjected }
 
@@ -839,7 +865,7 @@ final class UseSenseViewModel: ObservableObject, ColourTintHost {
 
     func showTint(_ colour: String?, opacity: Double) {
         guard let colour else { tint = nil; return }
-        tint = (CaptureColors.pick(colour, CaptureColors.RGB(r: 1, g: 1, b: 1)).color, opacity)
+        tint = (CaptureColors.pick(colour, CaptureTokens.tintFallback).color, opacity)
     }
 
     func holdFullBrightness() -> Double? {

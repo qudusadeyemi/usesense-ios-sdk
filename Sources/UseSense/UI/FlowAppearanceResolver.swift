@@ -27,10 +27,12 @@ public enum FlowAppearanceResolver {
 
     @MainActor public static func set(_ appearance: FlowAppearance?) {
         _current = appearance
+        CaptureBrandStore.shared.bump()
     }
 
     @MainActor public static func reset() {
         _current = nil
+        CaptureBrandStore.shared.bump()
     }
 
     // MARK: Mode resolution

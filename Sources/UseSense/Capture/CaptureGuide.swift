@@ -46,22 +46,30 @@ struct GateHint: Equatable, Sendable {
     let subtitle: String?
     let icon: Icon
 
-    static let showFace = GateHint(check: .faceFound, title: "Show your face in the oval", subtitle: nil, icon: .face)
-    static let onePerson = GateHint(check: .onePerson, title: "Only you in the picture", subtitle: nil, icon: .people)
+    // Titles read `copy.capture.guidance` first (BRAND-v1 section 5); the
+    // defaults are the SPEC v1.1 copy.
+    private typealias T = CaptureText
+    static var showFace: GateHint { GateHint(check: .faceFound, title: T.text(\.capture?.guidance?.showFace, "Show your face in the oval"), subtitle: nil, icon: .face) }
+    static var onePerson: GateHint { GateHint(check: .onePerson, title: T.text(\.capture?.guidance?.onePerson, "Only you in the picture"), subtitle: nil, icon: .people) }
     /// COVER-v1: a hand or an object over the face.
-    static let uncovered = GateHint(check: .covered, title: "Keep your face uncovered", subtitle: nil, icon: .covered)
-    static let centre = GateHint(check: .inFrame, title: "Move your face to the centre", subtitle: nil, icon: .centre)
-    static let moveCloser = GateHint(check: .distance, title: "Move a little closer", subtitle: nil, icon: .closer)
-    static let moveBack = GateHint(check: .distance, title: "Move back a little", subtitle: nil, icon: .back)
+    static var uncovered: GateHint { GateHint(check: .covered, title: T.text(\.capture?.guidance?.covered, "Keep your face uncovered"), subtitle: nil, icon: .covered) }
+    static var centre: GateHint { GateHint(check: .inFrame, title: T.text(\.capture?.guidance?.centre, "Move your face to the centre"), subtitle: nil, icon: .centre) }
+    static var moveCloser: GateHint { GateHint(check: .distance, title: T.text(\.capture?.guidance?.closer, "Move a little closer"), subtitle: nil, icon: .closer) }
+    static var moveBack: GateHint { GateHint(check: .distance, title: T.text(\.capture?.guidance?.back, "Move back a little"), subtitle: nil, icon: .back) }
     /// Spec v1.2.1: in-frame fails on a well-placed face that is too close.
-    static let moveBackToFit = GateHint(check: .inFrame, title: "Move back a little", subtitle: nil, icon: .back)
-    static let lookStraight = GateHint(check: .pose, title: "Look straight ahead", subtitle: nil, icon: .pose)
-    static let faceALight = GateHint(check: .light, title: "Find more light", subtitle: "Face a window or lamp", icon: .light)
-    static let tooBright = GateHint(check: .light, title: "Too much light behind you",
-                                    subtitle: "Turn away from the window", icon: .light)
-    static let holdSteady = GateHint(check: .sharpness, title: "Hold your phone steady", subtitle: nil, icon: .steady)
-    static let eyesOpen = GateHint(check: .eyesOpen, title: "Keep your eyes open", subtitle: nil, icon: .eyes)
-    static let holdStill = GateHint(check: .stillness, title: "Hold still", subtitle: nil, icon: .still)
+    static var moveBackToFit: GateHint { GateHint(check: .inFrame, title: T.text(\.capture?.guidance?.back, "Move back a little"), subtitle: nil, icon: .back) }
+    static var lookStraight: GateHint { GateHint(check: .pose, title: T.text(\.capture?.guidance?.straight, "Look straight ahead"), subtitle: nil, icon: .pose) }
+    static var faceALight: GateHint {
+        GateHint(check: .light, title: T.text(\.capture?.guidance?.dark, "Find more light"),
+                 subtitle: T.text(\.capture?.guidance?.darkHint, "Face a window or lamp"), icon: .light)
+    }
+    static var tooBright: GateHint {
+        GateHint(check: .light, title: T.text(\.capture?.guidance?.bright, "Too much light behind you"),
+                 subtitle: T.text(\.capture?.guidance?.brightHint, "Turn away from the window"), icon: .light)
+    }
+    static var holdSteady: GateHint { GateHint(check: .sharpness, title: T.text(\.capture?.guidance?.blur, "Hold your phone steady"), subtitle: nil, icon: .steady) }
+    static var eyesOpen: GateHint { GateHint(check: .eyesOpen, title: T.text(\.capture?.guidance?.eyes, "Keep your eyes open"), subtitle: nil, icon: .eyes) }
+    static var holdStill: GateHint { GateHint(check: .stillness, title: T.text(\.capture?.guidance?.holdStill, "Hold still"), subtitle: nil, icon: .still) }
 }
 
 /// Pass thresholds. Starting points from the spec, to tune on session data.
