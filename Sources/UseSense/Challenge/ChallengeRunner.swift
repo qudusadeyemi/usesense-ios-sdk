@@ -190,6 +190,18 @@ struct ChallengeStepLog: Equatable {
     /// server's time with no pose to judge (nil).
     var reached: Bool?
     var hinted: Bool
+    /// The first move (step_events v2): along the step's main axis, in
+    /// "toward the target" terms (positive = toward, negative = away), at
+    /// the first frame more than `firstMoveThreshold` degrees from the pose
+    /// at the prompt, and when (ms after the prompt). Nil: the head never
+    /// moved that far (or there is nothing to move toward: Follow Dot's
+    /// first waypoint, Speak Digits).
+    var firstMoveDeg: Double? = nil
+    var firstMoveMs: Int? = nil
+    /// The furthest the head went away from the target along the main axis
+    /// between the prompt and reaching it (or the step's end), >= 0. Nil: no
+    /// pose seen (or nothing to move toward).
+    var maxAwayDeg: Double? = nil
 }
 
 struct ChallengeRunner {
@@ -235,6 +247,9 @@ struct ChallengeRunner {
     static let dotPitch: Double = 8
     /// The move's other direction may go this far the wrong way.
     static let dotWrongWayTolerance: Double = 10
+    /// A move from the pose at the prompt bigger than this (yaw/pitch
+    /// distance, degrees) is the step's first move (step_events v2).
+    static let firstMoveThreshold: Double = 4
 
     enum Plan {
         case headTurn([HeadTurnStep])
@@ -287,6 +302,19 @@ struct ChallengeRunner {
     private var quietFor: TimeInterval = 0
     private var lastLevel: Double = 0
     private var lastHint: GateHint?
+    /// First-move tracking (see `ChallengeStepLog.firstMoveDeg`), from the
+    /// pose on every observed frame, banked or not: the latest pose, the pose
+    /// at the current step's prompt, and what the head did since.
+    private var poseYaw: Double?
+    private var posePitch: Double?
+    private var promptYaw: Double?
+    private var promptPitch: Double?
+    private var firstMoveDeg: Double?
+    private var firstMoveAt: TimeInterval?
+    private var maxAwayDeg: Double?
+    /// The pose reached the target: what the head does after that isn't the
+    /// way there.
+    private var moveSettled = false
 
     init(plan: Plan, retries: Int = 1) {
         self.plan = plan
@@ -394,6 +422,11 @@ struct ChallengeRunner {
         if stepPromptedAt == nil, present || obs.facePresent, !finished { stepPromptedAt = obs.time }
         updatePresence(obs.facePresent, dt: dt)
         if obs.hint != nil || obs.facePresent { lastHint = obs.hint }
+        if let y = obs.yaw, let p = obs.pitch {
+            poseYaw = y
+            posePitch = p
+            if stepPromptedAt != nil, !finished { trackMove(yaw: y, pitch: p, time: obs.time) }
+        }
 
         if let level = obs.level {
             lastLevel = level
@@ -479,6 +512,62 @@ struct ChallengeRunner {
         return followY >= dotPitch && (!movesX || followX > -dotWrongWayTolerance)
     }
 
+    /// Head Turn: how far the head moved toward the step's target from the
+    /// pose `from` (negative: away). Left/right on yaw, up/down on pitch,
+    /// centre = the distance from straight ahead shrinking.
+    static func towardTurn(_ direction: HeadDirection, yaw: Double, pitch: Double,
+                           fromYaw: Double, fromPitch: Double) -> Double {
+        switch direction {
+        case .left: return (yaw - fromYaw) * leftYawSign
+        case .right: return -(yaw - fromYaw) * leftYawSign
+        case .up: return (pitch - fromPitch) * upPitchSign
+        case .down: return -(pitch - fromPitch) * upPitchSign
+        case .center: return hypot(fromYaw, fromPitch) - hypot(yaw, pitch)
+        }
+    }
+
+    /// Follow Dot: how far the head moved with the dot's move (`prev` to
+    /// `wp`) from the pose `from`, on the axis the dot moved most along (x
+    /// wins ties, as the server's `judgeDotMove`), with the same mirroring
+    /// and signs as `atDotTarget`. Negative: against the dot.
+    static func towardDot(_ wp: CGPoint, from prev: CGPoint, yaw: Double, pitch: Double,
+                          fromYaw: Double, fromPitch: Double) -> Double {
+        let dx = wp.x - prev.x, dy = prev.y - wp.y   // dy > 0: the dot moved up
+        let towardRight = (yaw - fromYaw) * -leftYawSign
+        let towardUp = (pitch - fromPitch) * upPitchSign
+        if abs(dx) >= abs(dy) { return dx >= 0 ? towardRight : -towardRight }
+        return dy > 0 ? towardUp : -towardUp
+    }
+
+    /// The current step's "toward the target" movement from `from` (nil:
+    /// nothing to move toward).
+    private func toward(yaw: Double, pitch: Double, fromYaw: Double, fromPitch: Double) -> Double? {
+        switch plan {
+        case .headTurn(let steps):
+            return Self.towardTurn(steps[stepIndex].direction, yaw: yaw, pitch: pitch, fromYaw: fromYaw, fromPitch: fromPitch)
+        case .followDot(let w):
+            guard stepIndex > 0 else { return nil }   // waypoint 0: the reference
+            return Self.towardDot(CGPoint(x: CGFloat(w[stepIndex].x), y: CGFloat(w[stepIndex].y)),
+                                  from: CGPoint(x: CGFloat(w[stepIndex - 1].x), y: CGFloat(w[stepIndex - 1].y)),
+                                  yaw: yaw, pitch: pitch, fromYaw: fromYaw, fromPitch: fromPitch)
+        case .digits:
+            return nil
+        }
+    }
+
+    private mutating func trackMove(yaw: Double, pitch: Double, time: TimeInterval) {
+        guard !moveSettled else { return }
+        // No pose at the prompt: the first pose after it stands in.
+        if promptYaw == nil { promptYaw = yaw; promptPitch = pitch }
+        guard let py = promptYaw, let pp = promptPitch,
+              let t = toward(yaw: yaw, pitch: pitch, fromYaw: py, fromPitch: pp) else { return }
+        maxAwayDeg = max(maxAwayDeg ?? 0, t < 0 ? -t : 0)
+        if firstMoveAt == nil, hypot(yaw - py, pitch - pp) > Self.firstMoveThreshold {
+            firstMoveDeg = t
+            firstMoveAt = time
+        }
+    }
+
     private func dotGlideTime(_ i: Int) -> TimeInterval {
         min(Self.dotGlide, max(0.2, durations[min(i, durations.count - 1)]) * 0.4)
     }
@@ -489,6 +578,7 @@ struct ChallengeRunner {
     private mutating func advanceTargeted(server: TimeInterval, reached target: Bool?, dt: TimeInterval) {
         let server = max(0.2, server)
         lastAtTarget = target
+        if target == true { moveSettled = true }
         guard let reached = lastAtTarget else {
             // No transform from the landmarker: fall back to the server's time.
             if !poseSeen, stepElapsed >= server { endStep(overflow: 0) }
@@ -543,11 +633,22 @@ struct ChallengeRunner {
         }
         if let specIndex {
             let now = lastTime ?? 0
-            stepLog.append(ChallengeStepLog(index: specIndex, promptedAt: stepPromptedAt ?? now,
+            let prompted = stepPromptedAt ?? now
+            stepLog.append(ChallengeStepLog(index: specIndex, promptedAt: prompted,
                                             endedAt: now, reachedAt: reached == true ? stepReachedAt : nil,
-                                            reached: reached, hinted: stepHinted))
+                                            reached: reached, hinted: stepHinted,
+                                            firstMoveDeg: firstMoveDeg,
+                                            firstMoveMs: firstMoveAt.map { Int((($0 - prompted) * 1000).rounded()) },
+                                            maxAwayDeg: maxAwayDeg))
         }
         stepPromptedAt = finished ? nil : lastTime
+        // The next step's first move is measured from the pose now.
+        promptYaw = poseYaw
+        promptPitch = posePitch
+        firstMoveDeg = nil
+        firstMoveAt = nil
+        maxAwayDeg = nil
+        moveSettled = false
         stepReachedAt = nil
         stepHinted = false
         lastAtTarget = nil
