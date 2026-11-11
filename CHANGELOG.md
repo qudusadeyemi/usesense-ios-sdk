@@ -4,7 +4,12 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [4.11.0] - 2026-11-11
+
+One release for the extra check (storyboard flows 4 to 6), the LiveSense
+evidence contract (EVIDENCE-v1), the capture brand contract (BRAND-v1) and
+the dark-room capture rules. Screens checked on an iPhone 16 simulator with a
+synthetic face; dark-room and branded runs on an iPhone 17 Pro in sandbox.
 
 ### Added
 
@@ -58,14 +63,6 @@ This project adheres to [Semantic Versioning](https://semver.org/).
     (`metadata.evidence.binding`), alongside the v1 `bindingProof`.
   - `metadata.evidence.capability` says what this build can do: no MediaPipe
     means no landmarks, and no App Attest means no binding v2.
-
-## [4.11.0] - Unreleased
-
-Built against the agreed end-user storyboard (flows 4 to 6). Screens checked
-on an iPhone 16 simulator with a synthetic face; not yet run on a device
-against staging.
-
-### Added
 
 - **Extra check on the scan screen.** When the server asks for an extra check
   after the scan (step-up round 2, `step_up_v1`), a "One more quick check"
@@ -133,6 +130,16 @@ against staging.
   upload, so a server extra check (round 2) still follows it.
 
 ### Fixed
+
+- **Dark rooms.** A room too dark to find a face never turned the fill light
+  on (the light check measures the face); with no face the middle of the frame
+  now decides, and the hint asks for light. The fill light comes back on for
+  the extra check's movement, sharpness gives way while the head turns, and a
+  paused turn says which way to carry on ("Then keep turning to the left").
+  A face too dark to scan (face-box luma under 20, capture test kit SPEC
+  v1.7) no longer starts a scan that keeps dropping: it holds on "Find more
+  light" until the face reads 20 or more for 0.5 s. Light stays advice above
+  that, and no check is loosened.
 
 - RMAS judged its micro-actions on the last banked frame, which stops
   updating when the scan ends; it now reads the newest face. Flash
