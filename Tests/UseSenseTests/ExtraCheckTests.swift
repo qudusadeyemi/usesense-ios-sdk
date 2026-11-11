@@ -148,7 +148,7 @@ final class ExtraCheckTests: XCTestCase {
         var d = run(&r, 1.5, face: false)
         XCTAssertEqual(d.tone, .warning)
         XCTAssertEqual(d.title, "Move your face to the centre")
-        XCTAssertEqual(d.subtitle, "Then keep turning")
+        XCTAssertEqual(d.subtitle, "Then keep turning to the right", "the paused detail names the step's side")
         XCTAssertNil(d.arrow)
         d = hold(&r, .right, 0.3)
         XCTAssertEqual(d.tone, .active)
@@ -623,7 +623,13 @@ final class ExtraCheckTests: XCTestCase {
         g = QualityGate()
         XCTAssertNotNil(settle(&g, rules: rules) { t in var o = self.goodFace(t); o.eyeBlinkLeft = 0.9; o.eyeBlinkRight = 0.9; return o }.blocking[.eyesOpen])
         g = QualityGate()
-        XCTAssertNotNil(settle(&g, rules: rules) { t in
+        // Sharpness gives way while the head moves (a turning head blurs in
+        // the dark, Android A03 run); Speak Digits keeps it.
+        XCTAssertNil(settle(&g, rules: rules) { t in
+            var o = self.goodFace(t); o.face = FaceRegionQuality(meanLuma: 120, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 10); return o
+        }.blocking[.sharpness])
+        g = QualityGate()
+        XCTAssertNotNil(settle(&g, rules: .digits) { t in
             var o = self.goodFace(t); o.face = FaceRegionQuality(meanLuma: 120, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 10); return o
         }.blocking[.sharpness])
         g = QualityGate()
@@ -675,7 +681,7 @@ final class ExtraCheckTests: XCTestCase {
         }
         XCTAssertEqual(d.tone, .warning)
         XCTAssertEqual(d.title, "Keep your face uncovered")
-        XCTAssertEqual(d.subtitle, "Then keep turning")
+        XCTAssertEqual(d.subtitle, "Then keep turning to the left")
     }
 
     // MARK: Round 2 upload signals

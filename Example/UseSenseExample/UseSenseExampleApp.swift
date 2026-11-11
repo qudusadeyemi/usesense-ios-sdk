@@ -3,6 +3,12 @@ import UseSenseSDK
 
 @main
 struct UseSenseExampleApp: App {
+    init() {
+        #if DEBUG
+        UseSenseDebugBrand.applyFromLaunchArguments()
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             #if DEBUG

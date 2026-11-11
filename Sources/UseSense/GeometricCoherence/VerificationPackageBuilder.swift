@@ -5,66 +5,84 @@ import Foundation
 final class VerificationPackageBuilder: @unchecked Sendable {
 
     /// Build the verification_package JSON dictionary for metadata upload.
+    ///
+    /// `fittingResults[i]` is the fit of `meshResults[i]` (nil when the fit
+    /// failed); `frameHashes[i]` is the hash of uploaded JPEG `i`. Entry `k`
+    /// describes upload position `i`: a frame with no mesh or no fit simply
+    /// has no entry (EVIDENCE-v1 section 3), never a neighbour's data.
+    ///
+    /// `evidence`: add the EVIDENCE-v1 per-frame fields (raw landmarks,
+    /// matrix pose under `matrix_zyx_v3`, eye blendshapes, capture-clock
+    /// timestamps) and bind the landmarks into `meshDigest`.
     func build(
         meshResults: [FaceMeshResult],
-        fittingResults: [ThreeDMMFitResult],
+        fittingResults: [ThreeDMMFitResult?],
         frameHashes: [String],
         meshBindingChallenge: String?,
         attestFields: [String: Any],
-        platform: String = "ios"
+        platform: String = "ios",
+        evidence: Bool = false
     ) -> [String: Any]? {
-        guard !meshResults.isEmpty, !fittingResults.isEmpty else { return nil }
-
         let frameCount = min(meshResults.count, min(fittingResults.count, frameHashes.count))
         guard frameCount > 0 else { return nil }
 
         var frames: [[String: Any]] = []
+        var usedFits: [ThreeDMMFitResult] = []
+        var seenHashes = Set<String>()
 
         for i in 0..<frameCount {
             let mesh = meshResults[i]
-            let fit = fittingResults[i]
+            guard let fit = fittingResults[i] else { continue }
             let hash = frameHashes[i]
+            // At most one entry per uploaded frame (section 3, rule 3).
+            guard seenHashes.insert(hash).inserted else { continue }
 
-            // frameIndex must be the upload-order position (the same index
-            // the server sees when it enumerates the uploaded multipart
-            // frames), NOT FaceMeshManager's camera-sequence counter. The
-            // backend mesh-integrity validator indexes `serverFrameHashes`
-            // by this field as a secondary cross-check; if we emit
-            // `mesh.frameIndex` here the cross-check fires a warning on
-            // every frame (the SDK counter is only coincidentally aligned
-            // with upload position when face-mesh readiness and JPEG
-            // capture start at exactly the same moment). Using `i` gives
-            // the server the alignment it expects and silences the
-            // "SDK frameIndex is not aligned with upload order" warnings.
-            //
-            // The binding proof itself is unaffected — it's always keyed
-            // on `hash` (the upload-position JPEG SHA-256) and
-            // `meshDigest` (the canonicalized shape+pose hash), and the
-            // server's primary verification pivots on `frame.frameHash`,
-            // not `frame.frameIndex`.
+            // frameIndex is the upload position `i` (the index the server sees
+            // when it enumerates the multipart frames), not FaceMeshManager's
+            // camera counter. The server matches entries by frameHash.
+            var pose = fit.pose
+            var method = Evidence.poseMethodLegacy
+            var fields: EvidenceFrameFields?
+            if evidence {
+                let f = EvidenceFrameFields(mesh: mesh)
+                fields = f
+                if let mp = f.matrixPose {
+                    pose = mp
+                    method = Evidence.poseMethodV3
+                }
+            }
             var frame: [String: Any] = [
                 "frameIndex": i,
-                "timestamp": mesh.timestampMs,
+                "timestamp": evidence ? Int64(mesh.captureMs) : mesh.timestampMs,
                 "shapeParams": fit.shapeParams,
                 "pose": [
-                    "yaw": fit.pose.yaw,
-                    "pitch": fit.pose.pitch,
-                    "roll": fit.pose.roll
+                    "yaw": pose.yaw,
+                    "pitch": pose.pitch,
+                    "roll": pose.roll
                 ],
                 "depthPlausibility": fit.depthPlausibility,
                 "geometricRatios": fit.geometricRatios,
                 "poseRatios2D": fit.poseRatios2D,
                 "frameHash": hash,
-                "poseNormalizationMethod": "mediapipe_zyx_v2"
+                "poseNormalizationMethod": method
             ]
+            var landmarksHash: String?
+            if let f = fields {
+                if f.landmarks.count == 478 * 3 || f.landmarks.count == 468 * 3 {
+                    frame["landmarks"] = f.landmarks
+                    landmarksHash = Evidence.landmarksHash(f.landmarks)
+                }
+                if let m = f.transformMatrix { frame["transformMatrix"] = m }
+                if let b = f.blendshapesJSON { frame["blendshapes"] = b }
+            }
 
             #if canImport(CryptoKit)
             // Compute mesh digest and binding proof
             let digest = BindingProofGenerator.meshDigest(
                 shapeParams: fit.shapeParams,
-                pose: fit.pose,
+                pose: pose,
                 depthPlausibility: fit.depthPlausibility,
-                landmarkCount: mesh.landmarks.count
+                landmarksHash: landmarksHash
             )
             frame["meshDigest"] = digest
 
@@ -79,13 +97,15 @@ final class VerificationPackageBuilder: @unchecked Sendable {
             #endif
 
             frames.append(frame)
+            usedFits.append(fit)
         }
+        guard !frames.isEmpty else { return nil }
 
         // Cross-frame consistency: L2 distance between shape vectors
-        let crossFrameConsistency = computeCrossFrameConsistency(fittingResults: Array(fittingResults.prefix(frameCount)))
+        let crossFrameConsistency = computeCrossFrameConsistency(fittingResults: usedFits)
 
         // Preliminary score: weighted combo of depth + consistency
-        let avgDepth = fittingResults.prefix(frameCount).map(\.depthPlausibility).reduce(0, +) / Double(frameCount)
+        let avgDepth = usedFits.map(\.depthPlausibility).reduce(0, +) / Double(usedFits.count)
         let preliminaryScore = avgDepth * 0.6 + crossFrameConsistency * 0.4
 
         // Build attestation

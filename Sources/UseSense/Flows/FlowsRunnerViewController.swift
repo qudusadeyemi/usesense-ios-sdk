@@ -62,11 +62,17 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    deinit { CaptureBrandSeed.flowRunActive = false }
+
+    /// The face step's init-session `branding` (the layer under the run view's).
+    private var initSessionBranding: ServerBranding?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         // Seed the appearance + copy resolvers with the SDK-init layer immediately
         // so the first loading surface is already themed and worded; the server
         // layer is merged in once the run loads (see applyResolved*).
+        CaptureBrandSeed.flowRunActive = true
         applyResolvedAppearance(server: nil)
         applyResolvedCopy(server: nil)
         view.backgroundColor = .systemBackground
@@ -103,10 +109,14 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             else { return nil }
             return FlowAppearance(colors: AppearanceColors(primary: flat))
         }()
-        let serverLayer = FlowAppearance.merge(high: server, low: legacyServerColor)
+        // BRAND-v1 6: the face step's init-session `branding` is a fallback
+        // layer below the run view's branding.
+        let runLayer = FlowAppearance.merge(high: server, low: legacyServerColor)
+        let serverLayer = FlowAppearance.merge(high: runLayer, low: initSessionBranding?.resolvedAppearance)
         let merged = FlowAppearance.merge(high: options.appearance, low: serverLayer)
-        USTrace.log(BrandingResolver.describeSources(code: options.appearance, dashboard: serverLayer))
+        USTrace.log(BrandingResolver.describeSources(code: options.appearance, dashboard: serverLayer, dashboardLabel: "flow"))
         FlowAppearanceResolver.set(merged)
+        FlowCopyResolver.setDisplayName(view_?.branding?.displayName ?? initSessionBranding?.displayName)
         switch merged?.mode ?? .auto {
         case .light: overrideUserInterfaceStyle = .light
         case .dark:  overrideUserInterfaceStyle = .dark
@@ -119,7 +129,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     /// parity screens read for every subject-facing string. Mirrors
     /// applyResolvedAppearance; presentation only.
     private func applyResolvedCopy(server: FlowCopy?) {
-        let merged = FlowCopy.merge(high: options.copy, low: server)
+        let serverLayer = FlowCopy.merge(high: server, low: initSessionBranding?.copy)
+        let merged = FlowCopy.merge(high: options.copy, low: serverLayer)
         FlowCopyResolver.set(merged)
     }
 
@@ -277,6 +288,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         // run's theme.
         FlowAppearanceResolver.reset()
         FlowCopyResolver.reset()
+        CaptureBrandSeed.flowRunActive = false
         dismiss(animated: true) {
             cb(result)
         }
@@ -735,6 +747,10 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     /// already populated. Environment is inherited from the flow run.
     private func presentCaptureViewController(with response: CreateSessionResponse) {
         guard let view = view_ else { return }
+        // The init-session branding fills whatever the run view left unset.
+        initSessionBranding = response.branding
+        applyResolvedAppearance(server: view.branding?.appearance)
+        applyResolvedCopy(server: view.branding?.copy)
         let endpoint = options.apiBaseURL.appendingPathComponent("v1").absoluteString
         let environment: Environment = view.environment == "sandbox" ? .sandbox : .production
         // Hand the resolved white-label down with the config. The runner's own

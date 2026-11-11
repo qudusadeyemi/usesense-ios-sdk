@@ -6,6 +6,59 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Capture screens follow the brand (BRAND-v1).** Every guided capture
+  screen reads one resolved theme: page screens (primers, sheets, results,
+  errors, dialogs, "Getting ready", the camera request) use the full palette
+  and follow `appearance.mode` (unset stays dark); the camera stays dark and
+  takes brand accents only when they reach 3:1 on `#333333` (the ring
+  lightens the brand primary if needed). New `appearance.capture.challenge`;
+  `capture.contourStart` / `contourEnd` are retired (accepted, ignored).
+  Buttons follow `shape.buttonRadius` / `buttonStyle`; titles use
+  `typography.displayFamily`; pages show the logo (or display name),
+  `icons`, `loader` and `background.imageUrl`. "Powered by Sense" shows on
+  every guided screen. The help is a branded dialog instead of a system alert.
+  - `FlowCopy.capture` (`CaptureCopy`): every capture string, today's English
+    by default, `{app}` and `{side}` placeholders, blank values ignored.
+  - Hosted verification and enrollment now brand their capture screens; a
+    standalone session also applies its copy and display name; a Flow uses
+    the face step's init-session `branding` under the run view's.
+  - Removed the unused `StepUpViews.swift` screens.
+
+- **LiveSense evidence contract (EVIDENCE-v1, capture redesign Phase 2).**
+  The server scores depth and binding itself; the SDK collects and uploads
+  the raw evidence. Everything is additive: a session whose server sends no
+  `evidence` block (or another contract version) uploads exactly as before.
+  - The optional `evidence` block is decoded on every init path (session
+    create, token exchange, Flows, hosted). Every key is optional, unknown keys
+    are ignored, and a malformed key reads as absent.
+  - Per frame in `verification_package.frames`: raw MediaPipe `landmarks`
+    (478 points, uploaded-JPEG space, unmirrored, 5 decimals, bound into
+    `meshDigest`), `transformMatrix` and the matrix pose under
+    `poseNormalizationMethod: "matrix_zyx_v3"`, `blendshapes.eyeBlinkLeft/Right`,
+    and `timestamp` on the capture clock (ms since the camera's first frame).
+  - `frameIndex` is the upload position. A frame whose 3D fit failed has no
+    entry instead of shifting every later frame, and two uploads with the same
+    bytes get one entry.
+  - Colour sequence: during the scan the screen is tinted with the server's
+    three colours (35%, 0.6 s each, full brightness, white balance locked)
+    with no new copy. What was shown, as measured from the display link, goes
+    in `metadata.evidence.colour`. A gate pause stops the tint and drops the
+    partly shown colour; the sequence resumes at that colour when the scan
+    does, so the segments stay in the issued order the server checks. A
+    dropped scan window clears the segments and starts again at the first
+    colour.
+  - Closer step: when the ring completes, the oval grows by the server's
+    `target_scale` and the existing "Move a little closer" guidance shows
+    until the face reaches `min_scale`. Three near frames bank, recorded with
+    the last three scan frames in `metadata.evidence.closer`. After 4 s it
+    gives up (`skipped_reason: "timeout"`) and the capture carries on.
+  - Binding v2: an App Attest assertion over the evidence digest
+    (`metadata.evidence.binding`), alongside the v1 `bindingProof`.
+  - `metadata.evidence.capability` says what this build can do: no MediaPipe
+    means no landmarks, and no App Attest means no binding v2.
+
 ## [4.11.0] - Unreleased
 
 Built against the agreed end-user storyboard (flows 4 to 6). Screens checked

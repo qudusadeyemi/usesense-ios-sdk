@@ -19,19 +19,34 @@ public struct UseSenseView: View {
     }
 
     public var body: some View {
+        CaptureThemeRoot { screens }
+    }
+
+    private var screens: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
             switch viewModel.displayState {
+            case .idle where viewModel.guided:
+                CaptureLoadingView()
+                    .onAppear { viewModel.start() }
+
             case .idle:
                 ProgressView()
                     .tint(.white)
                     .onAppear { viewModel.start() }
 
+            case .created where viewModel.guided:
+                CaptureLoadingView()
+
             case .created:
                 ProgressView("Creating session...")
                     .tint(.white)
                     .foregroundColor(.white)
+
+            case .permissionsRequired where viewModel.guided:
+                GuidedPageView(content: GuidedScreen.cameraRequest.content(),
+                               onPrimary: { viewModel.requestPermissions() }, onClose: close)
 
             case .permissionsRequired:
                 permissionsView
@@ -86,7 +101,8 @@ public struct UseSenseView: View {
             case .challenge(let spec):
                 if viewModel.extraCheckOnScanScreen {
                     GuidedChallengeView(camera: cameraLayer, display: viewModel.challenge,
-                                        meter: viewModel.meter, onBack: viewModel.askToLeave)
+                                        meter: viewModel.meter, fillLight: viewModel.challengeFillLight,
+                                        onBack: viewModel.askToLeave)
                 } else {
                     ZStack {
                         cameraLayer
@@ -108,7 +124,7 @@ public struct UseSenseView: View {
 
             case .extraCheckDone:
                 GuidedChallengeView(camera: cameraLayer, display: viewModel.challenge, done: true,
-                                    onBack: viewModel.askToLeave)
+                                    fillLight: viewModel.challengeFillLight, onBack: viewModel.askToLeave)
 
             case .micUnavailable:
                 GuidedPageView(content: GuidedScreen.micNeeded.content(),
@@ -217,6 +233,7 @@ public struct UseSenseView: View {
         }
         .overlay(alignment: .bottom) {
             if viewModel.showsCaptureFooter { CaptureFooter() }
+            if viewModel.showsGuidedCameraFooter { CapturePoweredBy(onCamera: true) }
         }
         .overlay {
             if viewModel.leavePrompt {
@@ -245,8 +262,7 @@ public struct UseSenseView: View {
         switch screen {
         case .uploadFailed:
             GuidedSheetScreen(backdrop: viewModel.uploadBackdropImage, onBack: close) {
-                GuidedSheet(icon: "arrow.up", iconFill: CaptureColors.current.warning.color.opacity(0.16),
-                            iconInk: CaptureColors.current.warning.color,
+                GuidedSheet(icon: "arrow.up", iconTone: .tone(.warning),
                             title: screen.content().title, message: screen.content().body,
                             primary: screen.content().primary, onPrimary: { viewModel.resumeFinalization() })
                 .accessibilityIdentifier("usesense.upload.failed")
@@ -559,7 +575,7 @@ struct VerifyingBadge: View {
 
 // MARK: - ViewModel
 
-final class UseSenseViewModel: ObservableObject {
+final class UseSenseViewModel: ObservableObject, ColourTintHost {
     @Published var state: SessionState = .idle
     @Published var qualityGuidance: [QualityGuidance] = []
     @Published var qualityLevel: QualityLevel = .good
@@ -570,12 +586,19 @@ final class UseSenseViewModel: ObservableObject {
     @Published var guide = GuidedCaptureUpdate(snapshot: .initial, shutterAvailable: false)
     @Published var scan = ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: 0, completed: false)
     @Published var uploadBackdrop: UIImage?
+    /// EVIDENCE-v1 colour sequence: the whole-screen tint showing now.
+    @Published var tint: (color: Color, opacity: Double)? = nil
+    /// EVIDENCE-v1 closer step: the oval's scale, and whether the person
+    /// still needs to come closer.
+    @Published var closer: (scale: CGFloat, needsCloser: Bool) = (1, false)
 
     // Guided extra check (storyboard flows 4 to 6)
     @Published var challenge = ChallengeDisplay.placeholder
     @Published var meter: [Double] = Array(repeating: 0, count: ExtraCheckTokens.meterBars)
     @Published var inlineStepUp = InlineStepUpDisplay.preparing
     @Published var leavePrompt = false
+    /// The fill light during the movement (the scan needed it).
+    @Published var challengeFillLight = false
     @Published var fallbackBusy = false
     /// "Try again" taps used from the reject screen in this verification.
     private var rejectRetriesUsed = 0
@@ -583,6 +606,8 @@ final class UseSenseViewModel: ObservableObject {
 
     private let session: UseSenseSession
     private let fillLight = ScreenFillLight()
+    /// The colour sequence raised the brightness (not the fill light).
+    private var colourRaisedBrightness = false
     private let readyHaptic = UIImpactFeedbackGenerator(style: .light)
     private let doneHaptic = UINotificationFeedbackGenerator()
     private var lastAnnouncement = Date.distantPast
@@ -658,6 +683,17 @@ final class UseSenseViewModel: ObservableObject {
         }
     }
 
+    /// "Powered by Sense" on the guided camera screens (BRAND-v1 decision 4).
+    /// Pages and sheets draw their own, in the page colours.
+    var showsGuidedCameraFooter: Bool {
+        guard guided else { return false }
+        switch displayState {
+        case .faceGuide, .baseline: return true
+        case .challenge, .inlineStepUp, .extraCheckDone: return extraCheckOnScanScreen
+        default: return false
+        }
+    }
+
     /// "Try Again" on a reject: standalone sessions only (see isInjected).
     var canRetryFromResult: Bool { !session.isInjected }
 
@@ -684,6 +720,10 @@ final class UseSenseViewModel: ObservableObject {
                                 bankedSeconds: 1.5, totalSeconds: 3, completed: false)
         }
         #endif
+        session.colourTintHost = self
+        session.onCloserUpdate = { [weak self] scale, needsCloser in
+            DispatchQueue.main.async { self?.closer = (scale, needsCloser) }
+        }
         session.onScanUpdate = { [weak self] progress in
             DispatchQueue.main.async { self?.apply(scan: progress) }
         }
@@ -720,6 +760,12 @@ final class UseSenseViewModel: ObservableObject {
             scan = ScanProgress(fraction: 0, paused: false, bankedSeconds: 0, totalSeconds: 0, completed: false)
             readyHaptic.prepare()
         case .challenge(let spec):
+            // The scan needed the fill light: on again for the movement (the
+            // sheet before it turned it off). Android A03 dark-room run.
+            if extraCheckOnScanScreen, session.guidedFillLightOn {
+                fillLight.activate()
+                challengeFillLight = true
+            }
             if extraCheckOnScanScreen, case .challenge = previous {} else {
                 challenge = ChallengeRunner(spec: spec)?.display() ?? .placeholder
                 meter = Array(repeating: 0, count: ExtraCheckTokens.meterBars)
@@ -751,6 +797,10 @@ final class UseSenseViewModel: ObservableObject {
             }
         default:
             fillLight.restore()
+        }
+        switch newState {
+        case .challenge, .extraCheckDone: break
+        default: challengeFillLight = false
         }
         if newState.isTerminal || newState.isIdle {
             if leavePrompt { session.setChallengeHeld(false) }
@@ -823,6 +873,28 @@ final class UseSenseViewModel: ObservableObject {
     }
 
     func setViewport(_ size: CGSize) { session.setViewport(size) }
+
+    // MARK: EVIDENCE-v1 colour sequence (ColourTintHost, main thread)
+
+    func showTint(_ colour: String?, opacity: Double) {
+        guard let colour else { tint = nil; return }
+        tint = (CaptureColors.pick(colour, CaptureTokens.tintFallback).color, opacity)
+    }
+
+    func holdFullBrightness() -> Double? {
+        if !fillLight.isActive {
+            fillLight.activate()
+            colourRaisedBrightness = fillLight.isActive
+        }
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return (scenes.first { $0.activationState == .foregroundActive } ?? scenes.first).map { Double($0.screen.brightness) }
+    }
+
+    func releaseFullBrightness() {
+        // The fill light, if it came on meanwhile, keeps the brightness.
+        if colourRaisedBrightness, !guide.snapshot.fillLight { fillLight.restore() }
+        colourRaisedBrightness = false
+    }
 
     func shutterTapped() { Task { await session.shutterTapped() } }
 

@@ -119,12 +119,36 @@ public struct HostedInitSessionResponse: Codable, Sendable {
     public let nonce: String
     public let policy: SessionPolicy
     public let upload: UploadConfig
+    /// EVIDENCE-v1 block (optional; see `EvidenceConfig`).
+    public let evidence: EvidenceConfig?
 
     enum CodingKeys: String, CodingKey {
         case success
         case sessionId = "session_id"
         case sessionToken = "session_token"
-        case nonce, policy, upload
+        case nonce, policy, upload, evidence
+    }
+
+    public init(success: Bool, sessionId: String, sessionToken: String, nonce: String,
+                policy: SessionPolicy, upload: UploadConfig, evidence: EvidenceConfig? = nil) {
+        self.success = success
+        self.sessionId = sessionId
+        self.sessionToken = sessionToken
+        self.nonce = nonce
+        self.policy = policy
+        self.upload = upload
+        self.evidence = evidence
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        success = try c.decode(Bool.self, forKey: .success)
+        sessionId = try c.decode(String.self, forKey: .sessionId)
+        sessionToken = try c.decode(String.self, forKey: .sessionToken)
+        nonce = try c.decode(String.self, forKey: .nonce)
+        policy = try c.decode(SessionPolicy.self, forKey: .policy)
+        upload = try c.decode(UploadConfig.self, forKey: .upload)
+        evidence = c.lenientEvidence(.evidence)
     }
 
     /// Convert to the standard CreateSessionResponse format used by the capture engine.
@@ -136,7 +160,8 @@ public struct HostedInitSessionResponse: Codable, Sendable {
             expiresAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(900)),
             nonce: nonce,
             policy: policy,
-            upload: upload
+            upload: upload,
+            evidence: evidence
         )
     }
 }

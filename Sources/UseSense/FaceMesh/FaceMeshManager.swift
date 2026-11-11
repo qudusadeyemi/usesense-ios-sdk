@@ -11,6 +11,8 @@ import MediaPipeTasksVision
 struct FaceMeshResult: Sendable {
     let frameIndex: Int
     let timestampMs: Int64
+    /// EVIDENCE-v1 capture clock: ms since the camera's first frame.
+    var captureMs: Int = 0
     let headPose: HeadPose
     let leftEAR: Double
     let rightEAR: Double
@@ -33,6 +35,8 @@ struct FaceGateSignals: Sendable {
     /// Blendshape eyeBlinkLeft / eyeBlinkRight (0 open ... 1 closed).
     var eyeBlinkLeft: Double?
     var eyeBlinkRight: Double?
+    /// The facial transformation matrix, row-major 4x4 (EVIDENCE-v1 section 5).
+    var transformMatrix: [Double]? = nil
 
     static let none = FaceGateSignals(faceCount: 1, matrixPose: nil, eyeBlinkLeft: nil, eyeBlinkRight: nil)
 }
@@ -147,7 +151,7 @@ final class FaceMeshManager: @unchecked Sendable {
     /// explicitly pass it to `recordResult(_:)` for frames that are
     /// also being buffered to the JPEG upload buffer. See the docstring
     /// on `recordResult` for why.
-    func processFrame(_ pixelBuffer: CVPixelBuffer, timestampMs: Int64) -> FaceMeshResult? {
+    func processFrame(_ pixelBuffer: CVPixelBuffer, timestampMs: Int64, captureMs: Int = 0) -> FaceMeshResult? {
         guard isReady else { return nil }
 
         guard let (landmarkData, gate) = extractLandmarks(pixelBuffer) else { return nil }
@@ -165,6 +169,7 @@ final class FaceMeshManager: @unchecked Sendable {
         return FaceMeshResult(
             frameIndex: cameraIndex,
             timestampMs: timestampMs,
+            captureMs: captureMs,
             headPose: pose,
             leftEAR: leftEAR,
             rightEAR: rightEAR,
@@ -202,6 +207,7 @@ final class FaceMeshManager: @unchecked Sendable {
         let recorded = FaceMeshResult(
             frameIndex: uploadIndex,
             timestampMs: result.timestampMs,
+            captureMs: result.captureMs,
             headPose: result.headPose,
             leftEAR: result.leftEAR,
             rightEAR: result.rightEAR,
@@ -211,6 +217,16 @@ final class FaceMeshManager: @unchecked Sendable {
         )
         results.append(recorded)
         lock.unlock()
+    }
+
+    /// MediaPipe is linked and its model loaded (EVIDENCE-v1 capability).
+    var available: Bool {
+        #if canImport(MediaPipeTasksVision)
+        return isReady || Bundle.useSenseResources.url(forResource: MediaPipeModelInfo.resourceName,
+                                                        withExtension: MediaPipeModelInfo.resourceExtension) != nil
+        #else
+        return false
+        #endif
     }
 
     func getResults() -> [FaceMeshResult] {
@@ -264,6 +280,9 @@ final class FaceMeshManager: @unchecked Sendable {
                 let m = result.facialTransformationMatrixes[subject]
                 if m.rows >= 3, m.columns >= 3 {
                     gate.matrixPose = Self.zyxPose { r, c in Double(m.value(atRow: UInt(r), column: UInt(c))) }
+                }
+                if m.rows == 4, m.columns == 4 {
+                    gate.transformMatrix = (0..<16).map { i in Double(m.value(atRow: UInt(i / 4), column: UInt(i % 4))) }
                 }
             }
             if subject < result.faceBlendshapes.count {

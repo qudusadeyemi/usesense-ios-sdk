@@ -97,15 +97,16 @@ public struct BrandingConfig: Sendable {
     /// Same rule for `buttonRadius`: the legacy default (10) must not occupy the
     /// code layer and beat a dashboard radius.
     private let buttonRadiusWasSet: Bool
-    /// Full white-label customization passed by the developer at SDK init. This
-    /// is the highest-priority layer in the Flow appearance merge:
-    ///   appearance > server(branding.appearance) > legacy primaryColor/buttonRadius/logoUrl/fontFamily > built-in default.
-    /// When nil, the legacy `primaryColor` / `buttonRadius` / `logoUrl` /
-    /// `fontFamily` fields above still apply (projected into the lowest layer).
+    /// Full white-label customization passed by the developer at SDK init.
+    /// Precedence per field (BRAND-v1 section 2, "code wins"):
+    ///   per-launch code > this `appearance` > the legacy primaryColor /
+    ///   buttonRadius / fontFamily / logoUrl above > dashboard Flow > dashboard
+    ///   org > built-in default.
+    /// The legacy fields are code, so they beat every dashboard layer.
     public var appearance: FlowAppearance?
     /// Full white-label copy/messaging override passed by the developer at SDK
-    /// init. Highest-priority layer in the Flow copy merge:
-    ///   copy > server(branding.copy) > built-in default.
+    /// init. Precedence per field: code copy > dashboard Flow > dashboard org >
+    /// built-in default (capture strings: `copy.capture`, BRAND-v1 section 5).
     /// When nil, the built-in hosted-page copy applies.
     public var copy: FlowCopy?
 

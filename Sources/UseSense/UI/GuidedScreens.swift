@@ -20,6 +20,8 @@ enum GuidedScreen: Equatable {
     case micNeeded
     /// Sheet over the blurred scan: the upload failed but the scan is kept.
     case uploadFailed
+    /// Asks for the camera before the system prompt.
+    case cameraRequest
 
     enum Tone: Equatable { case brand, warning, success, failure }
 
@@ -31,60 +33,101 @@ enum GuidedScreen: Equatable {
         var tips: [String] = []
         var primary: String
         var secondary: String?
+        /// `appearance.icons` slot that replaces the icon tile (result pages).
+        var iconSlot: String?
     }
 
     func content(appName: String = GuidedScreen.appName) -> Content {
         let app = appName
         let App = appName.prefix(1).uppercased() + appName.dropFirst()
+        typealias T = CaptureText
+        let doneLabel = T.text(\.capture?.result?.done, "Done")
+        let tryAgain = T.text(\.capture?.result?.tryAgain, "Try again")
+        let errTryAgain = T.text(\.capture?.errors?.tryAgain, "Try again")
+        let openSettings = T.text(\.capture?.errors?.openSettings, "Open Settings")
         switch self {
         case .primerTwoSteps(let digits):
-            return Content(icon: "faceid", tone: .brand, title: "Two quick steps",
+            return Content(icon: "faceid", tone: .brand,
+                           title: T.text(\.capture?.primer?.twoStepsTitle, "Two quick steps"),
                            body: digits
-                               ? "A selfie scan, then say a few numbers out loud. About 10 seconds."
-                               : "A selfie scan, then a short movement. About 10 seconds.",
-                           tips: ["Good light on your face", "Take off sunglasses, hats and masks", "Only you in the picture"],
-                           primary: "Start")
+                               ? T.text(\.capture?.primer?.twoStepsDigitsBody,
+                                        "A selfie scan, then say a few numbers out loud. About 10 seconds.")
+                               : T.text(\.capture?.primer?.twoStepsBody,
+                                        "A selfie scan, then a short movement. About 10 seconds."),
+                           tips: T.list(\.capture?.primer?.twoStepsTips,
+                                        ["Good light on your face", "Take off sunglasses, hats and masks", "Only you in the picture"]),
+                           primary: T.text(\.capture?.primer?.start, "Start"))
         case .approved:
-            return Content(icon: "checkmark", tone: .success, title: "You're verified",
-                           body: "Thanks. You can carry on in \(app).", primary: "Done")
+            return Content(icon: "checkmark", tone: .success,
+                           title: T.text(\.capture?.result?.approvedTitle, "You're verified"),
+                           body: T.text(\.capture?.result?.approvedBody, "Thanks. You can carry on in \(app)."),
+                           primary: doneLabel, iconSlot: "success")
         case .review:
-            return Content(icon: "clock", tone: .warning, title: "Thanks, we're checking",
-                           body: "This can take a few minutes. \(App) will let you know.", primary: "Done")
+            return Content(icon: "clock", tone: .warning,
+                           title: T.text(\.capture?.result?.reviewTitle, "Thanks, we're checking"),
+                           body: T.text(\.capture?.result?.reviewBody, "This can take a few minutes. \(App) will let you know."),
+                           primary: doneLabel, iconSlot: "review")
         case .rejected(let canRetry, let onceMore):
             if canRetry {
-                return Content(icon: "xmark", tone: .failure, title: "We couldn't verify you",
-                               body: "This sometimes happens with poor light or movement. "
-                                   + (onceMore ? "You can try once more." : "You can try again."),
-                               tips: ["Face a window or a lamp", "Hold your phone at eye level"],
-                               primary: "Try again", secondary: "Not now")
+                return Content(icon: "xmark", tone: .failure,
+                               title: T.text(\.capture?.result?.retryTitle, "We couldn't verify you"),
+                               body: T.text(\.capture?.result?.retryBody,
+                                            "This sometimes happens with poor light or movement. "
+                                                + (onceMore ? "You can try once more." : "You can try again.")),
+                               tips: T.list(\.capture?.result?.retryTips, ["Face a window or a lamp", "Hold your phone at eye level"]),
+                               primary: tryAgain, secondary: T.text(\.capture?.result?.notNow, "Not now"),
+                               iconSlot: "notVerified")
             }
-            return Content(icon: "xmark", tone: .failure, title: "We couldn't verify you",
-                           body: "Please contact \(app) for help.", primary: "Done")
+            return Content(icon: "xmark", tone: .failure,
+                           title: T.text(\.capture?.result?.rejectedTitle, "We couldn't verify you"),
+                           body: T.text(\.capture?.result?.rejectedBody, "Please contact \(app) for help."),
+                           primary: doneLabel, iconSlot: "notVerified")
         case .cameraDenied:
-            return Content(icon: "camera", tone: .warning, title: "Camera access needed",
-                           body: "We use the camera only for this check. Turn on camera access for \(app) in Settings, then come back.",
-                           primary: "Open Settings", secondary: "Try again")
+            return Content(icon: "camera", tone: .warning,
+                           title: T.text(\.capture?.errors?.cameraDeniedTitle, "Camera access needed"),
+                           body: T.text(\.capture?.errors?.cameraDeniedBody,
+                                        "We use the camera only for this check. Turn on camera access for \(app) in Settings, then come back."),
+                           primary: openSettings, secondary: errTryAgain)
         case .cameraStopped:
-            return Content(icon: "camera", tone: .warning, title: "The camera stopped",
-                           body: "Another app may be using it. Close other apps that use the camera, then try again.",
-                           primary: "Try again")
+            return Content(icon: "camera", tone: .warning,
+                           title: T.text(\.capture?.errors?.cameraStoppedTitle, "The camera stopped"),
+                           body: T.text(\.capture?.errors?.cameraStoppedBody,
+                                        "Another app may be using it. Close other apps that use the camera, then try again."),
+                           primary: errTryAgain)
         case .offline:
-            return Content(icon: "wifi.slash", tone: .warning, title: "You're offline",
-                           body: "Check your internet connection, then try again.", primary: "Try again")
+            return Content(icon: "wifi.slash", tone: .warning,
+                           title: T.text(\.capture?.errors?.offlineTitle, "You're offline"),
+                           body: T.text(\.capture?.errors?.offlineBody, "Check your internet connection, then try again."),
+                           primary: errTryAgain)
         case .expired:
-            return Content(icon: "hourglass", tone: .warning, title: "This check timed out",
-                           body: "For your security, each check is only open for 15 minutes.", primary: "Start again")
+            return Content(icon: "hourglass", tone: .warning,
+                           title: T.text(\.capture?.errors?.expiredTitle, "This check timed out"),
+                           body: T.text(\.capture?.errors?.expiredBody, "For your security, each check is only open for 15 minutes."),
+                           primary: T.text(\.capture?.errors?.startAgain, "Start again"))
         case .error:
-            return Content(icon: "exclamationmark.triangle", tone: .warning, title: "Something went wrong",
-                           body: "It's not you. Please try again in a moment.", primary: "Try again")
+            return Content(icon: "exclamationmark.triangle", tone: .warning,
+                           title: T.text(\.capture?.errors?.errorTitle, "Something went wrong"),
+                           body: T.text(\.capture?.errors?.errorBody, "It's not you. Please try again in a moment."),
+                           primary: errTryAgain)
         case .micNeeded:
-            return Content(icon: "mic", tone: .warning, title: "Microphone needed",
-                           body: "This check needs your microphone. Turn it on for \(app) in Settings, or do a head movement instead.",
-                           primary: "Open Settings", secondary: "Do a head movement instead")
+            return Content(icon: "mic", tone: .warning,
+                           title: T.text(\.capture?.errors?.micTitle, "Microphone needed"),
+                           body: T.text(\.capture?.errors?.micBody,
+                                        "This check needs your microphone. Turn it on for \(app) in Settings, or do a head movement instead."),
+                           primary: openSettings,
+                           secondary: T.text(\.capture?.errors?.useHeadMovement, "Do a head movement instead"))
         case .uploadFailed:
-            return Content(icon: "arrow.up", tone: .warning, title: "Couldn't send your scan",
-                           body: "Check your connection. Your scan is kept, so you won't need to do it again.",
-                           primary: "Try again")
+            return Content(icon: "arrow.up", tone: .warning,
+                           title: T.text(\.capture?.upload?.failedTitle, "Couldn't send your scan"),
+                           body: T.text(\.capture?.upload?.failedBody,
+                                        "Check your connection. Your scan is kept, so you won't need to do it again."),
+                           primary: T.text(\.capture?.upload?.retry, "Try again"))
+        case .cameraRequest:
+            return Content(icon: "camera", tone: .brand,
+                           title: T.text(\.capture?.errors?.cameraTitle, "Camera Access Required"),
+                           body: T.text(\.capture?.errors?.cameraBody,
+                                        "We need camera access to verify your identity. Your privacy is protected."),
+                           primary: T.text(\.capture?.errors?.allowCamera, "Grant Access"))
         }
     }
 
@@ -117,11 +160,17 @@ enum GuidedScreen: Equatable {
         }
     }
 
-    /// The host app's name for "[App]" in the copy.
-    static var appName: String {
-        let info = Bundle.main.infoDictionary
-        if let name = info?["CFBundleDisplayName"] as? String, !name.isEmpty { return name }
-        if let name = info?["CFBundleName"] as? String, !name.isEmpty { return name }
-        return "the app"
+    /// "[App]" in the copy: the brand's display name, else the host app's name.
+    static var appName: String { CaptureText.appName }
+}
+
+/// Leave dialog and loading strings (BRAND-v1 copy.capture).
+enum CaptureScreenCopy {
+    static var leaveTitle: String { CaptureText.text(\.capture?.leave?.title, "Leave verification?") }
+    static var leaveBody: String {
+        CaptureText.text(\.capture?.leave?.body, "You're nearly done. If you leave, you'll need to start again.")
     }
+    static var leave: String { CaptureText.text(\.capture?.leave?.leave, "Leave") }
+    static var keepGoing: String { CaptureText.text(\.capture?.leave?.keepGoing, "Keep going") }
+    static var gettingReady: String { CaptureText.text(\.capture?.loading?.title, "Getting ready") }
 }
