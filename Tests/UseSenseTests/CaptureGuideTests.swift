@@ -315,17 +315,17 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertFalse(snap.allPass, "no auto start")
         XCTAssertEqual(snap.hint, .faceALight, "Find more light")
 
-        // Hysteresis: 22 isn't enough; 30 held for 0.5 s releases it.
-        let edge = FaceRegionQuality(meanLuma: 22, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 60)
-        let lit = FaceRegionQuality(meanLuma: 30, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 60)
-        let s0 = t
-        while t < s0 + 1.0 { snap = guide.update(good(at: t) { $0.face = edge }); t += 1.0 / 30 }
-        XCTAssertTrue(snap.tooDark, "between 20 and 25 the hold stays")
+        // Release: 20 or more held for 0.5 s (a dip below restarts the clock).
+        let lit = FaceRegionQuality(meanLuma: 22, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 60)
         let s1 = t
         while t < s1 + 0.3 { snap = guide.update(good(at: t) { $0.face = lit }); t += 1.0 / 30 }
         XCTAssertTrue(snap.tooDark, "not held long enough yet")
-        while t < s1 + 0.6 { snap = guide.update(good(at: t) { $0.face = lit }); t += 1.0 / 30 }
-        XCTAssertFalse(snap.tooDark)
+        snap = guide.update(good(at: t) { $0.face = black }); t += 1.0 / 30
+        let s2 = t
+        while t < s2 + 0.4 { snap = guide.update(good(at: t) { $0.face = lit }); t += 1.0 / 30 }
+        XCTAssertTrue(snap.tooDark, "a dip restarts the release clock")
+        while t < s2 + 0.6 { snap = guide.update(good(at: t) { $0.face = lit }); t += 1.0 / 30 }
+        XCTAssertFalse(snap.tooDark, "22 held 0.5 s: released (the A03 hovered at 18-24)")
         XCTAssertTrue(snap.allPass, "dim but scannable: light is advice")
     }
 
@@ -343,18 +343,15 @@ final class CaptureGuideTests: XCTestCase {
         }
     }
 
-    func testGoingTooDarkMidScanPausesWithTheLightHint() {
-        let black = FaceRegionQuality(meanLuma: 6, clippedHighRatio: 0, clippedLowRatio: 0.9, sharpness: 8)
+    /// A running scan isn't held (the A03 completed one at face luma 18-22).
+    func testARunningScanIsNotHeldByTheDark() {
+        let dim = FaceRegionQuality(meanLuma: 18, clippedHighRatio: 0, clippedLowRatio: 0.3, sharpness: 60)
         var guide = CaptureGuide()
         var t = 0.0
         var snap = GuideSnapshot.initial
-        while t < 1.0 { snap = guide.update(good(at: t), scanning: true); t += 1.0 / 30 }
+        while t < 2.0 { snap = guide.update(good(at: t) { $0.face = dim }, scanning: true); t += 1.0 / 30 }
+        XCTAssertFalse(snap.tooDark)
         XCTAssertTrue(snap.allPass)
-        while t < 3.0 { snap = guide.update(good(at: t) { $0.face = black }, scanning: true); t += 1.0 / 30 }
-        XCTAssertTrue(snap.tooDark)
-        XCTAssertFalse(snap.allPass, "the scan pauses (and drops after 1.5 s as any pause)")
-        XCTAssertFalse(snap.fillLight, "the fill light stays frozen during a scan")
-        XCTAssertEqual(snap.hint, .faceALight, "the only hint is the light, not sharpness")
     }
 
     func testAChallengeIsNotHeldByTheDark() {

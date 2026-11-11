@@ -475,14 +475,17 @@ struct CaptureGuide: Sendable {
     /// a face, so the fill light comes on anyway (same floor as the face).
     var darkFrameLuma: Float = 70
     /// Too dark to scan (SPEC v1.7, user decision 2026-11-11): face-box mean
-    /// luma below this holds the scan (align: no start; scan: pause) and the
-    /// only hint is "Find more light". iPhone dark-room run: ~7 with the fill
+    /// luma below this holds the start on align (no auto start, no shutter)
+    /// and the only hint is "Find more light". A running scan isn't held:
+    /// the Galaxy A03 scanned fine at 18-22. iPhone dark-room run: ~7 with the fill
     /// light on, and the scan dropped 15 times (sharpness, covered-face watch
     /// reading noise). A darker face in ordinary indoor light reads 45-67
     /// (Galaxy A03), so this floor only catches near-black faces.
     var minScanFaceLuma: Float = 20
-    /// Released once the face holds this luma for `tooDarkRelease`.
-    var releaseScanFaceLuma: Float = 25
+    /// Released once the face holds this luma for `tooDarkRelease` (same
+    /// level: the A03 hovered at 18-24 with the fill light, so a higher
+    /// release level could hold it for good; the time gives the stability).
+    var releaseScanFaceLuma: Float = 20
     var tooDarkRelease: TimeInterval = 0.5
 
     private var darkSince: TimeInterval?
@@ -541,10 +544,11 @@ struct CaptureGuide: Sendable {
             let settled = fillLightSince.map { o.time - $0 >= fillLightSettle } ?? false
             hintable = settled ? [.faceFound: .faceALight] : [:]
         }
-        // Too dark to scan (align and scan, not a challenge: a movement in
-        // the dark flowed on device). Latched below the floor, released after
-        // the face holds the release level; no face keeps the latch.
-        if challenge == nil, let face = o.face {
+        // Too dark to scan, on align only (a running scan and a movement are
+        // not held: both completed in the dark on device). Latched below the
+        // floor, released after the face holds the release level for
+        // `tooDarkRelease`; no face keeps the latch.
+        if !scanning, let face = o.face {
             if face.meanLuma < minScanFaceLuma {
                 tooDarkLatched = true
                 brightSince = nil
@@ -557,13 +561,12 @@ struct CaptureGuide: Sendable {
                 }
             }
         }
-        let tooDark = challenge == nil && tooDarkLatched
+        let tooDark = !scanning && tooDarkLatched
         if tooDark {
             // Darkness is the cause: only the light hint (silent while the
             // fill light comes on and settles).
-            // On align the fill light is still coming on (0.4 s) or settling;
-            // mid-scan it can't change, so say it at once.
-            let waiting = fillLightSince.map { o.time - $0 < fillLightSettle } ?? !scanning
+            // Silent while the fill light comes on (0.4 s) and settles.
+            let waiting = fillLightSince.map { o.time - $0 < fillLightSettle } ?? true
             hintable = waiting ? [:] : [.light: .faceALight]
         }
         lastEvaluation = e
