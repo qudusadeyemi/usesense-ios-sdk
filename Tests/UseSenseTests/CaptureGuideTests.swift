@@ -302,8 +302,8 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertNotEqual(snap.hint, .holdStill)
     }
 
-    /// User decision (iPhone dark-room run, face luma ~7): a face too dark
-    /// to scan holds the start and asks for light, fill light or not.
+    /// SPEC v1.7 (user decision, iPhone dark-room run at face luma ~7): a
+    /// face too dark to scan holds the start and asks for light.
     func testAFaceTooDarkToScanAsksForLightInsteadOfStarting() {
         let black = FaceRegionQuality(meanLuma: 7, clippedHighRatio: 0, clippedLowRatio: 0.9, sharpness: 60)
         var guide = CaptureGuide()
@@ -315,18 +315,59 @@ final class CaptureGuideTests: XCTestCase {
         XCTAssertFalse(snap.allPass, "no auto start")
         XCTAssertEqual(snap.hint, .faceALight, "Find more light")
 
-        // Dim but scannable: light is advice, the scan may start.
-        let dim = FaceRegionQuality(meanLuma: 35, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 60)
-        var g2 = CaptureGuide()
-        t = 0
-        while t < 3.5 { snap = g2.update(good(at: t) { $0.face = dim }); t += 1.0 / 30 }
+        // Hysteresis: 22 isn't enough; 30 held for 0.5 s releases it.
+        let edge = FaceRegionQuality(meanLuma: 22, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 60)
+        let lit = FaceRegionQuality(meanLuma: 30, clippedHighRatio: 0, clippedLowRatio: 0, sharpness: 60)
+        let s0 = t
+        while t < s0 + 1.0 { snap = guide.update(good(at: t) { $0.face = edge }); t += 1.0 / 30 }
+        XCTAssertTrue(snap.tooDark, "between 20 and 25 the hold stays")
+        let s1 = t
+        while t < s1 + 0.3 { snap = guide.update(good(at: t) { $0.face = lit }); t += 1.0 / 30 }
+        XCTAssertTrue(snap.tooDark, "not held long enough yet")
+        while t < s1 + 0.6 { snap = guide.update(good(at: t) { $0.face = lit }); t += 1.0 / 30 }
         XCTAssertFalse(snap.tooDark)
-        XCTAssertTrue(snap.allPass)
+        XCTAssertTrue(snap.allPass, "dim but scannable: light is advice")
+    }
 
-        // A running scan isn't changed by it.
-        var g3 = CaptureGuide()
-        snap = g3.update(good(at: 0) { $0.face = black }, scanning: true)
+    /// The floor must not trap a darker face in ordinary indoor light
+    /// (Galaxy A03 read 45-67 with the fill light on).
+    func testADarkerFaceInRoomLightIsNotHeld() {
+        for luma: Float in [21, 30, 45, 67] {
+            let face = FaceRegionQuality(meanLuma: luma, clippedHighRatio: 0, clippedLowRatio: 0.02, sharpness: 60)
+            var guide = CaptureGuide()
+            var t = 0.0
+            var snap = GuideSnapshot.initial
+            while t < 3.5 { snap = guide.update(good(at: t) { $0.face = face }); t += 1.0 / 30 }
+            XCTAssertFalse(snap.tooDark, "luma \(luma)")
+            XCTAssertTrue(snap.allPass, "luma \(luma): the scan may start")
+        }
+    }
+
+    func testGoingTooDarkMidScanPausesWithTheLightHint() {
+        let black = FaceRegionQuality(meanLuma: 6, clippedHighRatio: 0, clippedLowRatio: 0.9, sharpness: 8)
+        var guide = CaptureGuide()
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        while t < 1.0 { snap = guide.update(good(at: t), scanning: true); t += 1.0 / 30 }
+        XCTAssertTrue(snap.allPass)
+        while t < 3.0 { snap = guide.update(good(at: t) { $0.face = black }, scanning: true); t += 1.0 / 30 }
+        XCTAssertTrue(snap.tooDark)
+        XCTAssertFalse(snap.allPass, "the scan pauses (and drops after 1.5 s as any pause)")
+        XCTAssertFalse(snap.fillLight, "the fill light stays frozen during a scan")
+        XCTAssertEqual(snap.hint, .faceALight, "the only hint is the light, not sharpness")
+    }
+
+    func testAChallengeIsNotHeldByTheDark() {
+        let black = FaceRegionQuality(meanLuma: 7, clippedHighRatio: 0, clippedLowRatio: 0.9, sharpness: 60)
+        var guide = CaptureGuide()
+        var t = 0.0
+        var snap = GuideSnapshot.initial
+        while t < 2.0 {
+            snap = guide.update(good(at: t) { $0.face = black; $0.yaw = 25 }, challenge: .turnSideways)
+            t += 1.0 / 30
+        }
         XCTAssertFalse(snap.tooDark)
+        XCTAssertTrue(snap.allPass, "the dark head turn flowed on device")
     }
 
     // MARK: Pose from the transformation matrix

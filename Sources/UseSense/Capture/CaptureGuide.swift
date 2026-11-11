@@ -185,8 +185,8 @@ struct GuideSnapshot: Equatable, Sendable {
     var fillLight: Bool
     /// Checks failing on this frame (debug chips).
     var failing: Set<GateCheck>
-    /// The face is too dark to scan at all (align only): no auto start, no
-    /// shutter, the light hint stays up.
+    /// The face is too dark to scan (SPEC v1.7): no auto start, no shutter,
+    /// a running scan pauses; the light hint is the only hint.
     var tooDark = false
 
     static let initial = GuideSnapshot(allPass: false, hint: nil, fillLight: false, failing: Set(GateCheck.allCases))
@@ -474,20 +474,29 @@ struct CaptureGuide: Sendable {
     /// No face and the middle of the frame below this luma: too dark to find
     /// a face, so the fill light comes on anyway (same floor as the face).
     var darkFrameLuma: Float = 70
-    /// Below this face luma the scan doesn't start, fill light or not
-    /// (user decision 2026-11-11, iPhone dark-room run: at luma ~7 the scan
-    /// dropped 15 times on sharpness and the covered-face watch reading
-    /// noise). Light stays advice above it.
+    /// Too dark to scan (SPEC v1.7, user decision 2026-11-11): face-box mean
+    /// luma below this holds the scan (align: no start; scan: pause) and the
+    /// only hint is "Find more light". iPhone dark-room run: ~7 with the fill
+    /// light on, and the scan dropped 15 times (sharpness, covered-face watch
+    /// reading noise). A darker face in ordinary indoor light reads 45-67
+    /// (Galaxy A03), so this floor only catches near-black faces.
     var minScanFaceLuma: Float = 20
+    /// Released once the face holds this luma for `tooDarkRelease`.
+    var releaseScanFaceLuma: Float = 25
+    var tooDarkRelease: TimeInterval = 0.5
 
     private var darkSince: TimeInterval?
     private(set) var fillLightSince: TimeInterval?
+    private var tooDarkLatched = false
+    private var brightSince: TimeInterval?
     private(set) var lastEvaluation = QualityGate.Evaluation()
 
     mutating func reset(keepFillLight: Bool = false) {
         gate.reset()
         hints.reset()
         darkSince = nil
+        tooDarkLatched = false
+        brightSince = nil
         if !keepFillLight { fillLightSince = nil }
     }
 
@@ -532,11 +541,35 @@ struct CaptureGuide: Sendable {
             let settled = fillLightSince.map { o.time - $0 >= fillLightSettle } ?? false
             hintable = settled ? [.faceFound: .faceALight] : [:]
         }
+        // Too dark to scan (align and scan, not a challenge: a movement in
+        // the dark flowed on device). Latched below the floor, released after
+        // the face holds the release level; no face keeps the latch.
+        if challenge == nil, let face = o.face {
+            if face.meanLuma < minScanFaceLuma {
+                tooDarkLatched = true
+                brightSince = nil
+            } else if tooDarkLatched {
+                if face.meanLuma >= releaseScanFaceLuma {
+                    if brightSince == nil { brightSince = o.time }
+                    if let since = brightSince, o.time - since >= tooDarkRelease { tooDarkLatched = false; brightSince = nil }
+                } else {
+                    brightSince = nil
+                }
+            }
+        }
+        let tooDark = challenge == nil && tooDarkLatched
+        if tooDark {
+            // Darkness is the cause: only the light hint (silent while the
+            // fill light comes on and settles).
+            // On align the fill light is still coming on (0.4 s) or settling;
+            // mid-scan it can't change, so say it at once.
+            let waiting = fillLightSince.map { o.time - $0 < fillLightSettle } ?? !scanning
+            hintable = waiting ? [:] : [.light: .faceALight]
+        }
         lastEvaluation = e
         if (fillLightSince != nil) != lightWasOn { gate.lightChanged(at: o.time, scanning: scanning) }
 
         let hint = hints.update(failing: hintable, at: o.time)
-        let tooDark = !scanning && (o.face.map { $0.meanLuma < minScanFaceLuma } ?? false)
         return GuideSnapshot(
             allPass: e.blocking.isEmpty && !tooDark,
             hint: hint,

@@ -2596,6 +2596,7 @@ extension UseSenseSession {
                 + " luma=\(f.map { String(format: "%.0f", $0.meanLuma) } ?? "-")"
                 + " frameLuma=\(observation.frameLuma.map { String(format: "%.0f", $0) } ?? "-")"
                 + " fill=\(snapshot.fillLight ? "on" : "off")"
+                + (snapshot.tooDark ? " tooDark=hold" : "")
                 + " sharp=\(f.map { String(format: "%.1f", $0.sharpness) } ?? "-")"
                 + " jitter=\(e.jitter.map { String(format: "%.3f", $0) } ?? "-")"
                 + " cover=\(observation.cover.map { String(format: "%.2f/%.2f", $0.bodySkin, $0.other) } ?? (observation.coverPending ? "pending" : "-"))"
