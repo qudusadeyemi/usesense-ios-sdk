@@ -228,7 +228,7 @@ public enum UseSenseDebugBrand {
 
     /// A drawn "Acme Bank" wordmark as a PNG data URL (the "<test logo>").
     static func logoDataURL() -> String {
-        let size = CGSize(width: 168, height: 56)
+        let size = CGSize(width: 190, height: 56)
         let image = UIGraphicsImageRenderer(size: size).image { ctx in
             let green = UIColor(red: 0x1F / 255, green: 0x7A / 255, blue: 0x4D / 255, alpha: 1)
             green.setFill()

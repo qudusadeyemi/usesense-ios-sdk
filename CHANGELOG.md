@@ -8,6 +8,24 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Capture screens follow the brand (BRAND-v1).** Every guided capture
+  screen reads one resolved theme: page screens (primers, sheets, results,
+  errors, dialogs, "Getting ready", the camera request) use the full palette
+  and follow `appearance.mode` (unset stays dark); the camera stays dark and
+  takes brand accents only when they reach 3:1 on `#333333` (the ring
+  lightens the brand primary if needed). New `appearance.capture.challenge`;
+  `capture.contourStart` / `contourEnd` are retired (accepted, ignored).
+  Buttons follow `shape.buttonRadius` / `buttonStyle`; titles use
+  `typography.displayFamily`; pages show the logo (or display name),
+  `icons`, `loader` and `background.imageUrl`. "Powered by Sense" shows on
+  every guided screen. The help is a branded dialog instead of a system alert.
+  - `FlowCopy.capture` (`CaptureCopy`): every capture string, today's English
+    by default, `{app}` and `{side}` placeholders, blank values ignored.
+  - Hosted verification and enrollment now brand their capture screens; a
+    standalone session also applies its copy and display name; a Flow uses
+    the face step's init-session `branding` under the run view's.
+  - Removed the unused `StepUpViews.swift` screens.
+
 - **LiveSense evidence contract (EVIDENCE-v1, capture redesign Phase 2).**
   The server scores depth and binding itself; the SDK collects and uploads
   the raw evidence. Everything is additive: a session whose server sends no
