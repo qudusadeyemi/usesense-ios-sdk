@@ -97,15 +97,16 @@ public struct BrandingConfig: Sendable {
     /// Same rule for `buttonRadius`: the legacy default (10) must not occupy the
     /// code layer and beat a dashboard radius.
     private let buttonRadiusWasSet: Bool
-    /// Full white-label customization passed by the developer at SDK init. This
-    /// is the highest-priority layer in the Flow appearance merge:
-    ///   appearance > server(branding.appearance) > legacy primaryColor/buttonRadius/logoUrl/fontFamily > built-in default.
-    /// When nil, the legacy `primaryColor` / `buttonRadius` / `logoUrl` /
-    /// `fontFamily` fields above still apply (projected into the lowest layer).
+    /// Full white-label customization passed by the developer at SDK init.
+    /// Precedence per field (BRAND-v1 section 2, "code wins"):
+    ///   per-launch code > this `appearance` > the legacy primaryColor /
+    ///   buttonRadius / fontFamily / logoUrl above > dashboard Flow > dashboard
+    ///   org > built-in default.
+    /// The legacy fields are code, so they beat every dashboard layer.
     public var appearance: FlowAppearance?
     /// Full white-label copy/messaging override passed by the developer at SDK
-    /// init. Highest-priority layer in the Flow copy merge:
-    ///   copy > server(branding.copy) > built-in default.
+    /// init. Precedence per field: code copy > dashboard Flow > dashboard org >
+    /// built-in default (capture strings: `copy.capture`, BRAND-v1 section 5).
     /// When nil, the built-in hosted-page copy applies.
     public var copy: FlowCopy?
 
@@ -181,12 +182,26 @@ public struct SDKOptions: Sendable {
     /// unchanged. Defaults to true; false restores the "I'm Ready" screen.
     public var guidedCaptureEnabled: Bool
 
+    /// Show the SDK's result screen ("You're verified", "We couldn't verify
+    /// you", ...) before reporting the decision. False reports the decision
+    /// as soon as it arrives, so the app can show its own screen. Defaults to
+    /// true. Error screens are always shown.
+    public var showsResultScreen: Bool
+
+    /// How many times the person may try again from the "We couldn't verify
+    /// you" screen (guided capture). 0, the default, shows no "Try again":
+    /// the screen points back to the app. Ignored for sessions handed in by a
+    /// Flow or a hosted page, which follow their own retry policy.
+    public var retriesAfterReject: Int
+
     public init(
         audioEnabled: AudioMode = .riskBased, stepUpPolicy: StepUpPolicy = .riskBased,
         captureDurationMs: Int = 8000, targetFps: Int = 3, maxFrames: Int = 30, maxUploadSizeMb: Int = 10,
         antispoofOnDeviceEnabled: Bool = false,
         liveSenseV4Enabled: Bool = false,
-        guidedCaptureEnabled: Bool = true
+        guidedCaptureEnabled: Bool = true,
+        showsResultScreen: Bool = true,
+        retriesAfterReject: Int = 0
     ) {
         self.audioEnabled = audioEnabled
         self.stepUpPolicy = stepUpPolicy
@@ -197,6 +212,8 @@ public struct SDKOptions: Sendable {
         self.antispoofOnDeviceEnabled = antispoofOnDeviceEnabled
         self.liveSenseV4Enabled = liveSenseV4Enabled
         self.guidedCaptureEnabled = guidedCaptureEnabled
+        self.showsResultScreen = showsResultScreen
+        self.retriesAfterReject = max(0, retriesAfterReject)
     }
 }
 

@@ -12,10 +12,8 @@ import CryptoKit
 ///   * Field order: s, p, d, l
 ///   * `p` is an ARRAY [yaw, pitch, roll], NOT an object {y, p, r}
 ///   * `l` is the SHA-256 hex of the raw Float64 landmarks bytes when
-///     landmarks are included in the verification package, otherwise the
-///     literal string "none". Since the iOS SDK does NOT include landmarks
-///     in verification_package.frames, we always emit "none" here and the
-///     backend's computeMeshDigest() also computes "none" for the same reason.
+///     landmarks are included in the verification package (EVIDENCE-v1
+///     sessions), otherwise the literal string "none".
 ///   * Float formatting uses the shortest-round-trip representation that
 ///     JavaScript's JSON.stringify produces. Swift's String(Double) is
 ///     compatible for most values; see formatCanonicalDouble() below.
@@ -221,11 +219,17 @@ final class BindingProofGenerator {
 
     /// Compute the mesh digest from canonical JSON representation.
     /// MUST match the backend's canonical format byte-for-byte.
+    ///
+    /// `landmarksHash`: the hex SHA-256 of the uploaded landmarks as Float64
+    /// (`Evidence.landmarksHash`) when the frame carries landmarks
+    /// (EVIDENCE-v1 section 4), else nil for the literal "none". It must be
+    /// computed from the exact (rounded) values sent.
     static func meshDigest(
         shapeParams: [Double],
         pose: HeadPose,
         depthPlausibility: Double,
-        landmarkCount: Int
+        landmarkCount: Int = 0,
+        landmarksHash: String? = nil
     ) -> String {
         // Field order: s, p, d, l (matches backend JSON.stringify key order)
         let sArray = shapeParams.map { formatCanonicalDouble($0) }.joined(separator: ",")
@@ -235,12 +239,9 @@ final class BindingProofGenerator {
         let depthStr = formatCanonicalDouble(depthPlausibility)
 
         // NOTE: `p` is an ARRAY [yaw, pitch, roll], NOT an object.
-        // NOTE: `l` is the literal string "none" because the iOS SDK does
-        // not include raw landmarks in verification_package.frames. If that
-        // ever changes, this must change to the hex SHA-256 of the raw
-        // Float64 landmarks bytes to stay in sync with the backend.
         let _ = landmarkCount  // intentionally unused; kept for API compatibility
-        let canonical = "{\"s\":[\(sArray)],\"p\":[\(yawStr),\(pitchStr),\(rollStr)],\"d\":\(depthStr),\"l\":\"none\"}"
+        let l = landmarksHash ?? "none"
+        let canonical = "{\"s\":[\(sArray)],\"p\":[\(yawStr),\(pitchStr),\(rollStr)],\"d\":\(depthStr),\"l\":\"\(l)\"}"
 
         let data = Data(canonical.utf8)
         let digest = SHA256.hash(data: data)

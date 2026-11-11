@@ -112,6 +112,15 @@ actor AppAttestManager {
         return assertion.base64EncodedString()
     }
 
+    /// EVIDENCE-v1 binding v2: an assertion over `clientData` (the evidence
+    /// digest's 64 hex characters), clientDataHash = SHA256(UTF-8(clientData)),
+    /// with the key the session's attestation registered.
+    func generateAssertion(keyId: String, clientData: String) async throws -> String {
+        let clientDataHash = Data(SHA256.hash(data: Data(clientData.utf8)))
+        let assertion = try await service.generateAssertion(keyId, clientDataHash: clientDataHash)
+        return assertion.base64EncodedString()
+    }
+
     // MARK: - Build web_integrity fields
 
     /// Returns the App Attest fields to merge into the web_integrity / channel_integrity metadata.

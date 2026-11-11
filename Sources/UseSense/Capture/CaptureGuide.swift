@@ -46,22 +46,30 @@ struct GateHint: Equatable, Sendable {
     let subtitle: String?
     let icon: Icon
 
-    static let showFace = GateHint(check: .faceFound, title: "Show your face in the oval", subtitle: nil, icon: .face)
-    static let onePerson = GateHint(check: .onePerson, title: "Only you in the picture", subtitle: nil, icon: .people)
+    // Titles read `copy.capture.guidance` first (BRAND-v1 section 5); the
+    // defaults are the SPEC v1.1 copy.
+    private typealias T = CaptureText
+    static var showFace: GateHint { GateHint(check: .faceFound, title: T.text(\.capture?.guidance?.showFace, "Show your face in the oval"), subtitle: nil, icon: .face) }
+    static var onePerson: GateHint { GateHint(check: .onePerson, title: T.text(\.capture?.guidance?.onePerson, "Only you in the picture"), subtitle: nil, icon: .people) }
     /// COVER-v1: a hand or an object over the face.
-    static let uncovered = GateHint(check: .covered, title: "Keep your face uncovered", subtitle: nil, icon: .covered)
-    static let centre = GateHint(check: .inFrame, title: "Move your face to the centre", subtitle: nil, icon: .centre)
-    static let moveCloser = GateHint(check: .distance, title: "Move a little closer", subtitle: nil, icon: .closer)
-    static let moveBack = GateHint(check: .distance, title: "Move back a little", subtitle: nil, icon: .back)
+    static var uncovered: GateHint { GateHint(check: .covered, title: T.text(\.capture?.guidance?.covered, "Keep your face uncovered"), subtitle: nil, icon: .covered) }
+    static var centre: GateHint { GateHint(check: .inFrame, title: T.text(\.capture?.guidance?.centre, "Move your face to the centre"), subtitle: nil, icon: .centre) }
+    static var moveCloser: GateHint { GateHint(check: .distance, title: T.text(\.capture?.guidance?.closer, "Move a little closer"), subtitle: nil, icon: .closer) }
+    static var moveBack: GateHint { GateHint(check: .distance, title: T.text(\.capture?.guidance?.back, "Move back a little"), subtitle: nil, icon: .back) }
     /// Spec v1.2.1: in-frame fails on a well-placed face that is too close.
-    static let moveBackToFit = GateHint(check: .inFrame, title: "Move back a little", subtitle: nil, icon: .back)
-    static let lookStraight = GateHint(check: .pose, title: "Look straight ahead", subtitle: nil, icon: .pose)
-    static let faceALight = GateHint(check: .light, title: "Find more light", subtitle: "Face a window or lamp", icon: .light)
-    static let tooBright = GateHint(check: .light, title: "Too much light behind you",
-                                    subtitle: "Turn away from the window", icon: .light)
-    static let holdSteady = GateHint(check: .sharpness, title: "Hold your phone steady", subtitle: nil, icon: .steady)
-    static let eyesOpen = GateHint(check: .eyesOpen, title: "Keep your eyes open", subtitle: nil, icon: .eyes)
-    static let holdStill = GateHint(check: .stillness, title: "Hold still", subtitle: nil, icon: .still)
+    static var moveBackToFit: GateHint { GateHint(check: .inFrame, title: T.text(\.capture?.guidance?.back, "Move back a little"), subtitle: nil, icon: .back) }
+    static var lookStraight: GateHint { GateHint(check: .pose, title: T.text(\.capture?.guidance?.straight, "Look straight ahead"), subtitle: nil, icon: .pose) }
+    static var faceALight: GateHint {
+        GateHint(check: .light, title: T.text(\.capture?.guidance?.dark, "Find more light"),
+                 subtitle: T.text(\.capture?.guidance?.darkHint, "Face a window or lamp"), icon: .light)
+    }
+    static var tooBright: GateHint {
+        GateHint(check: .light, title: T.text(\.capture?.guidance?.bright, "Too much light behind you"),
+                 subtitle: T.text(\.capture?.guidance?.brightHint, "Turn away from the window"), icon: .light)
+    }
+    static var holdSteady: GateHint { GateHint(check: .sharpness, title: T.text(\.capture?.guidance?.blur, "Hold your phone steady"), subtitle: nil, icon: .steady) }
+    static var eyesOpen: GateHint { GateHint(check: .eyesOpen, title: T.text(\.capture?.guidance?.eyes, "Keep your eyes open"), subtitle: nil, icon: .eyes) }
+    static var holdStill: GateHint { GateHint(check: .stillness, title: T.text(\.capture?.guidance?.holdStill, "Hold still"), subtitle: nil, icon: .still) }
 }
 
 /// Pass thresholds. Starting points from the spec, to tune on session data.
@@ -95,6 +103,40 @@ struct GateThresholds: Sendable {
     var maxJitter = 0.04
 }
 
+/// The gate during a challenge (before the scan or round 2): every scan
+/// check still runs, and only the pose limits relax toward the movement the
+/// current step asks for. Stillness applies only where the person isn't
+/// asked to move, and the scan's change watch is off (a turning head changes
+/// every face region); the covered-face segmenter still runs.
+struct ChallengeGateRules: Equatable, Sendable {
+    var maxYaw: Double
+    var maxPitch: Double
+    var maxRoll: Double
+    var checksStillness: Bool
+
+    /// Head Turn left/right: the yaw limit opens. The sign of "left" isn't
+    /// trusted on the device (the server judges direction), so it opens both ways.
+    /// The other axis opens part way too: a person turning right straight
+    /// after looking up still has the head a little raised (device run:
+    /// pitch 19 while turning right, which a 15 cap paused).
+    static let turnSideways = ChallengeGateRules(maxYaw: 50, maxPitch: 30, maxRoll: 20, checksStillness: false)
+    static let turnUpDown = ChallengeGateRules(maxYaw: 30, maxPitch: 45, maxRoll: 20, checksStillness: false)
+    /// Coming back to the centre (from any side), or following the dot.
+    static let returning = ChallengeGateRules(maxYaw: 50, maxPitch: 45, maxRoll: 20, checksStillness: false)
+    static let followDot = ChallengeGateRules(maxYaw: 40, maxPitch: 35, maxRoll: 20, checksStillness: false)
+    /// Speak Digits: the scan's own limits, stillness included (the chin is
+    /// left out of the stillness anchors, since speaking moves it).
+    static let digits = ChallengeGateRules(maxYaw: 15, maxPitch: 15, maxRoll: 12, checksStillness: true)
+
+    static func forHeadTurn(_ direction: HeadDirection) -> ChallengeGateRules {
+        switch direction {
+        case .left, .right: return .turnSideways
+        case .up, .down: return .turnUpDown
+        case .center: return .returning
+        }
+    }
+}
+
 /// What the session measured on one camera frame.
 struct GateObservation: Sendable {
     var time: TimeInterval
@@ -124,6 +166,9 @@ struct GateObservation: Sendable {
     var coverPending = false
     /// Six face regions for the change watch (scan only).
     var regions: FaceRegions? = nil
+    /// No face found: mean luma of the middle of the frame (where the face
+    /// should be), so a room too dark to find a face still gets the fill light.
+    var frameLuma: Float? = nil
 
     static func noFace(at time: TimeInterval) -> GateObservation {
         GateObservation(time: time, faceCount: 0, anchors: [])
@@ -140,6 +185,9 @@ struct GuideSnapshot: Equatable, Sendable {
     var fillLight: Bool
     /// Checks failing on this frame (debug chips).
     var failing: Set<GateCheck>
+    /// The face is too dark to scan (SPEC v1.7): no auto start, no shutter,
+    /// a running scan pauses; the light hint is the only hint.
+    var tooDark = false
 
     static let initial = GuideSnapshot(allPass: false, hint: nil, fillLight: false, failing: Set(GateCheck.allCases))
 }
@@ -207,9 +255,15 @@ struct QualityGate: Sendable {
         var blocking: [GateCheck: GateHint] { failing.filter { $0.key != .light } }
     }
 
-    mutating func evaluate(_ o: GateObservation, scanning: Bool = false) -> Evaluation {
+    mutating func evaluate(_ o: GateObservation, scanning: Bool = false,
+                           challenge: ChallengeGateRules? = nil) -> Evaluation {
         var e = Evaluation()
-        let t = thresholds
+        var t = thresholds
+        if let challenge {
+            t.maxYaw = challenge.maxYaw
+            t.maxPitch = challenge.maxPitch
+            t.maxRoll = challenge.maxRoll
+        }
         // A new scan takes a new baseline for the change watch.
         if scanning && !wasScanning {
             coverWatch.reset()
@@ -277,8 +331,12 @@ struct QualityGate: Sendable {
             if e.light != nil {
                 e.failing[.light] = e.light == .tooDark ? .faceALight : .tooBright
             }
-            // Sharpness is judged in every light (light no longer blocks).
-            if face.sharpness < t.minFaceSharpness {
+            // Sharpness is judged in every light (light no longer blocks),
+            // but not while a challenge asks the head to move: a turning
+            // head in a dark room blurs every frame (Android A03 run). The
+            // scan and Speak Digits (no movement) still check it.
+            let moving = challenge.map { !$0.checksStillness } ?? false
+            if face.sharpness < t.minFaceSharpness, !moving {
                 e.failing[.sharpness] = .holdSteady
             }
         } else {
@@ -290,8 +348,11 @@ struct QualityGate: Sendable {
             e.failing[.eyesOpen] = .eyesOpen
         }
 
-        // 9. Stillness: landmark jitter / eye distance over 300 ms.
-        if let d = o.eyeDistance, d > 0, !o.anchors.isEmpty {
+        // 9. Stillness: landmark jitter / eye distance over 300 ms (not
+        // during a challenge that asks for movement).
+        if let challenge, !challenge.checksStillness {
+            history.removeAll()
+        } else if let d = o.eyeDistance, d > 0, !o.anchors.isEmpty {
             history.append((o.time, o.anchors, d))
             history.removeAll { o.time - $0.time > t.stillnessWindow }
             let jitter = Self.jitter(history.map(\.anchors)) / d
@@ -315,7 +376,7 @@ struct QualityGate: Sendable {
             && e.failing[.distance] == nil && e.failing[.pose] == nil
         watchRan = false
         rebaselined = false
-        if scanning {
+        if scanning && challenge == nil {
             if let since = lightChangedAt {
                 // Light changed: ignore the watch while exposure settles, then
                 // take a new baseline, but only on a face the segmenter says
@@ -410,28 +471,55 @@ struct CaptureGuide: Sendable {
     var hints = HintScheduler()
     /// How long the fill light gets before "Face a light" is shown.
     var fillLightSettle: TimeInterval = 1.5
+    /// No face and the middle of the frame below this luma: too dark to find
+    /// a face, so the fill light comes on anyway (same floor as the face).
+    var darkFrameLuma: Float = 70
+    /// Too dark to scan (SPEC v1.7, user decision 2026-11-11): face-box mean
+    /// luma below this holds the start on align (no auto start, no shutter)
+    /// and the only hint is "Find more light". A running scan isn't held:
+    /// the Galaxy A03 scanned fine at 18-22. iPhone dark-room run: ~7 with the fill
+    /// light on, and the scan dropped 15 times (sharpness, covered-face watch
+    /// reading noise). A darker face in ordinary indoor light reads 45-67
+    /// (Galaxy A03), so this floor only catches near-black faces.
+    var minScanFaceLuma: Float = 20
+    /// Released once the face holds this luma for `tooDarkRelease` (same
+    /// level: the A03 hovered at 18-24 with the fill light, so a higher
+    /// release level could hold it for good; the time gives the stability).
+    var releaseScanFaceLuma: Float = 20
+    var tooDarkRelease: TimeInterval = 0.5
 
     private var darkSince: TimeInterval?
     private(set) var fillLightSince: TimeInterval?
+    private var tooDarkLatched = false
+    private var brightSince: TimeInterval?
     private(set) var lastEvaluation = QualityGate.Evaluation()
 
     mutating func reset(keepFillLight: Bool = false) {
         gate.reset()
         hints.reset()
         darkSince = nil
+        tooDarkLatched = false
+        brightSince = nil
         if !keepFillLight { fillLightSince = nil }
     }
 
     /// - Parameter scanning: the scan is running: the distance band gets its
     ///   hold margin, and the hint names only a check that holds the scan.
-    mutating func update(_ o: GateObservation, scanning: Bool = false) -> GuideSnapshot {
-        let e = gate.evaluate(o, scanning: scanning)
+    /// - Parameter challenge: a challenge is running: the gate uses its rules.
+    mutating func update(_ o: GateObservation, scanning: Bool = false,
+                         challenge: ChallengeGateRules? = nil) -> GuideSnapshot {
+        // A challenge counts as scanning: distance hold margin, fill light
+        // frozen, and the hint names only what holds the capture.
+        let scanning = scanning || challenge != nil
+        let e = gate.evaluate(o, scanning: scanning, challenge: challenge)
         let lightWasOn = fillLightSince != nil
 
         // Fill light first: once the face has been too dark for the hint
         // delay, the screen becomes a fill light. It stays on for the rest of
         // the capture (turning it off would make the face dark again).
-        if e.light == .tooDark {
+        // A room too dark to find a face: judge the middle of the frame.
+        let darkNoFace = o.faceCount == 0 && (o.frameLuma.map { $0 < darkFrameLuma } ?? false)
+        if e.light == .tooDark || darkNoFace {
             if darkSince == nil { darkSince = o.time }
             // Frozen during a scan (COVER-v1): decided before it starts, no
             // toggle until it ends, so the change watch's baseline holds.
@@ -448,15 +536,49 @@ struct CaptureGuide: Sendable {
         if e.light == .tooDark, let since = fillLightSince, o.time - since < fillLightSettle {
             hintable[.light] = nil
         }
+        // Still no face once the light has settled: the room is the problem,
+        // so ask for light rather than for a face (silent while it settles).
+        // (With no face every check fails with "Show your face", so the whole
+        // set is replaced.)
+        if darkNoFace, !scanning, !hintable.isEmpty {
+            let settled = fillLightSince.map { o.time - $0 >= fillLightSettle } ?? false
+            hintable = settled ? [.faceFound: .faceALight] : [:]
+        }
+        // Too dark to scan, on align only (a running scan and a movement are
+        // not held: both completed in the dark on device). Latched below the
+        // floor, released after the face holds the release level for
+        // `tooDarkRelease`; no face keeps the latch.
+        if !scanning, let face = o.face {
+            if face.meanLuma < minScanFaceLuma {
+                tooDarkLatched = true
+                brightSince = nil
+            } else if tooDarkLatched {
+                if face.meanLuma >= releaseScanFaceLuma {
+                    if brightSince == nil { brightSince = o.time }
+                    if let since = brightSince, o.time - since >= tooDarkRelease { tooDarkLatched = false; brightSince = nil }
+                } else {
+                    brightSince = nil
+                }
+            }
+        }
+        let tooDark = !scanning && tooDarkLatched
+        if tooDark {
+            // Darkness is the cause: only the light hint (silent while the
+            // fill light comes on and settles).
+            // Silent while the fill light comes on (0.4 s) and settles.
+            let waiting = fillLightSince.map { o.time - $0 < fillLightSettle } ?? true
+            hintable = waiting ? [:] : [.light: .faceALight]
+        }
         lastEvaluation = e
         if (fillLightSince != nil) != lightWasOn { gate.lightChanged(at: o.time, scanning: scanning) }
 
         let hint = hints.update(failing: hintable, at: o.time)
         return GuideSnapshot(
-            allPass: e.blocking.isEmpty,
+            allPass: e.blocking.isEmpty && !tooDark,
             hint: hint,
             fillLight: fillLightSince != nil,
-            failing: Set(e.failing.keys)
+            failing: Set(e.failing.keys),
+            tooDark: tooDark
         )
     }
 }
@@ -467,8 +589,21 @@ struct CaptureGuide: Sendable {
 /// the oval is. Same size and offset the capture screens have always used.
 enum CaptureOvalLayout {
     /// Capture kit SPEC: centre (0.5 W, 0.40 H), rx = 0.36 W, ry = 0.235 H.
-    static func ovalRect(in size: CGSize) -> CGRect {
-        let rx = size.width * 0.36, ry = size.height * 0.235
+    /// Space kept between the grown oval's ring and the screen edge.
+    static let grownEdgeMargin: CGFloat = 16
+
+    /// `scale` grows the oval about its centre (EVIDENCE-v1 closer step).
+    /// The height grows by the full `scale`; the width is capped so the ring
+    /// (6 pt gap + 3 pt) stays `grownEdgeMargin` inside the screen, since the
+    /// server's 1.4 would make a phone's oval wider than the screen. A width-
+    /// capped oval alone (about 1.22x) let people stop short of `min_scale`
+    /// 1.25 (device run 4: 1.24x); filling the taller oval top to bottom
+    /// gets there. The near frames are judged on eye distance, not the oval.
+    static func ovalRect(in size: CGSize, scale: CGFloat = 1) -> CGRect {
+        let base = size.width * 0.36
+        let fit = base > 0 ? (size.width / 2 - grownEdgeMargin - 9) / base : 1
+        let sx = scale > 1 ? max(1, min(scale, fit)) : scale
+        let rx = base * sx, ry = size.height * 0.235 * scale
         return CGRect(x: size.width * 0.5 - rx, y: size.height * 0.40 - ry, width: rx * 2, height: ry * 2)
     }
 }

@@ -47,6 +47,22 @@ final class AudioCaptureManager: @unchecked Sendable {
         return try? Data(contentsOf: url)
     }
 
+    /// Live input level for the Speak Digits meter.
+    func enableMetering() {
+        audioRecorder?.isMeteringEnabled = true
+    }
+
+    /// The input level now, 0...1 (about -45 dB to -5 dB), or nil when not recording.
+    func level() -> Double? {
+        guard let recorder = audioRecorder, recorder.isRecording, recorder.isMeteringEnabled else { return nil }
+        recorder.updateMeters()
+        return Self.normalised(decibels: Double(recorder.averagePower(forChannel: 0)))
+    }
+
+    static func normalised(decibels db: Double) -> Double {
+        min(1, max(0, (db + 45) / 40))
+    }
+
     func cleanup() {
         if let recorder = audioRecorder {
             if recorder.isRecording { recorder.stop() }

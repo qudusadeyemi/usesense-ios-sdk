@@ -1,6 +1,7 @@
 #if canImport(AVFoundation)
 import AVFoundation
 import Foundation
+import QuartzCore
 
 protocol FrameCaptureDelegate: AnyObject {
     func frameCaptureManager(_ manager: FrameCaptureManager, didCapture pixelBuffer: CVPixelBuffer, timestamp: CMTime)
@@ -150,6 +151,44 @@ final class FrameCaptureManager: NSObject, @unchecked Sendable {
             } catch {
                 // Focus is best effort; the gate still judges sharpness.
             }
+        }
+    }
+
+    /// A frame's presentation time on the host clock (the `CACurrentMediaTime`
+    /// base `CADisplayLink` also uses), so frames and screen colours share one
+    /// capture clock (EVIDENCE-v1 section 2). The debug fake camera's times
+    /// are synthetic, so its frames use their arrival time.
+    func hostSeconds(for timestamp: CMTime) -> CFTimeInterval {
+        #if DEBUG && canImport(UIKit)
+        if fake != nil { return CACurrentMediaTime() }
+        #endif
+        let source: CMClock?
+        if #available(iOS 15.4, *) {
+            source = captureSession.synchronizationClock
+        } else {
+            source = captureSession.masterClock
+        }
+        guard let source, timestamp.isValid else { return CACurrentMediaTime() }
+        let host = CMSyncConvertTime(timestamp, from: source, to: CMClockGetHostTimeClock())
+        let s = CMTimeGetSeconds(host)
+        return s.isFinite ? s : CACurrentMediaTime()
+    }
+
+    /// Lock (true) or release (false) auto white balance at its current gains,
+    /// so the colour sequence's tint is not corrected away. Returns whether the
+    /// lock is in place. Synchronous: the sequence starts after it.
+    @discardableResult
+    func lockWhiteBalance(_ locked: Bool) -> Bool {
+        guard let camera else { return false }
+        let mode: AVCaptureDevice.WhiteBalanceMode = locked ? .locked : .continuousAutoWhiteBalance
+        guard camera.isWhiteBalanceModeSupported(mode) else { return false }
+        do {
+            try camera.lockForConfiguration()
+            defer { camera.unlockForConfiguration() }
+            camera.whiteBalanceMode = mode
+            return locked
+        } catch {
+            return false
         }
     }
 

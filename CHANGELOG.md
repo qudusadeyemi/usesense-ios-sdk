@@ -4,7 +4,149 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [4.11.0] - 2026-11-11
+
+One release for the extra check (storyboard flows 4 to 6), the LiveSense
+evidence contract (EVIDENCE-v1), the capture brand contract (BRAND-v1) and
+the dark-room capture rules. Screens checked on an iPhone 16 simulator with a
+synthetic face; dark-room and branded runs on an iPhone 17 Pro in sandbox.
+
+### Added
+
+- **Capture screens follow the brand (BRAND-v1).** Every guided capture
+  screen reads one resolved theme: page screens (primers, sheets, results,
+  errors, dialogs, "Getting ready", the camera request) use the full palette
+  and follow `appearance.mode` (unset stays dark); the camera stays dark and
+  takes brand accents only when they reach 3:1 on `#333333` (the ring
+  lightens the brand primary if needed). New `appearance.capture.challenge`;
+  `capture.contourStart` / `contourEnd` are retired (accepted, ignored).
+  Buttons follow `shape.buttonRadius` / `buttonStyle`; titles use
+  `typography.displayFamily`; pages show the logo (or display name),
+  `icons`, `loader` and `background.imageUrl`. "Powered by Sense" shows on
+  every guided screen. The help is a branded dialog instead of a system alert.
+  - `FlowCopy.capture` (`CaptureCopy`): every capture string, today's English
+    by default, `{app}` and `{side}` placeholders, blank values ignored.
+  - Hosted verification and enrollment now brand their capture screens; a
+    standalone session also applies its copy and display name; a Flow uses
+    the face step's init-session `branding` under the run view's.
+  - Removed the unused `StepUpViews.swift` screens.
+
+- **LiveSense evidence contract (EVIDENCE-v1, capture redesign Phase 2).**
+  The server scores depth and binding itself; the SDK collects and uploads
+  the raw evidence. Everything is additive: a session whose server sends no
+  `evidence` block (or another contract version) uploads exactly as before.
+  - The optional `evidence` block is decoded on every init path (session
+    create, token exchange, Flows, hosted). Every key is optional, unknown keys
+    are ignored, and a malformed key reads as absent.
+  - Per frame in `verification_package.frames`: raw MediaPipe `landmarks`
+    (478 points, uploaded-JPEG space, unmirrored, 5 decimals, bound into
+    `meshDigest`), `transformMatrix` and the matrix pose under
+    `poseNormalizationMethod: "matrix_zyx_v3"`, `blendshapes.eyeBlinkLeft/Right`,
+    and `timestamp` on the capture clock (ms since the camera's first frame).
+  - `frameIndex` is the upload position. A frame whose 3D fit failed has no
+    entry instead of shifting every later frame, and two uploads with the same
+    bytes get one entry.
+  - Colour sequence: during the scan the screen is tinted with the server's
+    three colours (35%, 0.6 s each, full brightness, white balance locked)
+    with no new copy. What was shown, as measured from the display link, goes
+    in `metadata.evidence.colour`. A gate pause stops the tint and drops the
+    partly shown colour; the sequence resumes at that colour when the scan
+    does, so the segments stay in the issued order the server checks. A
+    dropped scan window clears the segments and starts again at the first
+    colour.
+  - Closer step: when the ring completes, the oval grows by the server's
+    `target_scale` and the existing "Move a little closer" guidance shows
+    until the face reaches `min_scale`. Three near frames bank, recorded with
+    the last three scan frames in `metadata.evidence.closer`. After 4 s it
+    gives up (`skipped_reason: "timeout"`) and the capture carries on.
+  - Binding v2: an App Attest assertion over the evidence digest
+    (`metadata.evidence.binding`), alongside the v1 `bindingProof`.
+  - `metadata.evidence.capability` says what this build can do: no MediaPipe
+    means no landmarks, and no App Attest means no binding v2.
+
+- **Extra check on the scan screen.** When the server asks for an extra check
+  after the scan (step-up round 2, `step_up_v1`), a "One more quick check"
+  sheet says what is next in one sentence, then Head Turn or Follow Dot runs
+  on the scan screen itself: full-bleed camera, the oval ring in purple,
+  a side arrow ("Turn your head to the left", "Now to the right") or an amber
+  dot with a dashed trail ("Follow the dot with your head"). A short green
+  tick, then the upload sheet and the result. Replaces the countdown and the
+  old challenge overlays on guided screens.
+- **Extra check before the scan.** A session whose policy already has a
+  challenge opens with "Two quick steps", and the movement follows straight
+  on from the scan on the same screen, with no countdown or sheet. The scan
+  before it is gated like the passive scan.
+- **Speak Digits on the scan screen**: the digits in a pill at the top, a live
+  microphone meter under the oval, "We can't hear you / Speak a little louder"
+  after 2 s of silence. The digits' response is sent as
+  `audio_challenge_response`.
+- **Microphone fallback.** A refused microphone (or no input) shows
+  "Microphone needed" with "Open Settings" and "Do a head movement instead".
+  The second calls `POST /v1/sessions/:id/challenge-fallback`
+  (`{"reason":"microphone_unavailable"}`), and the capture carries on with
+  the Follow Dot the server returns.
+- **The scan's checks hold during challenges too** (before the scan and
+  round 2): face found, one person, covered face (segmenter), distance (with
+  the scan's hold margin), in the oval, sharpness, eyes open, and stillness
+  for Speak Digits (chin left out). Only pose relaxes, toward the movement
+  the current step asks for (sideways turns: yaw to 50 degrees; up/down:
+  pitch to 40; centre and Follow Dot: 30 to 40). A failing check pauses the
+  challenge, frames aren't banked while paused, and the guidance names the
+  check ("Keep your face uncovered / Then keep turning"). The scan's change
+  watch is off during movement (a turning head changes every face region).
+- **Never fails on the device.** A paused challenge resumes when the check
+  passes again. A Head Turn step that was
+  clearly too short gets one retry with a hint ("Let's try that again / Turn
+  a little further to the left"); after that the server decides.
+- **"Leave verification?"** on back during an extra check (the challenge
+  holds while it is open). Leaving ends the verification.
+- **New result and error pages** on guided screens: verified, checking,
+  couldn't verify (with or without "Try again" and tips), camera access
+  needed (Open Settings / Try again), the camera stopped, offline, timed out,
+  something went wrong, and a "Couldn't send your scan" sheet that resends
+  the kept scan.
+- `SDKOptions.showsResultScreen` (default true): false reports the decision
+  without the SDK's result screen.
+- `SDKOptions.retriesAfterReject` (default 0): how many times the person may
+  try again from "We couldn't verify you". Standalone sessions only.
+
+### Changed
+
+- **Round 2's upload carries round 1's signals** for its own frames, in the
+  same keys: `channel_integrity` (with screen detection), `device_telemetry`,
+  `face_mesh_signals`, `verification_package` (when the session asks for the
+  mesh), `suspicion`, `deep_classifier_on_device`, `frame_hashes`, frames
+  manifest and timestamps, plus `step_up_round: 2`. Round 2's mesh, suspicion
+  score and sensors start fresh; App Attest fields are reused from round 1.
+
+- Guided screens ask for camera and microphone permission with the system
+  prompt directly, without the "Camera Access Required" card.
+- **Inline step-up on the scan screen.** When the policy's `inline_step_up`
+  is enabled (dashboard: "Unusual movement during the scan") and the
+  suspicion engine fires, guided screens show each RMAS micro-action as plain
+  guidance under the oval with an amber ring ("Blink twice", "Turn your head
+  to the left", ...) and fill the screen with each Flash Reflection colour,
+  instead of the "Additional Verification" overlay. It runs before the
+  upload, so a server extra check (round 2) still follows it.
+
+### Fixed
+
+- **Dark rooms.** A room too dark to find a face never turned the fill light
+  on (the light check measures the face); with no face the middle of the frame
+  now decides, and the hint asks for light. The fill light comes back on for
+  the extra check's movement, sharpness gives way while the head turns, and a
+  paused turn says which way to carry on ("Then keep turning to the left").
+  A face too dark to scan (face-box luma under 20, capture test kit SPEC
+  v1.7) no longer starts a scan that keeps dropping: it holds on "Find more
+  light" until the face reads 20 or more for 0.5 s. Light stays advice above
+  that, and no check is loosened.
+
+- RMAS judged its micro-actions on the last banked frame, which stops
+  updating when the scan ends; it now reads the newest face. Flash
+  Reflection sampled no frame and showed no colour, so every flash read as no
+  reflection (and the average change fell under the hard-reject floor); it
+  now shows each colour and samples the camera. Applies to the previous
+  screens too.
 
 ## [4.10.0] - 2026-11-10
 

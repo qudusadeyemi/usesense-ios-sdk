@@ -33,7 +33,7 @@ final class RMASChallenge {
         let label: String
     }
 
-    private static let actionPool: [ActionSpec] = [
+    static let actionPool: [ActionSpec] = [
         ActionSpec(type: "blink", label: "Blink twice"),
         ActionSpec(type: "smile", label: "Smile"),
         ActionSpec(type: "raise_eyebrows", label: "Raise your eyebrows"),
@@ -42,12 +42,18 @@ final class RMASChallenge {
         ActionSpec(type: "turn_right", label: "Turn head right"),
     ]
 
+    /// - Parameters:
+    ///   - actions: the actions to prompt (tests); nil picks 3 at random.
+    ///   - onAction: called as each action's window opens (index, action), so
+    ///     the screen can show it. The person can't do what they aren't shown.
     func run(
+        actions: [ActionSpec]? = nil,
         getCurrentPose: @escaping () -> HeadPose?,
-        getCurrentEAR: @escaping () -> (left: Double, right: Double)?
+        getCurrentEAR: @escaping () -> (left: Double, right: Double)?,
+        onAction: @escaping (Int, ActionSpec) -> Void = { _, _ in }
     ) async -> RMASResult {
         // Pick 3 random actions (no duplicates)
-        let selected = Array(Self.actionPool.shuffled().prefix(3))
+        let selected = actions ?? Array(Self.actionPool.shuffled().prefix(3))
         var results: [RMASResult.ActionResult] = []
         var completed = 0
 
@@ -55,7 +61,8 @@ final class RMASChallenge {
         let baselinePose = getCurrentPose()
         let baselineEAR = getCurrentEAR()
 
-        for action in selected {
+        for (index, action) in selected.enumerated() {
+            onAction(index, action)
             let startTime = Date()
             var actionCompleted = false
             var reactionTime: Int?
@@ -102,7 +109,7 @@ final class RMASChallenge {
             passed: completed >= 2,
             confidence: Double(completed) / 3.0 * 100.0,
             actionsCompleted: completed,
-            actionsTotal: 3
+            actionsTotal: selected.count
         )
     }
 

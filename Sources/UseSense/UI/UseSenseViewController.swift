@@ -6,9 +6,9 @@ public final class UseSenseViewController: UIViewController {
     private let session: UseSenseSession
     private var onComplete: ((Result<RedactedDecisionObject, UseSenseError>) -> Void)?
     private var hostingController: UIHostingController<UseSenseView>?
-    /// True when this controller seeded FlowAppearanceResolver itself, so it
-    /// clears only what it set (a Flow runner owns the resolver during a run).
-    private var seededAppearance = false
+    /// The brand this controller seeded itself, so it clears only what it set
+    /// (a Flow runner owns the resolvers during a run).
+    private let brandSeed = CaptureBrandSeed()
     /// When true the controller dismisses itself first and reports the result
     /// in the dismissal's completion. The Flows runner sets it: it presents its
     /// next surface (or an error screen) from the callback, and a present
@@ -35,19 +35,17 @@ public final class UseSenseViewController: UIViewController {
     public override func viewDidLoad() {
         super.viewDidLoad()
 
-        // The capture screens read the brand tokens from FlowAppearanceResolver.
-        // Inside a Flow the runner has already resolved it (code > dashboard)
-        // and owns it. A standalone session owns it here: it themes from the
+        // The capture screens read the brand from the resolvers. Inside a Flow
+        // the runner has already resolved them (code > Flow > org) and owns
+        // them. A standalone session owns them here: it themes from the
         // code-set branding at once, then folds the dashboard branding in
         // underneath when the session response delivers it ("code wins").
-        if FlowAppearanceResolver.current == nil {
-            seededAppearance = true
-            if let appearance = session.brandingAppearance {
-                FlowAppearanceResolver.set(appearance)
-            }
-            session.onBrandingAvailable = { [weak self] appearance in
-                guard self?.seededAppearance == true else { return }
-                FlowAppearanceResolver.set(appearance)
+        if brandSeed.seed(appearance: session.brandingAppearance, copy: session.brandingCopy,
+                          displayName: session.brandDisplayName) {
+            session.onBrandingAvailable = { [weak self, weak session] appearance in
+                guard let self, let session, self.brandSeed.owns else { return }
+                self.brandSeed.seed(appearance: appearance, copy: session.brandingCopy,
+                                    displayName: session.brandDisplayName)
             }
         }
 
@@ -94,9 +92,8 @@ public final class UseSenseViewController: UIViewController {
 
     public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        if seededAppearance, isBeingDismissed || presentingViewController == nil {
-            FlowAppearanceResolver.reset()
-            seededAppearance = false
+        if brandSeed.owns, isBeingDismissed || presentingViewController == nil {
+            brandSeed.clear()
         }
     }
 }

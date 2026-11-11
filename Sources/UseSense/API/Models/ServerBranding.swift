@@ -105,6 +105,22 @@ enum BrandingResolver {
             pick("buttonRadius", code?.shape?.buttonRadius.map { "\($0)" }, dashboard?.shape?.buttonRadius.map { "\($0)" }),
             pick("logo", code?.logo?.url, dashboard?.logo?.url),
             pick("mode", code?.mode.map { "\($0)" }, dashboard?.mode.map { "\($0)" }),
+            pick("surface", code?.colors?.surface, dashboard?.colors?.surface),
+            pick("muted", code?.colors?.muted, dashboard?.colors?.muted),
+            pick("border", code?.colors?.border, dashboard?.colors?.border),
+            pick("success", code?.colors?.success, dashboard?.colors?.success),
+            pick("error", code?.colors?.error, dashboard?.colors?.error),
+            pick("warning", code?.colors?.warning, dashboard?.colors?.warning),
+            pick("darkBackground", code?.colors?.dark?.background, dashboard?.colors?.dark?.background),
+            pick("displayFont", code?.typography?.displayFamily, dashboard?.typography?.displayFamily),
+            pick("radius", code?.shape?.radius.map { "\($0)" }, dashboard?.shape?.radius.map { "\($0)" }),
+            pick("buttonStyle", code?.shape?.buttonStyle?.rawValue, dashboard?.shape?.buttonStyle?.rawValue),
+            pick("logoPlacement", code?.logo?.placement?.rawValue, dashboard?.logo?.placement?.rawValue),
+            pick("background.image", code?.background?.imageUrl, dashboard?.background?.imageUrl),
+            pick("capture.ring", code?.capture?.ring, dashboard?.capture?.ring),
+            pick("capture.challenge", code?.capture?.challenge, dashboard?.capture?.challenge),
+            pick("capture.warning", code?.capture?.warning, dashboard?.capture?.warning),
+            pick("loader", code?.loader?.style?.rawValue, dashboard?.loader?.style?.rawValue),
         ]
         return "branding " + fields.joined(separator: " ")
     }

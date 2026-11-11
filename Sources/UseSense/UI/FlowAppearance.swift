@@ -6,13 +6,13 @@ import UIKit
 // MARK: - FlowAppearance: the white-label contract (Phase 1)
 //
 // FlowAppearance is the single customization schema shared across surfaces and
-// SDKs. It mirrors the web SDK contract in packages/sdk/src/flows/theme.ts. It
-// can be supplied two ways and is merged
-//   SDK-init > server(branding.appearance) > legacy primaryColor/buttonRadius > built-in default
-//   - by the developer at SDK init (`BrandingConfig.appearance`), and/or
-//   - by the operator in the dashboard, delivered in the branding payload.
-// Every field is optional; anything omitted falls back to the hosted-page tokens
-// already encoded in USColors / the brand font ramp.
+// SDKs. It mirrors the web SDK contract in packages/sdk/src/flows/theme.ts.
+// Precedence per field (docs/branding-precedence.md v1, "code wins"):
+//   per-launch code > SDK init (`appearance`, then the legacy primaryColor /
+//   buttonRadius / fontFamily / logoUrl) > dashboard Flow > dashboard org >
+//   built-in default.
+// Every field is optional; anything omitted falls back to the built-in tokens
+// (USColors / the brand font ramp, or CaptureTheme on the capture screens).
 
 /// A palette layer. `dark` overrides apply only in dark mode.
 public struct AppearanceColors: Codable, Equatable, Sendable {
@@ -202,42 +202,49 @@ public struct AppearanceLoader: Codable, Equatable, Sendable {
     }
 }
 
-/// Colours of the face capture screen (contour scan, progress ring, warning).
-/// Unset slots use the Sense defaults; a colour under 3:1 contrast on the
-/// dark camera scrim is ignored so a brand colour can't hide the guide.
-/// Wire keys are camelCase; snake_case (`contour_start`) is accepted too.
+/// Accents on the camera (BRAND-v1 4.2). Each one must reach 3:1 on #333333
+/// or it is replaced (see `CaptureColors`). Wire keys are camelCase.
+/// `contourStart` / `contourEnd` are retired: still decoded (camelCase or
+/// snake_case) so older payloads round-trip, but never drawn; the contour
+/// lines use `ring`.
 public struct AppearanceCapture: Codable, Equatable, Sendable {
-    /// Progress ring around the oval. Default #4F7CFF.
+    /// Ready oval, scan ring, contour lines, upload bar. Default: the brand
+    /// primary when it reads on the camera (lightened if needed), else #4F7CFF.
     public var ring: String?
-    /// Contour lines, top of the gradient. Default #7A96FF.
+    /// Extra-check ring and the extra-check sheet icon. Default #A878FC.
+    public var challenge: String?
+    /// Retired (BRAND-v1): accepted and ignored.
     public var contourStart: String?
-    /// Contour lines, bottom of the gradient. Default #A878FC.
+    /// Retired (BRAND-v1): accepted and ignored.
     public var contourEnd: String?
-    /// Paused ring and failing-oval pulse. Default #FFB84D.
+    /// Failing oval, paused ring, Follow Dot. Default `colors.warning`, else #FFB84D.
     public var warning: String?
 
-    public init(ring: String? = nil, contourStart: String? = nil, contourEnd: String? = nil, warning: String? = nil) {
-        self.ring = ring; self.contourStart = contourStart; self.contourEnd = contourEnd; self.warning = warning
+    public init(ring: String? = nil, challenge: String? = nil, contourStart: String? = nil,
+                contourEnd: String? = nil, warning: String? = nil) {
+        self.ring = ring; self.challenge = challenge
+        self.contourStart = contourStart; self.contourEnd = contourEnd; self.warning = warning
     }
 
     private enum CodingKeys: String, CodingKey {
-        case ring, contourStart, contourEnd, warning
+        case ring, challenge, contourStart, contourEnd, warning
         case contourStartSnake = "contour_start", contourEndSnake = "contour_end"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        ring = try c.decodeIfPresent(String.self, forKey: .ring)
-        contourStart = try c.decodeIfPresent(String.self, forKey: .contourStart)
-            ?? c.decodeIfPresent(String.self, forKey: .contourStartSnake)
-        contourEnd = try c.decodeIfPresent(String.self, forKey: .contourEnd)
-            ?? c.decodeIfPresent(String.self, forKey: .contourEndSnake)
-        warning = try c.decodeIfPresent(String.self, forKey: .warning)
+        func str(_ k: CodingKeys) -> String? { (try? c.decodeIfPresent(String.self, forKey: k)) ?? nil }
+        ring = str(.ring)
+        challenge = str(.challenge)
+        contourStart = str(.contourStart) ?? str(.contourStartSnake)
+        contourEnd = str(.contourEnd) ?? str(.contourEndSnake)
+        warning = str(.warning)
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(ring, forKey: .ring)
+        try c.encodeIfPresent(challenge, forKey: .challenge)
         try c.encodeIfPresent(contourStart, forKey: .contourStart)
         try c.encodeIfPresent(contourEnd, forKey: .contourEnd)
         try c.encodeIfPresent(warning, forKey: .warning)
@@ -260,7 +267,7 @@ public struct FlowAppearance: Codable, Equatable, Sendable {
     public var loader: AppearanceLoader?
     /// Force a palette or follow the OS (default `.auto`).
     public var mode: AppearanceMode?
-    /// Face capture screen colours (contour scan, ring, warning).
+    /// Camera accents (ring, challenge, warning).
     public var capture: AppearanceCapture?
 
     public init(
@@ -298,7 +305,8 @@ public extension FlowAppearance {
             colors: mergeColors(high: high.colors, low: low.colors),
             typography: AppearanceTypography(
                 fontFamily: high.typography?.fontFamily ?? low.typography?.fontFamily,
-                displayFamily: high.typography?.displayFamily ?? low.typography?.displayFamily
+                displayFamily: high.typography?.displayFamily ?? low.typography?.displayFamily,
+                fontCss: high.typography?.fontCss ?? low.typography?.fontCss
             ),
             shape: AppearanceShape(
                 radius: high.shape?.radius ?? low.shape?.radius,
@@ -322,6 +330,7 @@ public extension FlowAppearance {
             mode: high.mode ?? low.mode,
             capture: (high.capture == nil && low.capture == nil) ? nil : AppearanceCapture(
                 ring: high.capture?.ring ?? low.capture?.ring,
+                challenge: high.capture?.challenge ?? low.capture?.challenge,
                 contourStart: high.capture?.contourStart ?? low.capture?.contourStart,
                 contourEnd: high.capture?.contourEnd ?? low.capture?.contourEnd,
                 warning: high.capture?.warning ?? low.capture?.warning
@@ -373,8 +382,8 @@ public extension FlowAppearance {
 
 public extension FlowAppearance {
     /// Project a legacy `BrandingConfig` (primaryColor / buttonRadius / logoUrl /
-    /// fontFamily) into the lowest-priority appearance layer, so the new
-    /// resolution path subsumes the old fields without a behaviour change.
+    /// fontFamily) into an appearance layer. In code it sits just under the
+    /// code `appearance` and still ABOVE every dashboard layer (code wins).
     static func fromLegacy(primaryColor: String?, buttonRadius: CGFloat?, logoUrl: String?, fontFamily: String?) -> FlowAppearance {
         FlowAppearance(
             colors: primaryColor.map { AppearanceColors(primary: $0) },
