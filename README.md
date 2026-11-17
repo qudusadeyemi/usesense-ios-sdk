@@ -17,7 +17,7 @@ Native iOS SDK for human presence verification. Verify real humans, detect deepf
 Add to your Podfile:
 
 ```ruby
-pod 'UseSenseSDK', '~> 4.2'
+pod 'UseSenseSDK', '~> 4.13'
 ```
 
 Then run:
@@ -39,7 +39,7 @@ of the box** — no extra setup:
 target 'YourApp' do
   use_frameworks!
 
-  pod 'UseSenseSDK', '~> 4.4'
+  pod 'UseSenseSDK', '~> 4.13'
 end
 ```
 
@@ -68,12 +68,12 @@ In Xcode: **File > Add Package Dependencies**, enter:
 https://github.com/qudusadeyemi/usesense-ios-sdk.git
 ```
 
-Select version "Up to Next Major" from `4.4.1`.
+Select version "Up to Next Major" from `4.13.0`.
 
 Or add to your `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.4.1")
+.package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.13.0")
 ```
 
 ### Manual Installation
@@ -156,6 +156,78 @@ let viewController = UseSenseViewController(
 )
 present(viewController, animated: true)
 ```
+
+## Silent device check (Your KYC)
+
+Keep your own KYC provider SDK (MetaMap, Smile ID, Sumsub or any other). Next
+to it, the SDK sends Sense the device's signals headless: **no UI, no camera,
+no permission prompt**. Sense scores the device with the camera-free DeepSense
+engine and attaches the result to your provider's result when it reaches your
+Your KYC connection. The device is only told that the signals arrived; it never
+sees a score.
+
+1. **Your server** calls `POST /v1/device-checks` with your API key and gets
+   `{ deviceCheckId, token, nonce, expiresAt }`. Send `"platform": "ios"`.
+   Never ship your API key to the app; the `dct_` token works only for this
+   check and expires after 15 minutes.
+2. **The app** calls `start()` before the provider's SDK opens. It collects the
+   same camera-free signals as a Device Trust step: App Attest over the check's
+   nonce (the key is generated and attested on first use), jailbreak, debugger
+   and simulator checks, hardware and session context, and the App Attest key
+   id as the per-install identity.
+3. Pass `deviceCheckId` into the provider's metadata and map it to the Sense
+   field **Device check id** in your Your KYC connection.
+4. Optionally call `finish()` after the provider closes. It sends the camera
+   list (names only, read with `AVCaptureDevice.DiscoverySession`; no capture
+   session and no permission needed).
+
+```swift
+import UseSenseSDK
+
+// From your server: POST /v1/device-checks
+let created = try await myBackend.startKyc()  // { deviceCheckId, token, nonce }
+
+let check = UseSense.deviceCheck(config: DeviceCheckConfig(
+    deviceCheckId: created.deviceCheckId,
+    token: created.token,
+    nonce: created.nonce
+    // baseURL: defaults to https://api.usesense.ai
+))
+
+// 1. Before the provider's SDK opens. Headless: nothing is shown.
+switch await check.start() {
+case .received:
+    break
+case .failed(let error):
+    // Never blocks your KYC: log it and carry on. error.code is e.g.
+    // .tokenExpired (create a new check), .nonceMismatch, .outOfOrder,
+    // .unavailable (a 503 was already retried once), .networkUnavailable.
+    print("Device check start: \(error.code.rawValue) \(error.message)")
+}
+
+// 2. Run your provider as usual, passing deviceCheckId in its metadata.
+try await kycProvider.start(metadata: ["device_check_id": created.deviceCheckId])
+
+// 3. After it closes (optional): the camera inventory.
+_ = await check.finish()
+```
+
+Completion-handler variants are available too: `check.start { result in ... }`
+and `check.finish { result in ... }` (called on the main queue). Each phase is
+sent at most once: after a `202`, calling it again returns
+`.failed(.outOfOrder)` without a request. A failed phase can be called again
+within the token's 15 minutes.
+
+| Server answer | `DeviceCheckError.Code` |
+|---|---|
+| `202` | `.received(phase)` (not an error) |
+| `401 invalid_token` / `token_expired` | `.tokenInvalid` / `.tokenExpired` |
+| `400 nonce_mismatch` | `.nonceMismatch` |
+| `400 invalid_phase` / `invalid_input`, `413` | `.invalidInput` |
+| `404 not_found` | `.notFound` |
+| `409 already_started` / `not_started` / `already_finished` | `.outOfOrder` |
+| `503` (retried once after 1 s), other `5xx` | `.unavailable` |
+| No connection / request timeout (default 20 s) | `.networkUnavailable` / `.timeout` |
 
 ## White-labeling (Appearance & Copy)
 
