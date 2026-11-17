@@ -196,6 +196,15 @@ func startVerification() {
 }
 ```
 
+## Keeping Your Own KYC Provider
+
+If you already run another KYC provider's SDK, you can still send Sense the
+device's signals with no UI, no camera and no permission prompt: your server
+creates a device check (`POST /v1/device-checks`), the app calls
+`UseSense.deviceCheck(config:)` and `start()` before the provider opens, and
+passes `deviceCheckId` into the provider's metadata so Your KYC can link the two
+results. See "Silent device check (Your KYC)" in the README (SDK 4.13.0+).
+
 ## Data Privacy
 
 - The SDK captures face images and optional audio. These are uploaded encrypted (TLS 1.3) and processed server-side.

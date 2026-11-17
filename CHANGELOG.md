@@ -4,6 +4,35 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.13.0] - 2026-11-17
+
+### Added
+
+- **Silent device check for Your KYC (headless).** Customers who keep their
+  own KYC provider SDK can now run a Sense device check next to it with no
+  UI, no camera and no permission prompt:
+  `UseSense.deviceCheck(config: DeviceCheckConfig(deviceCheckId:token:nonce:baseURL:))`
+  returns a `UseSenseDeviceCheck` with `start() async -> DeviceCheckResult`
+  and `finish() async -> DeviceCheckResult`, plus completion-handler
+  variants (called on the main queue).
+  - `start()` reuses the Device Trust step's camera-free collector: App Attest
+    over the check's `dn_` nonce (clientDataHash = SHA-256 of the nonce; key
+    generation and the one-time attestation follow the existing flow),
+    jailbreak / debugger / simulator checks, hardware and session context, and
+    the App Attest key id as the per-install identity. Camera and microphone
+    fields are left out. Posted to `POST /v1/sdk/device-checks/:id/signals`
+    with `Authorization: Bearer <dct_ token>` and `phase: "start"`.
+  - `finish()` sends `channel_integrity.camera_inventory`
+    (`video_input_count`, `labels`) from an `AVCaptureDevice.DiscoverySession`
+    device listing: no capture session, no permission.
+  - The server answers 202 and never returns a score. Refusals map to
+    `DeviceCheckError` (`.tokenInvalid`, `.tokenExpired`, `.nonceMismatch`,
+    `.invalidInput`, `.notFound`, `.outOfOrder`, `.unavailable`,
+    `.networkUnavailable`, `.timeout`, `.invalidConfig`); a 503 is retried
+    once after 1 s. Each phase is sent at most once after a 202. Nothing
+    throws and nothing crashes: every failure is a `.failed` result.
+  - README: new "Silent device check (Your KYC)" section.
+
 ## [4.12.0] - 2026-11-11
 
 ### Added
