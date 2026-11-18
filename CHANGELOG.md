@@ -4,6 +4,16 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.13.1] - 2026-11-18
+
+### Fixed
+- **Device checks now send the device telemetry.** The silent device check
+  (`UseSense.deviceCheck`) and the Flows Device Trust step send `cpu_abi`,
+  `total_ram_mb` and `storage_available_mb` in their channel integrity, as
+  Android always has. Before, iOS sent them only with face uploads, so the
+  server's Hardware Authenticity dimension scored them 0 on every iOS device
+  check. Capture-only keys are still left out.
+
 ## [4.13.0] - 2026-11-17
 
 ### Added
