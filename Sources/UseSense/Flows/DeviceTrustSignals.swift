@@ -118,8 +118,24 @@ enum DeviceTrustSignals {
         try? await Task.sleep(nanoseconds: UInt64(sensorWindowSeconds * 1_000_000_000))
         let fields = await attest
 
-        var ci = collector.collectChannelIntegrity(attestFields: fields)
-        for key in captureOnlyKeys { ci.removeValue(forKey: key) }
+        return build(
+            collected: collector.collectChannelIntegrity(attestFields: fields),
+            telemetry: collector.collectDeviceTelemetry()
+        )
+    }
+
+    /// The channel_integrity a device-only check sends: the collector's
+    /// signals with the capture-only keys removed, plus the device telemetry
+    /// (cpu_abi, total_ram_mb, storage_available_mb) a face upload carries
+    /// alongside as device_telemetry. Without it the server's Hardware
+    /// Authenticity dimension scored those signals 0 on every iOS device
+    /// check (Android has always sent them). Collector values win on a key
+    /// clash, as on Android (DeviceTrustSignals.build).
+    static func build(collected: [String: Any], telemetry: [String: Any]) -> [String: Any] {
+        var ci = telemetry
+        for (key, value) in collected where !captureOnlyKeys.contains(key) {
+            ci[key] = value
+        }
         return ci
     }
 

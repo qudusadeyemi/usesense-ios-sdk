@@ -270,6 +270,35 @@ final class DeviceCheckTests: XCTestCase {
         }
         wait(for: [done], timeout: 5)
     }
+
+    func testDeviceTrustPayloadCarriesTelemetryWithoutCaptureKeys() {
+        let collected: [String: Any] = [
+            "device_model": "iPhone18,1",
+            "cpu_abi": "from-collector",
+            "camera_resolution": "1280x720",
+            "camera_permission_granted": true,
+        ]
+        let telemetry: [String: Any] = [
+            "cpu_abi": "arm64",
+            "total_ram_mb": 8192,
+            "storage_available_mb": 40000,
+        ]
+        let ci = DeviceTrustSignals.build(collected: collected, telemetry: telemetry)
+        XCTAssertEqual(ci["total_ram_mb"] as? Int, 8192)
+        XCTAssertEqual(ci["storage_available_mb"] as? Int, 40000)
+        XCTAssertEqual(ci["device_model"] as? String, "iPhone18,1")
+        // Collector values win on a clash.
+        XCTAssertEqual(ci["cpu_abi"] as? String, "from-collector")
+        // Nothing was captured.
+        XCTAssertNil(ci["camera_resolution"])
+        XCTAssertNil(ci["camera_permission_granted"])
+    }
+
+    func testRealTelemetryHasTheHardwareSignalsTheServerScores() {
+        let telemetry = DeviceSignalCollector().collectDeviceTelemetry()
+        XCTAssertNotNil(telemetry["cpu_abi"])
+        XCTAssertNotNil(telemetry["total_ram_mb"])
+    }
 }
 
 /// Records every request a fetcher saw, thread-safely.
