@@ -15,6 +15,29 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   and the SDK never sends `identity_id` on a liveness session. Flow mode
   already supports this through the `face_liveness_check` tool.
 
+### Fixed
+- **Flows: a run held for manual review ends on the review screen.** When a
+  Flow parks a run for a human reviewer, the server returns state
+  `awaiting_review` with pending action `{ kind: "await_review" }`. The SDK
+  did not know that action and failed to decode the run, so the runner showed
+  an error screen and `UseSenseFlows.run` completed with `unsupported_action`
+  instead of the "Under review" screen. The runner now treats a review hold
+  (the state or the action) as the end of the person's part: it shows the
+  "Under review" screen (`copy.result.reviewTitle` / `reviewBody`) and, on
+  Continue, completes once with `FlowRunResult(state: .awaitingReview,
+  outcome:)`. The final decision arrives later by webhook. The reviewer's
+  `instructions` are kept on `PendingAction.awaitReview` and never shown to
+  the person.
+- **Flows: an unknown pending action no longer fails the whole run view.** A
+  kind this SDK version does not know decodes as `PendingAction.unsupported`
+  (the run's state, outcome and branding still decode). The runner shows
+  "Something went wrong" with Try again (a re-read of the run); Close
+  completes once with `unsupported_action`. New copy key
+  `copy.errors.unsupportedStep` sets the screen's body.
+- `PendingAction` gains the `awaitReview` and `unsupported` cases; an
+  exhaustive `switch` over it in host code needs the new cases or a
+  `default`.
+
 ## [4.13.1] - 2026-11-18
 
 ### Fixed
