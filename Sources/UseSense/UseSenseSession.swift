@@ -394,6 +394,16 @@ public final class UseSenseSession: @unchecked Sendable {
         initSuspicionEngine(policy: data.policy)
     }
 
+    /// Local checks that mirror the server: a liveness session must not
+    /// carry an identity id (the server returns 400 for that).
+    static func validateRequest(sessionType: SessionType, identityId: String?) -> UseSenseError? {
+        let hasIdentity = !(identityId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        if sessionType == .liveness && hasIdentity {
+            return .invalidConfig("identity_id must not be set for liveness sessions")
+        }
+        return nil
+    }
+
     // MARK: - Session Lifecycle
 
     func start() async {
@@ -419,9 +429,13 @@ public final class UseSenseSession: @unchecked Sendable {
                     publishBranding()
                 } else {
                     // Standard Init: create session directly
+                    if let configError = Self.validateRequest(sessionType: sessionType, identityId: identityId) {
+                        throw configError
+                    }
                     let request = CreateSessionRequest(
                         sessionType: sessionType.rawValue,
-                        identityId: identityId,
+                        // Liveness sessions never carry an identity.
+                        identityId: sessionType == .liveness ? nil : identityId,
                         externalUserId: externalUserId,
                         metadata: metadata
                     )

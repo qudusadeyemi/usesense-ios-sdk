@@ -82,7 +82,7 @@ targets:
         PRODUCT_NAME: UseSenseSDK
         PRODUCT_MODULE_NAME: UseSenseSDK
         PRODUCT_BUNDLE_IDENTIFIER: ai.usesense.sdk
-        MARKETING_VERSION: "4.13.1"
+        MARKETING_VERSION: "4.14.0"
         CURRENT_PROJECT_VERSION: "1"
         INSTALL_PATH: "/Library/Frameworks"
         DYLIB_INSTALL_NAME_BASE: "@rpath"
