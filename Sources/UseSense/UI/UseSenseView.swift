@@ -7,19 +7,54 @@ public struct UseSenseView: View {
     @StateObject private var viewModel: UseSenseViewModel
     private let onComplete: (Result<RedactedDecisionObject, UseSenseError>) -> Void
     private let onCancel: (() -> Void)?
+    private let session: UseSenseSession
+    /// False when `UseSenseViewController` hosts this view: the controller
+    /// seeds the brand itself.
+    private let seedsBranding: Bool
+    @State private var brandSeed = CaptureBrandSeed()
 
     public init(
         session: UseSenseSession,
         onComplete: @escaping (Result<RedactedDecisionObject, UseSenseError>) -> Void,
         onCancel: (() -> Void)? = nil
     ) {
+        self.init(session: session, onComplete: onComplete, onCancel: onCancel, seedsBranding: true)
+    }
+
+    init(
+        session: UseSenseSession,
+        onComplete: @escaping (Result<RedactedDecisionObject, UseSenseError>) -> Void,
+        onCancel: (() -> Void)?,
+        seedsBranding: Bool
+    ) {
         self._viewModel = StateObject(wrappedValue: UseSenseViewModel(session: session))
+        self.session = session
         self.onComplete = onComplete
         self.onCancel = onCancel
+        self.seedsBranding = seedsBranding
     }
 
     public var body: some View {
         CaptureThemeRoot { screens }
+            .onAppear(perform: seedBranding)
+            .onDisappear { brandSeed.clear() }
+    }
+
+    /// Same "code wins" branding as `UseSenseViewController`: theme from the
+    /// code-set branding at once, then fold the dashboard branding in under it
+    /// when the session response delivers it. Inside a Flow the runner owns
+    /// the brand and nothing is seeded here.
+    private func seedBranding() {
+        guard seedsBranding else { return }
+        let seed = brandSeed
+        if seed.seed(appearance: session.brandingAppearance, copy: session.brandingCopy,
+                     displayName: session.brandDisplayName) {
+            session.onBrandingAvailable = { [weak session] appearance in
+                guard let session, seed.owns else { return }
+                seed.seed(appearance: appearance, copy: session.brandingCopy,
+                          displayName: session.brandDisplayName)
+            }
+        }
     }
 
     private var screens: some View {

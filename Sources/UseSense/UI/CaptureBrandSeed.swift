@@ -9,6 +9,8 @@ import Foundation
 final class CaptureBrandSeed {
     private(set) var owns = false
 
+    nonisolated init() {}
+
     /// A Flow runner is presenting: it owns the resolvers for the whole run.
     nonisolated(unsafe) static var flowRunActive = false
 
