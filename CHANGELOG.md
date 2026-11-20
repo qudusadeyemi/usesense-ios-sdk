@@ -56,6 +56,16 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - **SwiftUI `UseSenseView` applies code-wins branding itself**, the same way
   `UseSenseViewController` does, so SwiftUI hosts are themed too.
 
+- **React Native apps no longer crash on iOS when the SDK is linked.**
+  `UseSenseMediaPipe` exported MediaPipe's own glog (plus protobuf, absl,
+  OpenCV and TensorFlow Lite) as global symbols. React Native links an older
+  glog, so the two mixed in one binary and the first React Native log on iOS
+  aborted the app (any tap or paste). The MediaPipe bundle is now built with
+  each slice merged into one object whose only global symbols are MediaPipe's
+  `MPP*` API (`scripts/isolate-mediapipe-symbols.sh`); the graph archives are
+  no longer shipped or `-force_load`ed. Affects 4.13.1 and earlier with React
+  Native; native and Flutter apps are unaffected either way.
+
 ### Added (embedding)
 - `UseSenseViewController.cancel()` and `UseSenseSession.cancel()` are now
   public: stop a capture from outside and report `userCancelled` once.
