@@ -206,3 +206,25 @@ jobs:
           done
           echo "::error::UseSenseSDK $VER failed to publish after 3 attempts"
           exit 1
+
+  notify-wrappers:
+    name: Ask the Flutter and React Native wrappers to pin this release
+    needs: [publish-sdk]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch native-sdk-released
+        env:
+          GH_TOKEN: ${{ secrets.USESENSE_BOT_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::USESENSE_BOT_TOKEN is not set; the wrappers' daily bump run will pick this release up instead (see RELEASING.md)."
+            exit 0
+          fi
+          for repo in flutter-usesense react-native-usesense; do
+            gh api "repos/qudusadeyemi/$repo/dispatches" \
+              -f event_type=native-sdk-released \
+              -f "client_payload[platform]=ios" \
+              -f "client_payload[version]=${VERSION#v}"
+            echo "Dispatched to $repo"
+          done
