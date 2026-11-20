@@ -159,15 +159,19 @@ public struct FlowCopy: Codable, Equatable, Sendable {
         /// Distinct from `documentUnreadable`: the document was fine, the
         /// transfer was not, so this copy asks for a resend and never a retake.
         public var documentIncomplete: String?
+        /// Body of the screen shown for a step this SDK version cannot show.
+        public var unsupportedStep: String?
         public init(
             generic: String? = nil,
             providerUnavailable: String? = nil,
             documentUnreadable: String? = nil,
-            documentIncomplete: String? = nil
+            documentIncomplete: String? = nil,
+            unsupportedStep: String? = nil
         ) {
             self.generic = generic; self.providerUnavailable = providerUnavailable
             self.documentUnreadable = documentUnreadable
             self.documentIncomplete = documentIncomplete
+            self.unsupportedStep = unsupportedStep
         }
     }
 
@@ -284,7 +288,8 @@ public extension FlowCopy {
                 generic: pick(high.errors?.generic, low.errors?.generic),
                 providerUnavailable: pick(high.errors?.providerUnavailable, low.errors?.providerUnavailable),
                 documentUnreadable: pick(high.errors?.documentUnreadable, low.errors?.documentUnreadable),
-                documentIncomplete: pick(high.errors?.documentIncomplete, low.errors?.documentIncomplete)
+                documentIncomplete: pick(high.errors?.documentIncomplete, low.errors?.documentIncomplete),
+                unsupportedStep: pick(high.errors?.unsupportedStep, low.errors?.unsupportedStep)
             ),
             privacy: Privacy(
                 disclosure: pick(high.privacy?.disclosure, low.privacy?.disclosure),

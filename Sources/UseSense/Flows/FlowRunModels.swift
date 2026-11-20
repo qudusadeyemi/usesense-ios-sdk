@@ -176,7 +176,9 @@ public struct IdTypeSpec: Sendable, Equatable {
 }
 
 /// The action the server parked at. The runner reads it and renders the
-/// matching native surface; unknown kinds surface as FlowError.unsupportedAction.
+/// matching native surface. A kind this SDK version does not know decodes as
+/// `.unsupported` (the rest of the view still decodes) and the runner shows a
+/// retry screen, reporting FlowError.unsupportedAction.
 /// See guides/flows/action-contract.mdx.
 public enum PendingAction: Sendable, Equatable {
     case captureFace(toolId: String?)
@@ -187,6 +189,28 @@ public enum PendingAction: Sendable, Equatable {
     case captureDevice(toolId: String?, nonce: String?)
     case info(InfoAction)
     case redirectToConsent(url: URL)
+    /// The run is held for a human reviewer (state `awaiting_review`). Nothing
+    /// is left for the person to do. `instructions` is the reviewer's note and
+    /// is never shown to the person.
+    case awaitReview(stepId: String?, instructions: String?)
+    /// A pending action this SDK version cannot render. `kind` names it
+    /// (`capture:<variant>` for an unknown capture variant).
+    case unsupported(kind: String)
+
+    /// Decodes the action for a run view. Never throws: an unknown or
+    /// malformed action becomes `.unsupported` so the run's state, outcome and
+    /// branding still reach the runner.
+    static func decodeLenient(_ raw: [String: Any]) -> PendingAction {
+        do {
+            return try decode(raw)
+        } catch {
+            let kind = (raw["kind"] as? String) ?? "unknown"
+            if kind == "capture", let capture = raw["capture"] as? String {
+                return .unsupported(kind: "capture:\(capture)")
+            }
+            return .unsupported(kind: kind)
+        }
+    }
 
     /// Decodes the wire format the server emits; unknown variants throw the
     /// SDK-side `FlowError.unsupportedAction` so a version-skewed runner
@@ -229,6 +253,8 @@ public enum PendingAction: Sendable, Equatable {
                 throw FlowError(code: .unsupportedAction, message: "consentUrl missing or invalid")
             }
             return .redirectToConsent(url: url)
+        case "await_review":
+            return .awaitReview(stepId: raw["stepId"] as? String, instructions: raw["instructions"] as? String)
         default:
             throw FlowError(code: .unsupportedAction, message: "Unknown pendingAction.kind: \(kind)")
         }
@@ -314,7 +340,7 @@ public struct FlowRunView {
         }
         let outcome = (run["outcome"] as? String).flatMap { FlowOutcome(rawValue: $0) }
         let cursor = run["cursorStepId"] as? String
-        let action: PendingAction? = try (run["pendingAction"] as? [String: Any]).map { try PendingAction.decode($0) }
+        let action: PendingAction? = (run["pendingAction"] as? [String: Any]).map(PendingAction.decodeLenient)
         let branding = (root["branding"] as? [String: Any]).map { raw -> FlowRunView.Branding in
             let b = ServerBranding.fromJSONObject(raw)
             return Branding(
@@ -327,6 +353,47 @@ public struct FlowRunView {
             )
         }
         return FlowRunView(id: id, state: state, outcome: outcome, cursorStepId: cursor, environment: environment, pendingAction: action, branding: branding)
+    }
+}
+
+// MARK: - Settled runs
+
+extension FlowRunView {
+    /// True when the run is parked for a human reviewer. The server sets the
+    /// state to `awaiting_review` and the pending action to `await_review`
+    /// together; either one is enough.
+    var isAwaitingReview: Bool {
+        if state == .awaitingReview { return true }
+        if case .awaitReview = pendingAction { return true }
+        return false
+    }
+
+    /// True when the runner is done driving the run: a terminal state, or a
+    /// review hold (the person is done; a reviewer decides later).
+    var isSettled: Bool {
+        switch state {
+        case .completed, .errored, .cancelled, .abandoned: return true
+        default: return isAwaitingReview
+        }
+    }
+
+    /// The result delivered to the host app for a settled run.
+    var settledResult: FlowRunResult {
+        FlowRunResult(flowRunId: id, state: isAwaitingReview ? .awaitingReview : state, outcome: outcome)
+    }
+
+    enum EndScreen: Equatable { case success, review, notVerified }
+
+    /// Which end screen a settled run shows.
+    var endScreen: EndScreen {
+        switch outcome {
+        case .approve: return .success
+        case .reject: return .notVerified
+        case .manualReview: return .review
+        case .none:
+            if isAwaitingReview { return .review }
+            return state == .errored ? .notVerified : .success
+        }
     }
 }
 

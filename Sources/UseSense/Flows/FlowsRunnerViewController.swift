@@ -51,6 +51,11 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     static var stepPollBudget: TimeInterval = 90
     /// Guards re-presenting the terminal error surface.
     private var terminalErrorPresented = false
+    /// Set once the host's completion has been called; later calls are no-ops.
+    private var didFinish = false
+    /// Unsupported action kinds already reported, so a retry that lands on the
+    /// same kind does not report it again.
+    private var reportedUnsupportedKinds: Set<String> = []
 
     init(options: RunFlowOptions, completion: @escaping (Result<FlowRunResult, FlowError>) -> Void) {
         self.options = options
@@ -208,17 +213,16 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             stopPolling()
             finish(.success(FlowRunResult(flowRunId: view.id, state: view.state, outcome: view.outcome)))
             return
-        case .completed, .errored:
-            stopPolling()
-            presentResult(for: view)
-            return
-        case .awaitingReview where view.pendingAction == nil:
-            // The subject's part is done; a human reviews next. Waiting on
-            // that behind a spinner would be a hang, so show "under review".
-            stopPolling()
-            presentResult(for: view)
-            return
         default: break
+        }
+        // Completed / errored, or held for a human reviewer. The server sends a
+        // review hold as state `awaiting_review` WITH pending action
+        // `await_review`; either one ends the person's part, so show "under
+        // review" rather than waiting on a reviewer behind a spinner.
+        if view.isSettled {
+            stopPolling()
+            presentResult(for: view)
+            return
         }
         guard let action = view.pendingAction else {
             showSpinner()
@@ -247,7 +251,23 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             installInfo(info)
         case .redirectToConsent(let url):
             presentConsent(url: url)
+        case .awaitReview:
+            // Covered by isSettled above; kept so the switch stays exhaustive.
+            stopPolling()
+            presentResult(for: view)
+        case .unsupported(let kind):
+            presentUnsupported(kind: kind)
         }
+    }
+
+    /// A pending action this SDK version cannot render. Show the error screen
+    /// with Try again (a re-read of the run) instead of nothing. The failure
+    /// reaches the host once, as `unsupported_action`, when the person closes.
+    private func presentUnsupported(kind: String) {
+        if reportedUnsupportedKinds.insert(kind).inserted {
+            USTrace.log("flows unsupported pendingAction.kind=\(kind)")
+        }
+        presentTerminalError(FlowError(code: .unsupportedAction, message: "Unsupported pendingAction.kind: \(kind)"))
     }
 
     /// Presents the branded terminal result screen (success / under review /
@@ -257,18 +277,12 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
         if resultPresented { return }
         resultPresented = true
         let kind: FlowResultView.Kind
-        switch view.outcome {
-        case .approve:      kind = .success
-        case .reject:       kind = .notVerified
-        case .manualReview: kind = .review
-        case .none:
-            switch view.state {
-            case .errored: kind = .notVerified
-            case .awaitingReview: kind = .review
-            default: kind = .success
-            }
+        switch view.endScreen {
+        case .success:     kind = .success
+        case .review:      kind = .review
+        case .notVerified: kind = .notVerified
         }
-        let result = FlowRunResult(flowRunId: view.id, state: view.state, outcome: view.outcome)
+        let result = view.settledResult
         let doneTitle = FlowCopyResolver.text(\.buttons?.continue, default: "Done")
         let host = UIHostingController(rootView: FlowResultView(kind: kind, continueTitle: doneTitle, onContinue: { [weak self] in
             guard let self else { return }
@@ -282,6 +296,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     private func finish(_ result: Result<FlowRunResult, FlowError>) {
         // Guard against double-callback if a network error and a terminal
         // state both fire — the first wins, subsequent calls are no-ops.
+        if didFinish { return }
+        didFinish = true
         let cb = completion
         // Clear the per-run appearance + copy so a subsequent run (or any other
         // SDK surface) starts from the built-in tokens / copy rather than this
@@ -325,7 +341,7 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
                 guard let next = try? await self.client.get() else { continue }
                 if Task.isCancelled { return }
                 self.view_ = next
-                if next.pendingAction != nil || Self.isTerminal(next.state) {
+                if next.pendingAction != nil || next.isSettled {
                     self.pollTask = nil
                     self.applyResolvedAppearance(server: next.branding?.appearance)
                     self.applyResolvedCopy(server: next.branding?.copy)
@@ -345,13 +361,6 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
     private func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
-    }
-
-    private static func isTerminal(_ state: FlowRunState) -> Bool {
-        switch state {
-        case .completed, .errored, .cancelled, .abandoned, .awaitingReview: return true
-        default: return false
-        }
     }
 
     /// The face capture's error, carried into the Flow taxonomy with the SDK's
@@ -382,6 +391,8 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
             return "This step is taking longer than expected. Please try again."
         case .permissionDenied:
             return "Camera access is needed to continue. Allow it in Settings, then try again."
+        case .unsupportedAction:
+            return FlowCopyResolver.text(\.errors?.unsupportedStep, default: "This step could not be shown here. Try again, or come back later.")
         default:
             return FlowCopyResolver.text(\.errors?.providerUnavailable, default: "Verification is temporarily unavailable. Please try again.")
         }
