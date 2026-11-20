@@ -68,12 +68,12 @@ In Xcode: **File > Add Package Dependencies**, enter:
 https://github.com/qudusadeyemi/usesense-ios-sdk.git
 ```
 
-Select version "Up to Next Major" from `4.13.1`.
+Select version "Up to Next Major" from `4.14.0`.
 
 Or add to your `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.13.1")
+.package(url: "https://github.com/qudusadeyemi/usesense-ios-sdk.git", from: "4.14.0")
 ```
 
 ### Manual Installation
@@ -333,6 +333,22 @@ let session = useSense.startVerification(
     request: VerificationRequest(
         sessionType: .authentication,
         identityId: "idn_abc123"
+    )
+)
+```
+
+### Liveness only
+
+Checks that a real person is in front of the camera, and nothing else. No identity is created, no face is enrolled and no 1:N duplicate search runs, so the same person can pass any number of times. A liveness session costs 1 credit. Do not pass an `identityId`: the session fails with `INVALID_CONFIG` (the server rejects it with a 400).
+
+```swift
+let session = useSense.createSession(type: .liveness)
+
+// Or use the VerificationRequest pattern:
+let session = useSense.startVerification(
+    request: VerificationRequest(
+        sessionType: .liveness,
+        externalUserId: "user_123"  // Optional, for your own records
     )
 )
 ```

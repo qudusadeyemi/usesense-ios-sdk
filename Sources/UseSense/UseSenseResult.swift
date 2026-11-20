@@ -9,6 +9,10 @@ public enum Decision: String, Codable, Sendable {
 public enum SessionType: String, Codable, Sendable {
     case enrollment
     case authentication
+    /// Liveness only: checks that a real person is in front of the camera.
+    /// Creates no identity, enrols no face and runs no duplicate (1:N) search.
+    /// Do not pass an `identityId` with this type; the server rejects it.
+    case liveness
 }
 
 /// The ONLY decision object exposed to the host app.

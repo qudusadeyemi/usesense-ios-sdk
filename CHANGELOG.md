@@ -4,6 +4,17 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.14.0] - 2026-11-20
+
+### Added
+- **`SessionType.liveness`** (wire value `"liveness"`): a liveness-only session
+  that checks a real person is in front of the camera. The server creates no
+  identity, enrols no face and runs no 1:N duplicate search. Costs 1 credit.
+  A Standard Init liveness session with an `identityId` fails with
+  `INVALID_CONFIG` before any network call (the server returns 400 for that),
+  and the SDK never sends `identity_id` on a liveness session. Flow mode
+  already supports this through the `face_liveness_check` tool.
+
 ## [4.13.1] - 2026-11-18
 
 ### Fixed
