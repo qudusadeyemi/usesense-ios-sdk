@@ -771,7 +771,7 @@ Ensure the SDK's `PrivacyInfo.xcprivacy` is included in your build. If using Coc
 
 ## API Reference
 
-Full API documentation is generated via Swift DocC. See the [API Reference](https://docs.usesense.ai/ios/api).
+Guides and the API reference are at [docs.usesense.ai](https://docs.usesense.ai) ([API reference](https://docs.usesense.ai/api)).
 
 ## Changelog
 
