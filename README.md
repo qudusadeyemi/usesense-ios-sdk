@@ -17,7 +17,7 @@ Native iOS SDK for human presence verification. Verify real humans, detect deepf
 Add to your Podfile:
 
 ```ruby
-pod 'UseSenseSDK', '~> 4.13'
+pod 'UseSenseSDK', '~> 4.14'
 ```
 
 Then run:
@@ -33,13 +33,13 @@ Open the `.xcworkspace` file (not `.xcodeproj`).
 Face capture buffers a camera frame only when the on-device face mesh detects a
 face in it, so the face-mesh runtime (Google's MediaPipe) must be linked or the
 liveness step fails with **"No frames captured."** As of **4.4.1 this works out
-of the box** — no extra setup:
+of the box**, with no extra setup:
 
 ```ruby
 target 'YourApp' do
   use_frameworks!
 
-  pod 'UseSenseSDK', '~> 4.13'
+  pod 'UseSenseSDK', '~> 4.14'
 end
 ```
 
@@ -48,7 +48,7 @@ MediaPipe `Tasks{Vision,Common}` frameworks with Google's broken xcframework
 `Info.plist` already patched (`LibraryPath: <NAME>.a` -> `.framework`). You no
 longer add `MediaPipeTasksVision` or a `pre_install` hook. `UseSenseSDK` is a
 `static_framework`, so it carries MediaPipe's static binaries under a normal
-`use_frameworks!` — no `:linkage => :static` needed.
+`use_frameworks!`; no `:linkage => :static` needed.
 
 > Provenance: the patched binaries are produced by `scripts/vendor-mediapipe.sh`
 > at release time and attached to the GitHub Release that `UseSenseMediaPipe.podspec`
@@ -57,7 +57,7 @@ longer add `MediaPipeTasksVision` or a `pre_install` hook. `UseSenseSDK` is a
 
 The SDK still gates the face-mesh code behind `#if canImport(MediaPipeTasksVision)`,
 so SwiftPM/source builds without the binary degrade cleanly (`FaceMeshManager`
-returns `isReady=false`) — but note that face capture is non-functional in that
+returns `isReady=false`), but note that face capture is non-functional in that
 degraded state, so CocoaPods integrators should keep the dependency.
 
 ### Swift Package Manager
@@ -249,6 +249,67 @@ within the token's 15 minutes.
 | `503` (retried once after 1 s), other `5xx` | `.unavailable` |
 | No connection / request timeout (default 20 s) | `.networkUnavailable` / `.timeout` |
 
+## Run a Flow
+
+Flows are the main integration path: you build the steps (consent, forms, documents, face capture, registry checks, review) in the dashboard, and the SDK runs them. No API key ships in the app.
+
+**1. Your server starts the run** with its secret key and returns `flowRun.id` and `sdkToken` to the app:
+
+```bash
+curl -X POST https://api.usesense.ai/v1/flow-runs \
+  -H "x-api-key: sk_..." -H "Content-Type: application/json" \
+  -d '{"flowId":"YOUR_FLOW_ID","subject":{"externalRef":"user_123"},"mint_sdk_token":true}'
+# 201 { "flowRun": { "id": "...", "state": "pending", ... }, "stepRuns": [], "sdkToken": "...", "expiresAt": "..." }
+```
+
+The token is bound to that run and expires after 30 minutes (`sdk_token_ttl_seconds`, 60 s to 24 h).
+
+**2. The app runs it:**
+
+```swift
+import UseSenseSDK
+
+UseSenseFlows.run(
+    flowRunId: flowRunId,
+    sdkToken: sdkToken,
+    from: self
+) { (result: Result<FlowRunResult, FlowError>) in
+    switch result {
+    case .success(let run):
+        // run.flowRunId, run.state, run.outcome (.approve, .reject, .manualReview or nil)
+        if run.state == .awaitingReview { showUnderReview() } else { showDone() }
+    case .failure(let error):
+        print("Flow error \(error.code.rawValue): \(error.message)")
+    }
+}
+```
+
+`run` presents a full-screen modal and calls the completion once. Optional parameters: `apiBaseURL`, `appearance` and `copy` (see [White-labeling](#white-labeling-appearance--copy)).
+
+**3. The result.** `FlowRunResult.state` is one of:
+
+| `state` | Meaning |
+|---------|---------|
+| `.completed` | The run finished; `outcome` holds the Flow's outcome. Delivered when the person taps Continue on the result screen. |
+| `.awaitingReview` | Held for a human reviewer. The person sees the "Under review" screen. The final decision arrives later by webhook (`flow_run.completed`). |
+| `.cancelled` | The person left the run. |
+| `.errored` | A step failed and the Flow ended in error. |
+| `.abandoned` | The run timed out without the person finishing. |
+
+The client result is for your UI only. Decide on your server, from the `flow_run.completed` webhook or `GET /v1/flow-runs/:id` with your API key.
+
+**4. Errors.** `.failure` carries a `FlowError` with `code`, `message`, `serverCode` (when the server sent one) and `isRetryable`:
+
+| `code` | What to do |
+|--------|------------|
+| `.tokenExpired`, `.tokenInvalid` | Start a new run on your server and call `run` again. |
+| `.networkUnavailable` | Let the person retry when they are back online. |
+| `.permissionDenied` | Camera access was refused; explain how to allow it. |
+| `.providerUnavailable` | A verification provider is down; retry later. |
+| `.captureTimeout`, `.uploadTimeout`, `.runTimeout` | The capture, its upload, or the run did not finish in time; retry. |
+| `.unsupportedAction` | The Flow uses a step this SDK version cannot show; upgrade the SDK. |
+| `.cancelled`, `.invalidInput`, `.unknown` | `.invalidInput` is shown inline by the runner; treat the rest as a failed attempt. |
+
 ## White-labeling (Appearance & Copy)
 
 The verification flow UI is fully customizable through two optional inputs you pass
@@ -257,7 +318,7 @@ merged **SDK-init > dashboard (org settings) > built-in default**. Every field i
 optional; anything you omit keeps the Sense default.
 
 You can set this two ways: in code (below), or no-code via the dashboard's
-**Flows → Appearance** tab (saved on your org, delivered to every SDK and the hosted
+**Flows > Appearance** tab (saved on your org, delivered to every SDK and the hosted
 pages, no redeploy).
 
 Customizable surfaces: colors (plus dark-mode overrides), typography, shape and
