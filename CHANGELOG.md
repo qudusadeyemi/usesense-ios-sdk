@@ -37,6 +37,38 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 - `PendingAction` gains the `awaitReview` and `unsupported` cases; an
   exhaustive `switch` over it in host code needs the new cases or a
   `default`.
+- **Embedded capture no longer closes the host's screen.**
+  `UseSenseViewController` used to call `dismiss(animated:)` after every
+  result. Embedded as a child inside a screen that was itself presented
+  (React Native, Flutter, a container), that dismissed the host's screen. It
+  now dismisses only when it was presented itself (or pushed onto a presented
+  navigation controller, as before).
+- **Embedded capture keeps its branding when the host is covered.** The
+  brand set from code and the dashboard was cleared whenever the controller
+  disappeared without a presenter, so a child came back with default colours
+  after another screen was pushed over its host. It is now cleared only when
+  the controller is dismissed or removed.
+- **Removing an embedded capture stops the camera.** A child removed (or a
+  host dismissed) before the capture finished left the camera and uploads
+  running. The controller now stops the session and reports `userCancelled`
+  once. Inside a Flow the runner's own teardown stops the camera without a
+  report, so a run is never cancelled by it.
+- **SwiftUI `UseSenseView` applies code-wins branding itself**, the same way
+  `UseSenseViewController` does, so SwiftUI hosts are themed too.
+
+- **React Native apps no longer crash on iOS when the SDK is linked.**
+  `UseSenseMediaPipe` exported MediaPipe's own glog (plus protobuf, absl,
+  OpenCV and TensorFlow Lite) as global symbols. React Native links an older
+  glog, so the two mixed in one binary and the first React Native log on iOS
+  aborted the app (any tap or paste). The MediaPipe bundle is now built with
+  each slice merged into one object whose only global symbols are MediaPipe's
+  `MPP*` API (`scripts/isolate-mediapipe-symbols.sh`); the graph archives are
+  no longer shipped or `-force_load`ed. Affects 4.13.1 and earlier with React
+  Native; native and Flutter apps are unaffected either way.
+
+### Added (embedding)
+- `UseSenseViewController.cancel()` and `UseSenseSession.cancel()` are now
+  public: stop a capture from outside and report `userCancelled` once.
 
 ## [4.13.1] - 2026-11-18
 

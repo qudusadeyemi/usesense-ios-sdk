@@ -145,17 +145,37 @@ let config = UseSenseConfig(apiKey: "pk_prod_your_key_here")
 let useSense = UseSense(config: config)
 let session = useSense.createSession(type: .enrollment)
 
-let viewController = UseSenseViewController(
-    session: session,
-    onComplete: { result in
-        // Handle result
-    },
-    onCancel: {
-        // Handle cancellation
-    }
-)
+let viewController = UseSenseViewController(session: session) { result in
+    // Handle the result. A cancellation arrives as
+    // .failure with code .userCancelled.
+}
 present(viewController, animated: true)
 ```
+
+Presented like this, the controller dismisses itself when the capture ends.
+
+### Embed in your own screen
+
+Add the controller as a child to show capture inside your own layout. As a
+child it never dismisses anything: closing your screen stays your decision.
+
+```swift
+let capture = UseSenseViewController(session: session) { [weak self] result in
+    // Handle the result, then remove the child when you are ready.
+}
+addChild(capture)
+container.addSubview(capture.view)
+capture.view.frame = container.bounds
+capture.didMove(toParent: self)
+
+// Leaving before the capture finishes? Removing the child stops the camera
+// and reports .userCancelled once. You can also stop it explicitly:
+capture.cancel()
+```
+
+In SwiftUI, `UseSenseView` themes itself from your code-set branding over
+the dashboard branding ("code wins"), exactly like the controller. Call
+`session.cancel()` if you remove it before the capture finishes.
 
 ## Silent device check (Your KYC)
 

@@ -108,19 +108,46 @@ if [ "$patched" -eq 0 ]; then
 fi
 echo "==> Staged ${patched} xcframework(s): $(cd "$STAGE" && echo *)"
 
-# MediaPipeTasksCommon force-loads two prebuilt static graph archives
-# (device + simulator) that carry the actual graph runtime symbols the
-# xcframeworks reference. The upstream podspec pulls them in via an
-# OTHER_LDFLAGS -force_load; UseSenseMediaPipe.podspec replicates that, so we
-# must ship the archives at the bundle root under graph_libraries/.
+# MediaPipeTasksCommon also ships two prebuilt static graph archives (device +
+# simulator) that the upstream podspec -force_loads. Rather than ship them and
+# make every app link MediaPipe's glog, protobuf, absl, OpenCV and TFLite as
+# global symbols (which crashes React Native apps on iOS: they link their own
+# glog), merge each slice into one object whose only global symbols are
+# MediaPipe's MPP* API. See scripts/isolate-mediapipe-symbols.sh.
 graph_dir="$(find "$WORK" -type d -name 'graph_libraries' | head -1)"
 if [ -z "$graph_dir" ]; then
-  echo "ERROR: graph_libraries/ not found — MediaPipeTasksCommon force-loads it" >&2
+  echo "ERROR: graph_libraries/ not found; MediaPipeTasksCommon force-loads it" >&2
   exit 1
 fi
-mkdir -p "$STAGE/graph_libraries"
-cp "$graph_dir"/*.a "$STAGE/graph_libraries/"
-echo "==> Staged graph_libraries: $(cd "$STAGE/graph_libraries" && echo *)"
+ISOLATE="$(cd "$(dirname "$0")" && pwd)/isolate-mediapipe-symbols.sh"
+ISO="$WORK/isolated"
+mkdir -p "$ISO"
+echo 'static int usesense_mediapipe_placeholder __attribute__((unused));' > "$ISO/empty.c"
+
+isolate_slice() {
+  # isolate_slice <slice-dir> <graph.a> <platform> <sdk> <archs...>
+  local slice=$1 graph=$2 platform=$3 sdk=$4; shift 4
+  local common="$STAGE/MediaPipeTasksCommon.xcframework/$slice/MediaPipeTasksCommon.framework/MediaPipeTasksCommon"
+  local vision="$STAGE/MediaPipeTasksVision.xcframework/$slice/MediaPipeTasksVision.framework/MediaPipeTasksVision"
+  local vis_parts=() com_parts=() arch
+  for arch in "$@"; do
+    bash "$ISOLATE" "$common" "$vision" "$graph" "$arch" "$platform" "$ISO/$slice-$arch.o"
+    xcrun ar rcs "$ISO/$slice-$arch-vision.a" "$ISO/$slice-$arch.o"
+    # Common keeps its headers and module map; its code now lives in Vision's
+    # merged object, so its binary becomes an archive with one empty member.
+    local target="$arch-apple-ios${IOS_DEPLOYMENT_TARGET:-15.0}"
+    [ "$platform" = ios-simulator ] && target="$target-simulator"
+    xcrun -sdk "$sdk" clang -c -target "$target" "$ISO/empty.c" -o "$ISO/$slice-$arch-empty.o"
+    xcrun ar rcs "$ISO/$slice-$arch-common.a" "$ISO/$slice-$arch-empty.o" 2>/dev/null
+    vis_parts+=("$ISO/$slice-$arch-vision.a"); com_parts+=("$ISO/$slice-$arch-common.a")
+  done
+  lipo -create "${vis_parts[@]}" -output "$vision"
+  lipo -create "${com_parts[@]}" -output "$common"
+}
+
+echo "==> Isolating MediaPipe symbols (only MPP* stays global)"
+isolate_slice ios-arm64 "$graph_dir/libMediaPipeTasksCommon_device_graph.a" ios iphoneos arm64
+isolate_slice ios-arm64_x86_64-simulator "$graph_dir/libMediaPipeTasksCommon_simulator_graph.a" ios-simulator iphonesimulator arm64 x86_64
 
 # Apache-2.0 requires the upstream LICENSE to travel with the binaries.
 license="$(find "$WORK" -name 'LICENSE' | head -1)"
@@ -130,9 +157,12 @@ if [ -n "$license" ]; then cp "$license" "$STAGE/LICENSE"; fi
 cat > "$STAGE/MEDIAPIPE_NOTICE.txt" <<EOF
 These xcframeworks are Google's MediaPipe Tasks (MediaPipeTasksVision,
 MediaPipeTasksCommon), version ${MEDIAPIPE_VERSION}, redistributed under the
-Apache License 2.0. The only modification is a correction to each xcframework's
-top-level Info.plist LibraryPath ("<NAME>.a" -> "<NAME>.framework") so CocoaPods
-links them as frameworks. Source: https://github.com/google-ai-edge/mediapipe
+Apache License 2.0. Modifications: each xcframework's top-level Info.plist
+LibraryPath is corrected ("<NAME>.a" -> "<NAME>.framework") so CocoaPods links
+them as frameworks; and each slice's Vision, Common and graph archives are merged
+into one object (inside MediaPipeTasksVision) whose only global symbols are the
+MPP* API, so MediaPipe's bundled glog, protobuf, absl, OpenCV and TensorFlow Lite
+cannot clash with the host app's. Source: https://github.com/google-ai-edge/mediapipe
 EOF
 
 ZIP="$OUT_DIR/UseSenseMediaPipe.xcframeworks.zip"

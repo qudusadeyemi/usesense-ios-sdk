@@ -767,7 +767,11 @@ public final class UseSenseSession: @unchecked Sendable {
         await start()
     }
 
-    func cancel() {
+    /// Stops the capture: camera, microphone, frame and signal uploads. The
+    /// session ends in `.error(userCancelled)`. Call it on the main thread when
+    /// your screen removes an embedded `UseSenseView` before it finishes
+    /// (`UseSenseViewController.cancel()` does this for you).
+    public func cancel() {
         invalidateAttempt()
         isCapturingFrames = false
         frameCaptureManager.stop()

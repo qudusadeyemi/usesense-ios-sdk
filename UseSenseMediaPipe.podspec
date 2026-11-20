@@ -21,24 +21,20 @@ Pod::Spec.new do |s|
   # Prebuilt, patched bundle produced by scripts/vendor-mediapipe.sh and attached
   # to the matching GitHub Release. The zip root contains:
   #   MediaPipeTasksVision.xcframework, MediaPipeTasksCommon.xcframework
-  #   graph_libraries/libMediaPipeTasksCommon_{device,simulator}_graph.a
   #   LICENSE, MEDIAPIPE_NOTICE.txt
   s.source = {
     :http => "https://github.com/qudusadeyemi/usesense-ios-sdk/releases/download/v#{s.version}/UseSenseMediaPipe.xcframeworks.zip"
   }
   s.vendored_frameworks = 'MediaPipeTasksVision.xcframework', 'MediaPipeTasksCommon.xcframework'
-  s.preserve_paths      = 'graph_libraries/*.a', 'MEDIAPIPE_NOTICE.txt'
+  s.preserve_paths      = 'MEDIAPIPE_NOTICE.txt'
 
-  # These mirror the upstream MediaPipeTasks{Vision,Common} podspecs exactly — the
-  # frameworks/libraries the binaries need, plus the -force_load of the static
-  # graph archives that carry the graph runtime symbols. Without the force_load
-  # the link fails with undefined symbols (and a benign auto-link warning for
-  # 'UIUtilities'). Paths resolve to this pod's extracted root under PODS_ROOT.
+  # The system frameworks and libraries the MediaPipe code needs, as in the
+  # upstream MediaPipeTasks{Vision,Common} podspecs. No -force_load: the graph
+  # archives are merged into MediaPipeTasksVision with every non-MPP* symbol
+  # made local (scripts/isolate-mediapipe-symbols.sh), so MediaPipe's glog,
+  # protobuf, absl, OpenCV and TFLite cannot clash with the app's (React Native
+  # links its own glog).
   s.frameworks = 'Accelerate', 'CoreMedia', 'AssetsLibrary', 'CoreFoundation',
                  'CoreGraphics', 'CoreImage', 'QuartzCore', 'AVFoundation', 'CoreVideo'
   s.libraries  = 'c++'
-  s.user_target_xcconfig = {
-    'OTHER_LDFLAGS[sdk=iphonesimulator*]' => '$(inherited) -force_load "${PODS_ROOT}/UseSenseMediaPipe/graph_libraries/libMediaPipeTasksCommon_simulator_graph.a"',
-    'OTHER_LDFLAGS[sdk=iphoneos*]'        => '$(inherited) -force_load "${PODS_ROOT}/UseSenseMediaPipe/graph_libraries/libMediaPipeTasksCommon_device_graph.a"'
-  }
 end
