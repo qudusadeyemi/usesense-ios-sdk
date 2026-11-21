@@ -781,7 +781,13 @@ final class FlowsRunnerViewController: UIViewController, UIImagePickerController
                 primaryColor: resolved?.colors?.primary,
                 appearance: resolved,
                 copy: FlowCopyResolver.current
-            )
+            ),
+            // Inside a Flow the step's own verdict is not the person's result:
+            // the Flow routes on it and ends on its own screen. Showing the
+            // capture's end page first told people "We couldn't verify you"
+            // and then "Under review" (device test, 2026-11-21). Web already
+            // skips it; the Flow's end screen is the only one.
+            options: SDKOptions(showsResultScreen: false)
         )
         let session = UseSenseSession(config: config, sessionType: .enrollment)
         session.injectHostedSessionData(response)
