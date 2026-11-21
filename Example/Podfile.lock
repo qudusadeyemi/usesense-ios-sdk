@@ -1,7 +1,7 @@
 PODS:
-  - UseSenseMediaPipe (4.4.1)
-  - UseSenseSDK (4.4.1):
-    - UseSenseMediaPipe (= 4.4.1)
+  - UseSenseMediaPipe (4.14.1)
+  - UseSenseSDK (4.14.1):
+    - UseSenseMediaPipe (= 4.14.1)
 
 DEPENDENCIES:
   - UseSenseMediaPipe (from `/Users/opeyemiadeyemi/work/usesense-workspace/usesense-ios-sdk/Example/.mediapipe/UseSenseMediaPipe.local.podspec`)
@@ -14,8 +14,8 @@ EXTERNAL SOURCES:
     :path: "../"
 
 SPEC CHECKSUMS:
-  UseSenseMediaPipe: 7ad26374bc24ba1ebf70dc5b10cbbc4975b82121
-  UseSenseSDK: 8269c3c237a2fc017cd1faf30d0e8e0ae5afb28d
+  UseSenseMediaPipe: 23719c9064f98ac28f4c7b510c9b08f10015a9b1
+  UseSenseSDK: 337503ad7ae79e9bd5fce007299c1c463ed40401
 
 PODFILE CHECKSUM: 0d4f044756f303cae5a0e3c7db34d13c973ed69d
 

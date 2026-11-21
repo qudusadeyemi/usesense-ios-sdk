@@ -4,6 +4,19 @@ All notable changes to the UseSense iOS SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [4.14.1] - 2026-11-21
+
+### Fixed
+- **Flows show one end screen.** The Flow runner's capture used the default
+  `showsResultScreen`, so when a face step rejected, the person saw the
+  capture's end page ("We couldn't verify you") and then the Flow's own end
+  screen ("Under review"). Inside a Flow the step's screen is now off; the
+  Flow's end screen is the person's result, as on web and Android. Found in a
+  device test on an iPhone 17 Pro.
+
+UseSenseMediaPipe 4.14.1 carries the same MediaPipe bundle as 4.14.0 (its
+version moves with the SDK's).
+
 ## [4.14.0] - 2026-11-20
 
 ### Added
